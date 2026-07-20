@@ -1,0 +1,22 @@
+# PDF 樣板編輯器 demo
+# 啟動：docker compose up --build
+# 入口：http://localhost:8090（前端），http://localhost:8091/swagger（後端 API）
+name: pdf-template-demo # compose project name，與其他專案隔離
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8091:8080"
+    volumes:
+      - pdf-storage:/app/storage # 樣板 JSON 與上傳圖片持久化
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8090:80"
+    depends_on:
+      - backend
+
+volumes:
+  pdf-storage:

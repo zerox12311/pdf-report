@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <title>宿主系統嵌入示範</title>
+  <style>
+    body { margin: 0; font-family: 'Noto Sans TC', sans-serif; background: #eef1f5; }
+    header { background: #0f766e; color: #fff; padding: 10px 20px; font-weight: 600; }
+    header small { font-weight: 400; opacity: .8; margin-left: 12px; }
+    .layout { display: flex; gap: 12px; padding: 12px; height: calc(100vh - 64px); box-sizing: border-box; }
+    iframe { flex: 1; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+    aside { width: 340px; display: flex; flex-direction: column; gap: 10px; }
+    .card { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; font-size: 13px; }
+    .card h3 { margin: 0 0 8px; font-size: 14px; }
+    #log { flex: 1; overflow: auto; font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+    #tid { font-family: monospace; color: #0f766e; word-break: break-all; }
+    pre { background: #f1f5f9; padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 11px; }
+  </style>
+  <script>
+    // 在 iframe 建立前就註冊，避免漏接 editor-ready
+    window.__events = [];
+    window.addEventListener('message', (e) => {
+      const msg = e.data;
+      if (!msg || msg.source !== 'pdf-template-editor') return;
+      window.__events.push(msg);
+      window.dispatchEvent(new CustomEvent('editor-event', { detail: msg }));
+    });
+  </script>
+</head>
+<body>
+  <header>某個宿主系統（ERP / 表單系統…）<small>下方 iframe 是嵌入的樣板編輯器</small></header>
+  <div class="layout">
+    <iframe id="editor" src="http://localhost:8090/editor/new"></iframe>
+    <aside>
+      <div class="card">
+        <h3>已儲存的樣板 id</h3>
+        <div id="tid">（在編輯器按「儲存」後出現）</div>
+      </div>
+      <div class="card">
+        <h3>宿主後端渲染指令</h3>
+        <pre id="curl">等待樣板儲存…</pre>
+      </div>
+      <div class="card" style="flex:1;display:flex;flex-direction:column">
+        <h3>postMessage 事件記錄</h3>
+        <div id="log"></div>
+      </div>
+    </aside>
+  </div>
+  <script>
+    const log = document.getElementById('log');
+    const onEvent = (msg) => {
+      log.textContent += JSON.stringify(msg) + '\n';
+      if (msg.type === 'template-saved' && msg.id) {
+        document.getElementById('tid').textContent = msg.id;
+        document.getElementById('curl').textContent =
+          `curl -X POST http://localhost:8090/api/templates/${msg.id}/render \\\n` +
+          `  -H "Content-Type: application/json" \\\n` +
+          `  -d '{"data":{ ... }}' -o output.pdf`;
+      }
+    };
+    window.__events.forEach(onEvent); // 補上在此 script 執行前就收到的事件
+    window.addEventListener('editor-event', (e) => onEvent(e.detail));
+  </script>
+</body>
+</html>

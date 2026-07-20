@@ -1,0 +1,17 @@
+# 依賴與建置產物
+node_modules/
+frontend/dist/
+frontend/.angular/
+
+# Go 編譯產物
+backend/pdftemplate
+*.exe
+
+# 執行期資料（樣板/圖片/匯入字型；正式環境走 Docker volume）
+backend/storage/
+
+# 環境與雜項
+.DS_Store
+*.log
+.env
+.env.*
