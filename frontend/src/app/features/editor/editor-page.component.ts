@@ -10,7 +10,7 @@ import { DataPanelComponent } from './data-panel.component';
 import { EditorCanvasComponent } from './editor-canvas.component';
 import { EditorStateService } from './editor-state.service';
 import { IntegrationDialogComponent } from './integration-dialog.component';
-import { PaletteAction, createElements } from './element-factory';
+import { PaletteAction, canDropIntoCell, createElements } from './element-factory';
 import { PreviewPanelComponent } from './preview-panel.component';
 import { PropertiesPanelComponent } from './properties-panel.component';
 
@@ -122,7 +122,7 @@ interface PaletteItem {
             }
           </div>
           @switch (tab()) {
-            @case ('design') { <app-editor-canvas (imageDrop)="onImageDrop($event)" /> }
+            @case ('design') { <app-editor-canvas /> }
             @case ('json') {
               <div class="json-tab">
                 <textarea [ngModel]="jsonText()" (ngModelChange)="jsonText.set($event)" spellcheck="false"></textarea>
@@ -375,13 +375,8 @@ export class EditorPageComponent {
 
   addByPalette(action: PaletteItem['action']) {
     if (this.tab() !== 'design') this.tab.set('design');
-    if (action === 'image') {
-      this.pendingImagePos = null;
-      this.state.imagePickRequest.set(null);
-      this.imageInput?.nativeElement.click();
-      return;
-    }
     // 新元素放進內文區的頂端附近；元素預設值由工廠（強型別）提供
+    // （圖片也走一般流程：先落地佔位元素，來源在屬性面板選上傳或 URL）
     const baseY = this.state.activePage().headerHeight + 20;
     for (const el of createElements(action, baseY)) {
       this.state.addElement(el);
@@ -390,18 +385,9 @@ export class EditorPageComponent {
 
   onPaletteDragStart(e: DragEvent, action: PaletteItem['action']) {
     e.dataTransfer?.setData('application/x-palette', action);
-    // 額外型別標記：讓表格儲存格在 dragover 階段就能辨識「圖片」拖曳（dragover 讀不到 payload）
-    if (action === 'image') e.dataTransfer?.setData('application/x-palette-image', '1');
+    // 額外型別標記：讓表格儲存格在 dragover 階段就能辨識「可進格子」的拖曳（dragover 讀不到 payload）
+    if (canDropIntoCell(action)) e.dataTransfer?.setData('application/x-palette-cell', '1');
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
-  }
-
-  /** 元件「圖片」被拖到畫布：記住放置座標，開檔案選擇器 */
-  private pendingImagePos: { x: number; y: number } | null = null;
-
-  onImageDrop(pos: { x: number; y: number }) {
-    this.pendingImagePos = pos;
-    this.state.imagePickRequest.set(null);
-    this.imageInput?.nativeElement.click();
   }
 
   zoomPct(): number {
@@ -503,29 +489,23 @@ export class EditorPageComponent {
     if (!file) return;
     try {
       const { id } = await this.api.uploadAsset(file);
-      // 目標是儲存格：把該格設成圖片格，不生成新元素
-      const cellReq = this.state.imagePickRequest();
-      if (cellReq) {
-        this.state.imagePickRequest.set(null);
-        const tbl = this.state.findElement(cellReq.tableId);
+      const req = this.state.imagePickRequest();
+      this.state.imagePickRequest.set(null);
+      if (!req) return;
+      if ('tableId' in req) {
+        // 目標是儲存格：把該格設成圖片格（key 清掉，讓上傳生效）
+        const tbl = this.state.findElement(req.tableId);
         if (tbl?.type === 'table') {
           const cells = tbl.cells.map((row, ri) => row.map((cell, ci) =>
-            ri === cellReq.r && ci === cellReq.c
-              ? { ...cell, kind: 'image' as const, assetId: id }
+            ri === req.r && ci === req.c
+              ? { ...cell, kind: 'image' as const, assetId: id, key: '', url: undefined }
               : cell));
           this.state.patchElement(tbl.id, { cells });
         }
         return;
       }
-      const pos = this.pendingImagePos;
-      this.pendingImagePos = null;
-      const baseY = this.state.activePage().headerHeight + 20;
-      const el = { type: 'image', width: 120, height: 90, assetId: id, fit: 'contain' } as const;
-      if (pos) {
-        this.state.addElementAt({ ...el, x: 0, y: 0 }, pos.x, pos.y);
-      } else {
-        this.state.addElement({ ...el, x: 40, y: baseY });
-      }
+      // 目標是圖片元素：設 assetId 並清掉動態/固定連結（三種來源擇一，上傳為明確意圖）
+      this.state.patchElement(req.elementId, { assetId: id, key: undefined, url: undefined });
     } catch (e) {
       alert('圖片上傳失敗：' + (e instanceof Error ? e.message : e));
     }

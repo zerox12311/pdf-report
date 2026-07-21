@@ -42,7 +42,7 @@
 - **群組**：`groupBy`（相鄰相同值分組，資料需先排序）＋群組首列/尾列（每組各插一次；相對 key 以該組第一筆解析）。
 - **跨頁分片**：每片重畫表頭列（= 重複列之前、扣掉群組首尾列的列）。
 - **儲存格能力**：
-  - 類型：text（含插值）／placeholder（key＋sample＋format）／image（contain 縮進內距矩形）
+  - 類型：text（含插值）／placeholder（key＋sample＋format）／image（contain 縮進內距矩形）／barcode（symbology＋showText；內容 = key 綁定或 value 靜態值，與條碼元素同一套繪製）
   - 合併：colSpan/rowSpan（被蓋住的格不畫）
   - 樣式：逐格字級/文字色/**背景色 fillColor**（底色先畫、框線內容蓋上）/粗體
   - 對齊：align 左/中/右 × vAlign 上/中/下（未設 = 置中）
@@ -53,6 +53,7 @@
 ## 其他元素
 
 - **文字/資料欄位**：greedy 換行、對齊、行高、外框/底色/內距；autoGrow 內容超高時撐高並推移下方元素（band 內只長高自身）。
+- **圖片**：三種來源，優先序 **key（動態綁定）> url（固定連結）> assetId（已上傳）**。key 綁定時渲染資料中的值 = 圖片 URL（fallback sample）；url 為靜態連結，兩者都由引擎渲染時抓取嵌入。防護：僅 http/https、逾時 5 秒、上限 10MB、內容嗅探必須 PNG/JPEG；同一次渲染同 URL 只抓一次（快取含失敗）。抓取失敗發警告不擋渲染（strict 模式回 422）。表格圖片儲存格同樣支援三種來源（重複列相對 key 在展開時解析，每列可不同圖）。注意：URL 由渲染資料指定，引擎會向其發出請求——部署時信任邊界在呼叫方（宿主後端）。
 - **條碼**：code128/code39/ean13/qr（boombuler/barcode）；key 綁定 fallback sample，或 content 靜態值；1D 可加人讀文字。
 - **容器**：子元素相對座標、跨頁 keep-together（整組移到下一頁）、內部 repeat/autoGrow 推移後容器自動撐高。
 - **條件顯示**：visibleKey＋Op（truthy/falsy/eq/ne）＋Val；隱藏保留版面空間。

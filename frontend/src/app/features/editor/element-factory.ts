@@ -1,8 +1,54 @@
-import { NewTemplateElement, emptyCell } from '../../core/models/template.model';
+import { BarcodeSymbology, NewTemplateElement, TableCell, TemplateElement, emptyCell } from '../../core/models/template.model';
 
-/** 元件盤可新增的元素動作（image 走檔案選擇流程，不在此處理） */
+/** 元件盤可新增的元素動作 */
 export type PaletteAction =
-  | 'text' | 'placeholder' | 'table' | 'rect' | 'line' | 'barcode' | 'cvs3' | 'container';
+  | 'text' | 'placeholder' | 'image' | 'table' | 'rect' | 'line' | 'barcode' | 'cvs3' | 'container';
+
+/** 元件盤「條碼」的預設值（新元素與拖進儲存格共用，避免兩處 drift） */
+const BARCODE_DEFAULTS = {
+  symbology: 'code39' as BarcodeSymbology, // 收款單導向：超商條碼慣用 Code 39
+  key: 'barcode1',
+  sample: 'A123456789',
+  showText: true,
+};
+
+/** 可拖進表格儲存格的元素型別（元件盤與畫布既有元素共用判斷） */
+export function canDropIntoCell(type: TemplateElement['type'] | PaletteAction): boolean {
+  return type === 'image' || type === 'barcode'; // cvs3 是三個元素的套件，不進單一格
+}
+
+/** 元件盤動作拖進儲存格時的儲存格 patch；不支援的動作回 null */
+export function paletteToCellPatch(action: string): Partial<TableCell> | null {
+  switch (action) {
+    case 'image':
+      // 佔位圖片格：來源（上傳/固定連結/動態 key）之後在屬性面板設定
+      return { kind: 'image' };
+    case 'barcode':
+      return { kind: 'barcode', ...BARCODE_DEFAULTS, value: '' };
+    default:
+      return null;
+  }
+}
+
+/** 既有畫布元素拖進儲存格時的儲存格 patch（繼承來源設定）；不支援的型別回 null */
+export function elementToCellPatch(el: TemplateElement): Partial<TableCell> | null {
+  switch (el.type) {
+    case 'image':
+      return {
+        kind: 'image',
+        assetId: el.assetId, url: el.url,
+        key: el.key ?? '', sample: el.sample ?? '',
+      };
+    case 'barcode':
+      return {
+        kind: 'barcode',
+        symbology: el.symbology, showText: el.showText,
+        key: el.key, sample: el.sample, value: el.content,
+      };
+    default:
+      return null;
+  }
+}
 
 /**
  * 依元件盤動作產生預設元素（純函式）。
@@ -19,6 +65,12 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
       return [{
         type: 'placeholder', x: 40, y: baseY + 30, width: 160, height: 20,
         key: 'field1', sample: '範例值', fontSize: 12, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
+      }];
+    case 'image':
+      // 佔位圖片：來源（上傳檔案或綁定圖片 URL）之後在屬性面板設定
+      return [{
+        type: 'image', x: 40, y: baseY + 30, width: 120, height: 90,
+        assetId: '', fit: 'contain',
       }];
     case 'table':
       return [{
@@ -46,7 +98,7 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
     case 'barcode':
       return [{
         type: 'barcode', x: 40, y: baseY + 100, width: 180, height: 50,
-        symbology: 'code39', content: '', key: 'barcode1', sample: 'A123456789', showText: true,
+        content: '', ...BARCODE_DEFAULTS,
         aboveWatermark: true, // 條碼被浮水印蓋住會刷不出來，預設置頂
       }];
     case 'cvs3': {

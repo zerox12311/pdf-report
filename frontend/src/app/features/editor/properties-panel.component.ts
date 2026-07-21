@@ -99,6 +99,23 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
             <div class="hint">選取容器時從元件盤新增元素，會直接加進容器；子元素座標相對於容器。跨頁時容器整組不拆分。</div>
           }
           @case ('image') {
+            <div class="sub">圖片來源（三選一；優先序：動態 key > 固定連結 > 上傳）</div>
+            <button class="merge" (click)="pickElementImage(el)">{{ el.assetId ? '更換上傳圖片…' : '上傳圖片…' }}</button>
+            <label class="full">固定圖片連結（靜態 URL）
+              <input [ngModel]="el.url ?? ''" (ngModelChange)="patch(el, { url: $event || undefined })"
+                placeholder="https://…/logo.png" />
+            </label>
+            <label class="full">動態圖片 key（渲染資料的值 = 圖片 URL）
+              <input [ngModel]="el.key ?? ''" (ngModelChange)="patch(el, { key: $event || undefined })"
+                placeholder="例：customer.logoUrl" />
+            </label>
+            @if (el.key) {
+              <label class="full">範例 URL（畫布預覽用）
+                <input [ngModel]="el.sample ?? ''" (ngModelChange)="patch(el, { sample: $event || undefined })"
+                  placeholder="https://…/logo.png" />
+              </label>
+              <div class="hint">渲染時資料中該 key 的值需為可訪問的圖片 URL（http/https，PNG/JPEG，10MB 內），引擎當場抓取嵌入；抓取失敗發警告（strict 模式會擋）。</div>
+            }
             <label class="full">縮放模式
               <select [ngModel]="el.fit" (ngModelChange)="patch(el, { fit: $event })">
                 <option value="contain">contain（等比置中）</option>
@@ -210,11 +227,53 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
                       <option value="text">靜態文字</option>
                       <option value="placeholder">資料欄位</option>
                       <option value="image">圖片</option>
+                      <option value="barcode">條碼</option>
                     </select>
                   </label>
-                  @if (cell.kind === 'image') {
+                  @if (cell.kind === 'barcode') {
+                    <label class="full">條碼類型
+                      <select [ngModel]="cell.symbology ?? 'code128'" (ngModelChange)="patchCell(el, { symbology: $event })">
+                        <option value="code128">Code 128</option>
+                        <option value="code39">Code 39（超商三段條碼）</option>
+                        <option value="ean13">EAN-13</option>
+                        <option value="qr">QR Code</option>
+                      </select>
+                    </label>
+                    <label class="full">資料 key（綁定資料，留空用靜態值；重複列內用相對 key）
+                      <input [ngModel]="cell.key" (ngModelChange)="patchCell(el, { key: $event })"
+                        placeholder="例：payment.barcode1" />
+                    </label>
+                    @if (cell.key) {
+                      <label class="full">範例值
+                        <input [ngModel]="cell.sample" (ngModelChange)="patchCell(el, { sample: $event })" />
+                      </label>
+                    } @else {
+                      <label class="full">靜態內容
+                        <input [ngModel]="cell.value" (ngModelChange)="patchCell(el, { value: $event })" />
+                      </label>
+                    }
+                    @if (cell.symbology !== 'qr') {
+                      <label class="row"><input type="checkbox" [ngModel]="cell.showText ?? false"
+                        (ngModelChange)="patchCell(el, { showText: $event })" /> 下方顯示人讀文字</label>
+                    }
+                    <div class="hint">條碼以等比置入格內（QR 為正方形置中）；重複列內每列依資料產生各自的條碼。</div>
+                  } @else if (cell.kind === 'image') {
                     <button class="merge" (click)="pickCellImage(el)">{{ cell.assetId ? '更換圖片…' : '選擇圖片…' }}</button>
-                    <div class="hint">也可以直接把元件盤的「圖片」拖到儲存格上。圖片以等比縮放置入格內。</div>
+                    <label class="full">固定圖片連結（靜態 URL）
+                      <input [ngModel]="cell.url ?? ''" (ngModelChange)="patchCell(el, { url: $event || undefined })"
+                        placeholder="https://…/logo.png" />
+                    </label>
+                    <label class="full">動態圖片 key（渲染資料的值 = 圖片 URL）
+                      <input [ngModel]="cell.key" (ngModelChange)="patchCell(el, { key: $event })"
+                        placeholder="例：photoUrl（重複列內用相對 key）" />
+                    </label>
+                    @if (cell.key) {
+                      <label class="full">範例 URL（畫布預覽用）
+                        <input [ngModel]="cell.sample" (ngModelChange)="patchCell(el, { sample: $event })"
+                          placeholder="https://…/photo.png" />
+                      </label>
+                    }
+                    <div class="hint">也可以直接把元件盤的「圖片」拖到儲存格上。key 綁定時渲染資料的值需為圖片 URL（重複列每列可不同圖）。圖片以等比縮放置入格內。</div>
                   } @else if (cell.kind === 'text') {
                     <label class="full">文字 <input [ngModel]="cell.value" (ngModelChange)="patchCell(el, { value: $event })" /></label>
                   } @else {
@@ -429,6 +488,11 @@ export class PropertiesPanelComponent {
   pickCellImage(el: TableElement) {
     const sc = this.state.selectedCell();
     if (sc) this.state.imagePickRequest.set({ tableId: el.id, r: sc.row, c: sc.col });
+  }
+
+  /** 圖片元素的「上傳圖片…」：開檔案選擇器，上傳後設 assetId（並清掉 URL 綁定） */
+  pickElementImage(el: TemplateElement) {
+    this.state.imagePickRequest.set({ elementId: el.id });
   }
 
   mergeCells(el: TableElement) {

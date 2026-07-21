@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input
 import { CellBorders, FontFamily, TableCell, TableElement, TemplateElement, coveredCells, fontCss } from '../../core/models/template.model';
 import { formatValue } from '../../core/utils/format-value';
 import { ContextMenuItem, EditorStateService } from './editor-state.service';
-import { DataKeyPayload } from './element-factory';
+import { DataKeyPayload, paletteToCellPatch } from './element-factory';
 
 /** 單一元素的畫布視覺（不含定位與拖曳，那些由 editor-canvas 的包裝層處理）。container 不在此處理。 */
 @Component({
@@ -35,7 +35,7 @@ import { DataKeyPayload } from './element-factory';
       @case ('placeholder') {
         @if (placeholderEl(); as el) {
           @if (selfEditing()) {
-            <input class="inline-edit" [value]="el.sample" placeholder="範例值"
+            <input class="inline-edit" [value]="el.key" placeholder="資料 key（例：customer.name）"
               [style.fontSize.px]="el.fontSize * z()" [style.color]="el.color"
               [style.fontFamily]="fontCssOf(el.fontFamily)" [style.textAlign]="el.align"
               (pointerdown)="$event.stopPropagation()" (dblclick)="$event.stopPropagation()"
@@ -48,7 +48,7 @@ import { DataKeyPayload } from './element-factory';
               [style.textAlign]="el.align" [style.fontWeight]="el.bold ? 700 : 400"
               [style.border]="boxBorder(el)"
               [style.padding.px]="(el.padding ?? 0) * z()"
-              [title]="phLabel(el.key) + '——雙擊編輯範例值'"
+              [title]="phLabel(el.key) + '——雙擊編輯變數綁定'"
               (dblclick)="startSelfEdit($event)"
             >{{ el.sample ? formatted(el.sample, el.format) : phLabel(el.key) }}</div>
           }
@@ -56,11 +56,11 @@ import { DataKeyPayload } from './element-factory';
       }
       @case ('image') {
         @if (imageEl(); as el) {
-          @if (el.assetId) {
-            <img class="img-box" [src]="'/api/assets/' + el.assetId"
+          @if (imageSrc(el); as src) {
+            <img class="img-box" [src]="src"
               [style.objectFit]="el.fit === 'stretch' ? 'fill' : 'contain'" draggable="false" />
           } @else {
-            <div class="img-empty">未選擇圖片</div>
+            <div class="img-empty">{{ el.key ? '🔗 ' + el.key : '🖼 圖片（屬性設定來源）' }}</div>
           }
         }
       }
@@ -131,7 +131,7 @@ import { DataKeyPayload } from './element-factory';
                         [style.verticalAlign]="cell.vAlign || null"
                         [class.ph]="cell.kind === 'placeholder'"
                         [class.cell-selected]="el.id === state.selectedId() && isCellSelected(r, c)"
-                        [class.drop-cell]="dropCell()?.r === r && dropCell()?.c === c"
+                        [class.drop-cell]="(dropCell()?.r === r && dropCell()?.c === c) || isElementDropCell(el, r, c)"
                         (pointerdown)="onCellDown(el, r, c, $event)"
                         (contextmenu)="onCellMenu($event, el, r, c)"
                         (dblclick)="onCellDbl(el, r, c, $event)"
@@ -150,23 +150,33 @@ import { DataKeyPayload } from './element-factory';
                           }
                         </svg>
                       }@if (cell.kind === 'image') {
-                        @if (cell.assetId) {
-                          <img class="cell-img" [src]="'/api/assets/' + cell.assetId"
+                        @if (imageSrc(cell); as src) {
+                          <img class="cell-img" [src]="src"
                             [style.left.px]="el.cellPadding * z()" [style.top.px]="el.cellPadding * z()"
                             [style.width.px]="cellInner(spanWidth(el, c, cell.colSpan), el.cellPadding) * z()"
                             [style.height.px]="cellInner(spanHeight(el, r, cell.rowSpan), el.cellPadding) * z()"
                             draggable="false" />
                         } @else {
-                          <span class="cell-img-empty">（未選圖片）</span>
+                          <span class="cell-img-empty">{{ cell.key ? '🔗 ' + cell.key : '（未選圖片）' }}</span>
                         }
                       } @else if (editingCell()?.r === r && editingCell()?.c === c) {
                         <input class="cell-edit"
-                          [value]="cell.kind === 'text' ? cell.value : cell.sample"
-                          [placeholder]="cell.kind === 'placeholder' ? '範例值' : ''"
+                          [value]="cell.kind === 'text' ? cell.value : cell.key"
+                          [placeholder]="cell.kind === 'placeholder' ? '資料 key' : ''"
                           (pointerdown)="$event.stopPropagation()"
                           (dblclick)="$event.stopPropagation()"
                           (keydown)="onCellEditKey($event)"
                           (blur)="commitCellEdit(el, r, c, $any($event.target).value)" />
+                      } @else if (cell.kind === 'barcode') {
+                        <!-- 條碼示意：absolute 貼齊內距，不撐開畫布列高（同圖片格的解法） -->
+                        <span class="cell-barcode" [style.inset.px]="el.cellPadding * z()">
+                          @if (cell.symbology === 'qr') {
+                            <span class="qr-mark">▦</span>
+                          } @else {
+                            <span class="bars"></span>
+                          }
+                          <span class="bc-label">{{ cell.key ? phLabel(cell.key) : cell.value || '（空）' }}</span>
+                        </span>
                       } @else if (cell.wrap) {
                         <!-- 換行示意：absolute 貼齊內距，不撐開畫布列高（實際列高由引擎算） -->
                         <span class="cell-wrap-text" [style.inset.px]="el.cellPadding * z()"
@@ -201,13 +211,16 @@ import { DataKeyPayload } from './element-factory';
       background: #f1f3f5; color: #999; font-size: 12px; border: 1px dashed #bbb; box-sizing: border-box; }
     .rect-box { width: 100%; height: 100%; box-sizing: border-box; }
     .line-box { width: 100%; height: 100%; display: block; overflow: visible; }
+    /* 條碼示意（元素 .barcode-box 與儲存格 .cell-barcode 共用內部零件） */
     .barcode-box { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden;
       background: #fff; border: 1px dashed #94a3b8; box-sizing: border-box; }
-    .barcode-box .bars { flex: 1; background: repeating-linear-gradient(90deg,
+    .cell-barcode { position: absolute; display: flex; flex-direction: column; overflow: hidden;
+      background: #fff; }
+    .bars { flex: 1; background: repeating-linear-gradient(90deg,
       #111 0 2px, #fff 2px 4px, #111 4px 5px, #fff 5px 9px, #111 9px 12px, #fff 12px 14px); }
-    .barcode-box .qr-mark { flex: 1; display: flex; align-items: center; justify-content: center;
+    .qr-mark { flex: 1; display: flex; align-items: center; justify-content: center;
       font-size: 28px; color: #111; }
-    .barcode-box .bc-label { font-size: 9px; color: #475569; text-align: center; padding: 1px 2px;
+    .bc-label { font-size: 9px; color: #475569; text-align: center; padding: 1px 2px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #f8fafc; }
     .tbl { border-collapse: collapse; table-layout: fixed; font-family: 'Noto Sans TC', sans-serif; user-select: none; }
     .tbl td { overflow: hidden; white-space: nowrap; vertical-align: middle; box-sizing: border-box; background: #fff; position: relative; }
@@ -257,6 +270,12 @@ export class CanvasElementComponent {
     return '{{' + key + '}}';
   }
 
+  /** 拖曳既有圖片元素時，此格是否為放置目標（高亮） */
+  isElementDropCell(el: TableElement, r: number, c: number): boolean {
+    const d = this.state.elementDropCell();
+    return !!d && d.tableId === el.id && d.r === r && d.c === c;
+  }
+
   /** 斜線筆寬（跟表格框線同寬，最細 1px 保持可見） */
   diagStroke(el: TableElement): number {
     return Math.max(1, el.borderWidth * this.z());
@@ -289,17 +308,39 @@ export class CanvasElementComponent {
     return this.state.buildSampleData();
   });
 
+  /** 依 "a.b" / "items[0].x" 路徑從範例資料取值 */
+  private resolvePath(data: unknown, key: string): unknown {
+    let cur: unknown = data;
+    for (const part of key.replace(/\[(\d+)\]/g, '.$1').split('.')) {
+      if (cur == null || typeof cur !== 'object') return undefined;
+      cur = (cur as Record<string, unknown>)[part];
+    }
+    return cur;
+  }
+
+  /**
+   * 圖片元素的畫布來源（優先序同引擎：key > url > assetId）：
+   * key 綁定 → 範例資料值 → sample URL；url = 固定連結直接顯示；
+   * 否則已上傳的 assetId。都沒有 → null（顯示占位框）。
+   */
+  imageSrc(el: { key?: string; sample?: string; assetId?: string; url?: string }): string | null {
+    if (el.key) {
+      const v = this.resolvePath(this.sampleData(), el.key);
+      if (typeof v === 'string' && /^https?:\/\//.test(v)) return v;
+      if (el.sample && /^https?:\/\//.test(el.sample)) return el.sample;
+      return null;
+    }
+    if (el.url && /^https?:\/\//.test(el.url)) return el.url;
+    return el.assetId ? '/api/assets/' + el.assetId : null;
+  }
+
   /** 文字行內插值的畫布預覽：資料 key 以範例資料代入；$ 引擎函式與缺 key 保留 token 提示 */
   displayText(content: string): string {
     if (!content.includes('{{')) return content;
     const data = this.sampleData();
     return content.replace(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g, (m, key: string, fmt?: string) => {
       if (key.startsWith('$')) return m; // $page/$sum 等由引擎計算，畫布保留 token
-      let cur: unknown = data;
-      for (const part of key.replace(/\[(\d+)\]/g, '.$1').split('.')) {
-        if (cur == null || typeof cur !== 'object') { cur = undefined; break; }
-        cur = (cur as Record<string, unknown>)[part];
-      }
+      const cur = this.resolvePath(data, key);
       if (cur == null || typeof cur === 'object') return m; // 找不到 → 保留 token（看得出沒綁到）
       return formatValue(String(cur), (fmt ?? '') as Parameters<typeof formatValue>[1]);
     });
@@ -394,7 +435,7 @@ export class CanvasElementComponent {
     const el = this.el();
     switch (el.type) {
       case 'text': this.state.patchElement(el.id, { content: value }); break;
-      case 'placeholder': this.state.patchElement(el.id, { sample: value }); break;
+      case 'placeholder': this.state.patchElement(el.id, { key: value }); break;
       case 'barcode':
         this.state.patchElement(el.id, el.key ? { sample: value } : { content: value });
         break;
@@ -420,8 +461,8 @@ export class CanvasElementComponent {
 
   onCellDragOver(ev: DragEvent, r: number, c: number) {
     const types = ev.dataTransfer?.types;
-    // 接受：資料 key、元件盤的「圖片」（其餘元件照舊落在畫布上）
-    if (!types || (!types.includes('application/x-datakey') && !types.includes('application/x-palette-image'))) return;
+    // 接受：資料 key、元件盤可進格子的元件（圖片/條碼；其餘元件照舊落在畫布上）
+    if (!types || (!types.includes('application/x-datakey') && !types.includes('application/x-palette-cell'))) return;
     ev.preventDefault();
     ev.stopPropagation(); // 不讓畫布同時亮容器提示
     ev.dataTransfer!.dropEffect = 'copy';
@@ -430,14 +471,19 @@ export class CanvasElementComponent {
 
   onCellDrop(ev: DragEvent, el: TableElement, r: number, c: number) {
     this.dropCell.set(null);
-    // 元件盤「圖片」拖進儲存格：開檔案選擇器，上傳後設進該格
-    if (ev.dataTransfer?.types.includes('application/x-palette-image')) {
+    // 元件盤「圖片/條碼」拖進儲存格：設成對應格型（來源/內容之後在屬性面板調整）
+    if (ev.dataTransfer?.types.includes('application/x-palette-cell')) {
+      const patch = paletteToCellPatch(ev.dataTransfer.getData('application/x-palette'));
+      if (!patch) return;
       ev.preventDefault();
       ev.stopPropagation();
       ({ r, c } = this.resolveCellOrigin(el, r, c));
       if (el.id !== this.state.selectedId()) this.state.select(el.id);
       this.state.selectedCell.set({ row: r, col: c });
-      this.state.imagePickRequest.set({ tableId: el.id, r, c });
+      this.state.selectedCellRange.set(null);
+      const cells = el.cells.map((row, ri) => row.map((cell, ci) =>
+        ri === r && ci === c ? { ...cell, ...patch } : cell));
+      this.state.patchElement(el.id, { cells });
       return;
     }
     const dk = ev.dataTransfer?.getData('application/x-datakey');
@@ -532,7 +578,7 @@ export class CanvasElementComponent {
     }
     const cells = el.cells.map((row, ri) => row.map((cell, ci) => {
       if (ri !== r || ci !== c) return cell;
-      return cell.kind === 'text' ? { ...cell, value } : { ...cell, sample: value };
+      return cell.kind === 'text' ? { ...cell, value } : { ...cell, key: value };
     }));
     this.state.patchElement(el.id, { cells } as Partial<TableElement>);
   }

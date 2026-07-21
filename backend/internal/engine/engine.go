@@ -3,8 +3,12 @@ package engine
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"sync"
+	"time"
 	"image"
 	"image/draw"
 	_ "image/jpeg"
@@ -24,7 +28,7 @@ import (
 	"github.com/signintech/gopdf"
 )
 
-// 報表渲染引擎（gopdf），由原 C# PdfRenderService.cs 移植。
+// 報表渲染引擎（gopdf）。
 //
 // Band 模型（依設計位置劃分）：
 //   - 頁首：設計 y < Page.HeaderHeight 的元素，每頁重複。
@@ -180,7 +184,7 @@ func (c *drawCtx) applyWrapHeights(t *Element, rows []ExpandedRow) {
 		row := &rows[ri]
 		for ci := range row.Cells {
 			cell := &row.Cells[ci]
-			if !cell.Wrap || cell.Kind == "image" || ci >= len(row.Texts) || row.Texts[ci] == "" {
+			if !cell.Wrap || cell.Kind == "image" || cell.Kind == "barcode" || ci >= len(row.Texts) || row.Texts[ci] == "" {
 				continue
 			}
 			fs := t.FontSize
@@ -506,14 +510,14 @@ func (l *layout) paginate() {
 // draw 依 layout 結果逐頁繪製。
 // pageOffset/totalPages：多節渲染時的全文件頁碼基準，$page/$pages 連續。
 // base：文件開檔的頁面尺寸；本節尺寸不同時逐頁指定（混合紙張/方向）。
-func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, totalPages int, base gopdf.Rect) error {
+func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, totalPages int, base gopdf.Rect, imgCache map[string][]byte) error {
 	for p := 0; p < l.pageCount; p++ {
 		if l.pageW == base.W && l.pageH == base.H {
 			pdf.AddPage()
 		} else {
 			pdf.AddPageWithOption(gopdf.PageOption{PageSize: &gopdf.Rect{W: l.pageW, H: l.pageH}})
 		}
-		ctx := &drawCtx{pdf: pdf, data: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn}
+		ctx := &drawCtx{pdf: pdf, data: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache}
 		wm := l.doc.Page.Watermark
 		// 本頁內容（keep：依 AboveWatermark 過濾——上層浮水印時分兩批畫，
 		// 讓勾了「置於浮水印之上」的元素不被浮水印蓋住）
@@ -683,8 +687,9 @@ func (e *Engine) Render(doc *TemplateDoc, data any) ([]byte, []string, error) {
 		total += sl.pageCount
 	}
 	offset := 0
+	imgCache := map[string][]byte{} // 動態圖片 URL 下載快取（跨節/跨頁共用）
 	for _, sl := range layouts {
-		if err := e.draw(pdf, sl, warn, offset, total, base); err != nil {
+		if err := e.draw(pdf, sl, warn, offset, total, base, imgCache); err != nil {
 			return nil, nil, err
 		}
 		offset += sl.pageCount
@@ -744,6 +749,8 @@ type drawCtx struct {
 	pages  int
 	assets AssetSource
 	warn   WarnFunc // 渲染警告回報；nil = 不收集
+	// 動態圖片 URL 下載快取（同一次渲染共用；nil 值 = 抓過但失敗，不重試）
+	imgCache map[string][]byte
 }
 
 func parseColor(hex string) (uint8, uint8, uint8) {
@@ -983,11 +990,79 @@ func (c *drawCtx) drawRect(el *Element, y float64) error {
 }
 
 func (c *drawCtx) drawImage(el *Element, y float64) error {
+	// 來源優先序：Key（動態綁定）> URL（固定連結）> AssetID（已上傳）
+	if el.Key != "" {
+		u := c.resolveKey(el.Key, el.Sample) // fallback Sample
+		return c.drawImageURLRect(u, el.X, y, el.Width, el.Height, el.Fit)
+	}
+	if el.URL != "" {
+		return c.drawImageURLRect(el.URL, el.X, y, el.Width, el.Height, el.Fit)
+	}
 	return c.drawImageRect(el.AssetID, el.X, y, el.Width, el.Height, el.Fit)
 }
 
-// drawImageRect 在指定矩形內畫圖（contain 等比縮放置中；stretch 填滿）。
-// 圖片不存在時略過，不讓整份報表失敗。
+// fetchImage 下載圖片 URL（同一次渲染內以 imgCache 去重；nil = 抓過但失敗）。
+// 防護：僅 http/https、逾時 5 秒、上限 10MB、內容必須是 PNG/JPEG。
+// 失敗發警告（strict 模式會擋），不讓整份報表失敗。
+func (c *drawCtx) fetchImage(rawURL string) []byte {
+	if c.imgCache != nil {
+		if data, ok := c.imgCache[rawURL]; ok {
+			return data
+		}
+	}
+	warn := func(msg string) {
+		if c.warn != nil {
+			c.warn(msg)
+		}
+	}
+	remember := func(data []byte) []byte {
+		if c.imgCache != nil {
+			c.imgCache[rawURL] = data
+		}
+		return data
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		warn("圖片 URL 不合法（僅支援 http/https）：" + rawURL)
+		return remember(nil)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		warn("圖片 URL 下載失敗：" + rawURL)
+		return remember(nil)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		warn(fmt.Sprintf("圖片 URL 回應 %d：%s", resp.StatusCode, rawURL))
+		return remember(nil)
+	}
+	const maxImg = 10 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImg+1))
+	if err != nil || len(data) > maxImg {
+		warn("圖片 URL 下載失敗（讀取錯誤或超過 10MB）：" + rawURL)
+		return remember(nil)
+	}
+	if ct := http.DetectContentType(data); ct != "image/png" && ct != "image/jpeg" {
+		warn("圖片 URL 內容不是 PNG/JPEG：" + rawURL)
+		return remember(nil)
+	}
+	return remember(data)
+}
+
+// drawImageURLRect 抓取圖片 URL 並畫在指定矩形內；URL 空或抓取失敗時略過（警告已發）。
+func (c *drawCtx) drawImageURLRect(rawURL string, rx, ry, rw, rh float64, fit string) error {
+	if rawURL == "" {
+		return nil
+	}
+	data := c.fetchImage(rawURL)
+	if data == nil {
+		return nil
+	}
+	return c.drawImageBytesRect(data, rx, ry, rw, rh, fit)
+}
+
+// drawImageRect 畫已上傳圖片（assetID）；圖片不存在時略過，不讓整份報表失敗。
 func (c *drawCtx) drawImageRect(assetID string, rx, ry, rw, rh float64, fit string) error {
 	if assetID == "" || c.assets == nil {
 		return nil
@@ -996,6 +1071,11 @@ func (c *drawCtx) drawImageRect(assetID string, rx, ry, rw, rh float64, fit stri
 	if err != nil {
 		return nil
 	}
+	return c.drawImageBytesRect(data, rx, ry, rw, rh, fit)
+}
+
+// drawImageBytesRect 在指定矩形內畫圖（contain 等比縮放置中；stretch 填滿）。
+func (c *drawCtx) drawImageBytesRect(data []byte, rx, ry, rw, rh float64, fit string) error {
 	x, dy, w, h := rx, ry, rw, rh
 	if fit != "stretch" {
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
@@ -1186,7 +1266,28 @@ func (c *drawCtx) drawTableCells(t *Element, y float64, rows []ExpandedRow) erro
 			}
 			if cell != nil && cell.Kind == "image" {
 				pad := t.CellPadding
+				// 來源優先序：Key（動態；重複列相對 key 已在展開時解析進 Texts）> URL（固定連結）> AssetID
+				if cell.Key != "" {
+					if err := c.drawImageURLRect(text, x0+pad, y0+pad, w-2*pad, h-2*pad, "contain"); err != nil {
+						return err
+					}
+					continue
+				}
+				if cell.URL != "" {
+					if err := c.drawImageURLRect(cell.URL, x0+pad, y0+pad, w-2*pad, h-2*pad, "contain"); err != nil {
+						return err
+					}
+					continue
+				}
 				if err := c.drawImageRect(cell.AssetID, x0+pad, y0+pad, w-2*pad, h-2*pad, "contain"); err != nil {
+					return err
+				}
+				continue
+			}
+			if cell != nil && cell.Kind == "barcode" {
+				// 內容已在展開時解析進 Texts（Key 綁定含重複列相對 key；否則 Value 靜態值）
+				pad := t.CellPadding
+				if err := c.drawBarcodeRect(cell.Symbology, text, cell.ShowText, x0+pad, y0+pad, w-2*pad, h-2*pad); err != nil {
 					return err
 				}
 				continue
@@ -1263,27 +1364,32 @@ func (c *drawCtx) drawTableCells(t *Element, y float64, rows []ExpandedRow) erro
 	return nil
 }
 
-// drawBarcode 畫條碼：內容 = key 綁定資料（fallback sample）或 content 靜態值。
-// 1D 條碼可加人讀文字（showText）；QR 以正方形置中。編碼失敗時畫錯誤框提示。
+// drawBarcode 畫條碼元素：內容 = key 綁定資料（fallback sample）或 content 靜態值。
 func (c *drawCtx) drawBarcode(el *Element, y float64) error {
 	val := el.Content
 	if el.Key != "" {
 		val = c.resolveKey(el.Key, el.Sample)
 	}
+	return c.drawBarcodeRect(el.Symbology, val, el.ShowText, el.X, y, el.Width, el.Height)
+}
+
+// drawBarcodeRect 在指定矩形內畫條碼（元素與表格儲存格共用）。
+// 1D 條碼可加人讀文字（showText）；QR 以正方形置中。編碼失敗時畫錯誤框提示。
+func (c *drawCtx) drawBarcodeRect(symbology, val string, wantText bool, x, y, w, h float64) error {
 	if val == "" {
 		return nil
 	}
 
 	const textH = 11.0 // 人讀文字區高度（pt）
-	barH := el.Height
-	showText := el.ShowText && el.Symbology != "qr"
+	barH := h
+	showText := wantText && symbology != "qr"
 	if showText && barH > textH+6 {
 		barH -= textH
 	}
 
 	var bc barcode.Barcode
 	var err error
-	switch el.Symbology {
+	switch symbology {
 	case "code39":
 		bc, err = code39.Encode(strings.ToUpper(val), false, true)
 	case "ean13":
@@ -1294,21 +1400,21 @@ func (c *drawCtx) drawBarcode(el *Element, y float64) error {
 		bc, err = code128.Encode(val)
 	}
 	if err == nil {
-		if el.Symbology == "qr" {
-			side := int(math.Max(64, math.Min(el.Width, barH)*4))
+		if symbology == "qr" {
+			side := int(math.Max(64, math.Min(w, barH)*4))
 			bc, err = barcode.Scale(bc, side, side)
 		} else {
-			bc, err = barcode.Scale(bc, int(math.Max(float64(bc.Bounds().Dx()), el.Width*4)), int(math.Max(16, barH*4)))
+			bc, err = barcode.Scale(bc, int(math.Max(float64(bc.Bounds().Dx()), w*4)), int(math.Max(16, barH*4)))
 		}
 	}
 	if err != nil {
 		// 編碼失敗：畫錯誤提示框（例如 code39 不支援的字元）
 		c.pdf.SetStrokeColor(220, 38, 38)
 		c.pdf.SetLineWidth(1)
-		c.pdf.RectFromUpperLeftWithStyle(el.X, y, el.Width, el.Height, "D")
+		c.pdf.RectFromUpperLeftWithStyle(x, y, w, h, "D")
 		_ = c.setFont("sans", 8, false)
 		c.pdf.SetTextColor(220, 38, 38)
-		c.pdf.SetXY(el.X+3, y+12)
+		c.pdf.SetXY(x+3, y+12)
 		return c.pdf.Text("條碼編碼失敗: " + err.Error())
 	}
 
@@ -1323,10 +1429,10 @@ func (c *drawCtx) drawBarcode(el *Element, y float64) error {
 	if err != nil {
 		return err
 	}
-	bx, bw := el.X, el.Width
-	if el.Symbology == "qr" {
-		side := math.Min(el.Width, barH)
-		bx = el.X + (el.Width-side)/2
+	bx, bw := x, w
+	if symbology == "qr" {
+		side := math.Min(w, barH)
+		bx = x + (w-side)/2
 		bw = side
 		barH = side
 	}
@@ -1339,7 +1445,7 @@ func (c *drawCtx) drawBarcode(el *Element, y float64) error {
 		}
 		c.pdf.SetTextColor(0, 0, 0)
 		tw := c.measure(val)
-		c.pdf.SetXY(el.X+(el.Width-tw)/2, y+barH+textH-2)
+		c.pdf.SetXY(x+(w-tw)/2, y+barH+textH-2)
 		return c.pdf.Text(val)
 	}
 	return nil
@@ -1350,7 +1456,7 @@ func tableHasSpansOrCellStyle(rows []ExpandedRow) bool {
 	for _, row := range rows {
 		for i := range row.Cells {
 			cell := &row.Cells[i]
-			if cell.ColSpan > 1 || cell.RowSpan > 1 || cell.FontSize > 0 || cell.Color != "" || cell.FillColor != "" || cell.Borders != nil || cell.Wrap || cell.VAlign != "" || cell.Kind == "image" {
+			if cell.ColSpan > 1 || cell.RowSpan > 1 || cell.FontSize > 0 || cell.Color != "" || cell.FillColor != "" || cell.Borders != nil || cell.Wrap || cell.VAlign != "" || cell.Kind == "image" || cell.Kind == "barcode" {
 				return true
 			}
 		}

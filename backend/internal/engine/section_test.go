@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -156,6 +160,195 @@ func TestTableSpansAndCellStyle(t *testing.T) {
 	}
 	if bytes.Equal(out1, out2) {
 		t.Error("逐格樣式應改變輸出")
+	}
+}
+
+func TestBarcodeCell(t *testing.T) {
+	// 條碼儲存格：靜態值（value）＋重複列 key 綁定（相對 key，每列不同碼）
+	doc := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[{"type":"table","id":"tb","x":40,"y":40,"width":300,"height":100,
+	  "columnWidths":[100,200],"rowHeights":[50,50],
+	  "borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+	  "repeat":{"enabled":true,"key":"items","rowIndex":1},
+	  "cells":[
+	   [{"kind":"text","value":"標頭"},{"kind":"barcode","value":"STATIC01","symbology":"code128","showText":true}],
+	   [{"kind":"placeholder","key":"name","sample":"n"},{"kind":"barcode","key":"bc","sample":"S1","symbology":"code39","showText":true}]]}]}`
+	var tpl TemplateDoc
+	if err := json.Unmarshal([]byte(doc), &tpl); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	data := map[string]any{"items": []any{
+		map[string]any{"name": "A", "bc": "09902231104"},
+		map[string]any{"name": "B", "bc": "3453011508028"},
+	}}
+	out, warns, err := e.Render(&tpl, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("正常綁定不應有警告：%v", warns)
+	}
+	// 每列不同碼 → 換一筆資料輸出應不同（證明相對 key 逐列解析）
+	data2 := map[string]any{"items": []any{
+		map[string]any{"name": "A", "bc": "11111111111"},
+		map[string]any{"name": "B", "bc": "3453011508028"},
+	}}
+	out2, _, err := e.Render(&tpl, data2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out, out2) {
+		t.Error("重複列條碼應隨資料改變輸出")
+	}
+	// 缺 key → 警告並退回範例值（不擋渲染）
+	_, warns3, err := e.Render(&tpl, map[string]any{"items": []any{map[string]any{"name": "A"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range warns3 {
+		if strings.Contains(w, "bc") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("缺條碼 key 應有警告：%v", warns3)
+	}
+	// 決定性
+	out3, _, err := e.Render(&tpl, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, out3) {
+		t.Error("條碼儲存格渲染應具決定性")
+	}
+}
+
+func TestImageURLBinding(t *testing.T) {
+	// 假圖床：/img.png 回 2x2 PNG；/nope 回 404；/text 回非圖片內容
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	pngBytes := buf.Bytes()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/img.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBytes)
+		case "/text":
+			_, _ = w.Write([]byte("not an image at all, plain text"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	doc := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[
+	 {"type":"image","id":"logo","x":40,"y":40,"width":120,"height":60,"key":"logoUrl","fit":"contain"},
+	 {"type":"table","id":"tb","x":40,"y":120,"width":200,"height":48,
+	  "columnWidths":[100,100],"rowHeights":[24,24],
+	  "borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+	  "repeat":{"enabled":true,"key":"items","rowIndex":1},
+	  "cells":[
+	   [{"kind":"text","value":"名","bold":true},{"kind":"text","value":"圖","bold":true}],
+	   [{"kind":"placeholder","key":"name","sample":"n"},{"kind":"image","key":"photo","value":"","sample":""}]]}]}`
+	var tpl TemplateDoc
+	if err := json.Unmarshal([]byte(doc), &tpl); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	data := map[string]any{
+		"logoUrl": srv.URL + "/img.png",
+		"items": []any{
+			map[string]any{"name": "A", "photo": srv.URL + "/img.png"},
+			map[string]any{"name": "B", "photo": srv.URL + "/img.png"},
+		},
+	}
+	out, warns, err := e.Render(&tpl, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("正常抓取不應有警告：%v", warns)
+	}
+	// 沒有圖片資料 → 輸出不同（圖真的被畫進去了）
+	outNo, _, err := e.Render(&tpl, map[string]any{
+		"items": []any{map[string]any{"name": "A"}, map[string]any{"name": "B"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out, outNo) {
+		t.Error("URL 圖片應改變輸出")
+	}
+	// 決定性：同輸入兩次 byte 相同
+	out2, _, err := e.Render(&tpl, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, out2) {
+		t.Error("URL 圖片渲染應具決定性")
+	}
+	// 失敗情境：404 / 非圖片內容 / 非 http scheme → 警告不擋渲染
+	for _, bad := range []string{srv.URL + "/nope", srv.URL + "/text", "ftp://x/y.png"} {
+		_, warns, err := e.Render(&tpl, map[string]any{
+			"logoUrl": bad,
+			"items":   []any{map[string]any{"name": "A", "photo": bad}},
+		})
+		if err != nil {
+			t.Fatalf("%s：不應硬錯誤：%v", bad, err)
+		}
+		if len(warns) == 0 {
+			t.Errorf("%s：應發出警告", bad)
+		}
+	}
+	// 固定圖片連結（url 欄位，元素與儲存格）：無 key 也能渲染
+	staticDoc := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[
+	 {"type":"image","id":"logo","x":40,"y":40,"width":120,"height":60,"url":"` + srv.URL + `/img.png","fit":"contain"},
+	 {"type":"table","id":"tb","x":40,"y":120,"width":200,"height":24,
+	  "columnWidths":[100,100],"rowHeights":[24],
+	  "borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+	  "cells":[[{"kind":"image","value":"","url":"` + srv.URL + `/img.png"},{"kind":"text","value":"x"}]]}]}`
+	var staticTpl TemplateDoc
+	if err := json.Unmarshal([]byte(staticDoc), &staticTpl); err != nil {
+		t.Fatal(err)
+	}
+	outStatic, warnsStatic, err := e.Render(&staticTpl, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnsStatic) != 0 {
+		t.Errorf("固定連結不應有警告：%v", warnsStatic)
+	}
+	staticTpl2 := staticTpl
+	staticTpl2.Elements = cloneElements(staticTpl.Elements)
+	staticTpl2.Elements[0].URL = ""
+	staticTpl2.Elements[1].Cells[0][0].URL = ""
+	outNoURL, _, err := e.Render(&staticTpl2, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(outStatic, outNoURL) {
+		t.Error("固定圖片連結應改變輸出")
+	}
+
+	// 缺 key → 找不到資料警告
+	_, warns2, err := e.Render(&tpl, map[string]any{"items": []any{map[string]any{"name": "A"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range warns2 {
+		if strings.Contains(w, "logoUrl") || strings.Contains(w, "photo") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("缺圖片 key 應有警告：%v", warns2)
 	}
 }
 

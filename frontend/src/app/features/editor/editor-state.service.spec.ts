@@ -156,6 +156,50 @@ describe('EditorStateService', () => {
     expect(data.items[0]['$row']).toBeUndefined();
   });
 
+  it('buildSampleData：動態圖片 key 產範例 URL（元素與重複列儲存格）', () => {
+    state.addElement({
+      type: 'image', x: 0, y: 0, width: 100, height: 50,
+      assetId: '', fit: 'contain', key: 'logoUrl', sample: 'https://x.test/logo.png',
+    } as any);
+    state.select(null);
+    state.addElement({
+      type: 'table', x: 0, y: 100, width: 180, height: 48,
+      columnWidths: [90, 90], rowHeights: [24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1 },
+      cells: [
+        [{ kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false },
+         { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false }],
+        [{ kind: 'placeholder', value: '', key: 'name', sample: '品', align: 'left', bold: false },
+         { kind: 'image', value: '', key: 'photo', sample: 'https://x.test/p.png', align: 'left', bold: false }],
+      ],
+    } as any);
+    const data: any = state.buildSampleData();
+    expect(data.logoUrl).toBe('https://x.test/logo.png');
+    expect(data.items[0].photo).toBe('https://x.test/p.png'); // URL 不加序號
+    expect(data.items[1].photo).toBe('https://x.test/p.png');
+    expect(data.items[0].name).toBe('品1'); // 一般欄位維持加序號
+  });
+
+  it('buildSampleData：條碼儲存格 key 產範例值（原樣、不加序號）', () => {
+    state.addElement({
+      type: 'table', x: 0, y: 0, width: 180, height: 48,
+      columnWidths: [90, 90], rowHeights: [24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1 },
+      cells: [
+        [{ kind: 'barcode', value: '', key: 'topBc', sample: 'A001', align: 'left', bold: false },
+         { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false }],
+        [{ kind: 'barcode', value: '', key: 'bc', sample: 'B002', align: 'left', bold: false },
+         { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false }],
+      ],
+    } as any);
+    const data: any = state.buildSampleData();
+    expect(data.topBc).toBe('A001'); // 非重複列 → 頂層 key
+    expect(data.items[0].bc).toBe('B002'); // 重複列 → 相對 key、每列同值不加序號
+    expect(data.items[1].bc).toBe('B002');
+  });
+
   it('copyElement / paste：重配 id、偏移 12pt、連續貼上階梯排開', () => {
     state.addElement(textEl() as any);
     const srcId = state.selectedId()!;

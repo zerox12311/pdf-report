@@ -35,8 +35,11 @@ export class EditorStateService {
   readonly previewData = signal('');
   /** 尺規單位（左上角切換） */
   readonly rulerUnit = signal<'pt' | 'mm' | 'in'>('pt');
-  /** 圖片上傳目標為某儲存格時的請求（editor-page 監聽並開檔案選擇器） */
-  readonly imagePickRequest = signal<{ tableId: string; r: number; c: number } | null>(null);
+  /** 圖片上傳請求（editor-page 監聽並開檔案選擇器）：目標為某儲存格或某圖片元素 */
+  readonly imagePickRequest = signal<{ tableId: string; r: number; c: number } | { elementId: string } | null>(null);
+
+  /** 拖曳可進格子的既有元素（圖片/條碼）時，指標下的目標儲存格（畫布高亮＋放開時插入） */
+  readonly elementDropCell = signal<{ tableId: string; r: number; c: number } | null>(null);
 
   /** 右鍵選單（viewport 座標；null = 關閉）。項目由觸發端組好丟進來 */
   readonly contextMenu = signal<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
@@ -886,6 +889,10 @@ export class EditorStateService {
       if (el.type === 'barcode' && el.key && !el.key.startsWith('$')) {
         setPath(data, el.key, el.sample || '123456');
       }
+      // 動態圖片：範例值 = 範例 URL（沒填就不產，避免預覽對假網址發警告）
+      if (el.type === 'image' && el.key && !el.key.startsWith('$') && el.sample) {
+        setPath(data, el.key, el.sample);
+      }
       if (el.type === 'table') {
         const rep = el.repeat;
         const grouped = !!(rep?.enabled && rep.groupBy);
@@ -894,6 +901,19 @@ export class EditorStateService {
           const isRepeatRow = rep?.enabled && rep.key && r === rep.rowIndex;
           const isGroupRow = grouped && (r === rep!.groupHeaderRowIndex || r === rep!.groupFooterRowIndex);
           for (const cell of el.cells[r]) {
+            // 圖片/條碼儲存格的 key 綁定：範例值原樣（不加序號、不轉數字——URL 與條碼內容都是字面）
+            if ((cell.kind === 'image' || cell.kind === 'barcode') && cell.key && !cell.key.startsWith('$')) {
+              const raw = cell.kind === 'barcode' ? (cell.sample || '123456') : cell.sample;
+              if (!raw) continue; // 圖片沒範例 URL 就不產（避免預覽對假網址發警告）
+              if (isRepeatRow || isGroupRow) {
+                for (let i = 0; i < rowCount; i++) {
+                  setPath(data, `${rep!.key}[${i}].${cell.key}`, raw);
+                }
+              } else {
+                setPath(data, cell.key, raw);
+              }
+              continue;
+            }
             if (cell.kind !== 'placeholder' || !cell.key || cell.key.startsWith('$')) continue;
             if (isRepeatRow) {
               for (let i = 0; i < rowCount; i++) {

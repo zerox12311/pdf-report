@@ -1,10 +1,10 @@
 import { DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, signal } from '@angular/core';
 import { ContainerElement, TemplateElement } from '../../core/models/template.model';
 import { STRIP, modelToVisualY, visualToModelY } from './band-geometry';
 import { CanvasElementComponent } from './canvas-element.component';
 import { ContextMenuItem, EditorStateService } from './editor-state.service';
-import { DataKeyPayload, PaletteAction, createElements, placeholderFromData, tableFromArray } from './element-factory';
+import { DataKeyPayload, PaletteAction, canDropIntoCell, createElements, elementToCellPatch, placeholderFromData, tableFromArray } from './element-factory';
 import { mmToPt, ptToMm, sectionWatermark } from '../../core/models/template.model';
 import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snapping';
 
@@ -412,8 +412,44 @@ export class EditorCanvasComponent {
 
   // ---- 拖放進容器的提示（元件盤拖入與畫布內拖曳共用） ----
   dropContainerId = signal<string | null>(null);
-  /** 元件盤拖了「圖片」到畫布：交給頁面開檔案選擇器，並記住放置座標 */
-  imageDrop = output<{ x: number; y: number }>();
+
+  /**
+   * 拖曳可進格子的既有元素（圖片/條碼）時：算出指標下的表格儲存格
+   * （幾何命中測試——pointer 拖曳不走 HTML5 DnD，且被拖的元素蓋在最上層，
+   * elementFromPoint 打不到底下的格子）。
+   */
+  private updateElementDropCell(e: PointerEvent) {
+    if (!this.drag || !canDropIntoCell(this.drag.elType)) return;
+    const page = document.querySelector('.page');
+    if (!page) {
+      this.state.elementDropCell.set(null);
+      return;
+    }
+    const rect = page.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / this.z();
+    const py = this.visualToModelY(e.clientY - rect.top);
+    for (const el of this.state.visibleElements()) {
+      if (el.type !== 'table') continue;
+      if (px < el.x || px > el.x + el.width || py < el.y || py > el.y + el.height) continue;
+      let cx = el.x;
+      let col = -1;
+      for (let i = 0; i < el.columnWidths.length; i++) {
+        if (px < cx + el.columnWidths[i]) { col = i; break; }
+        cx += el.columnWidths[i];
+      }
+      let cy = el.y;
+      let row = -1;
+      for (let i = 0; i < el.rowHeights.length; i++) {
+        if (py < cy + el.rowHeights[i]) { row = i; break; }
+        cy += el.rowHeights[i];
+      }
+      if (col >= 0 && row >= 0) {
+        this.state.elementDropCell.set({ tableId: el.id, r: row, c: col });
+        return;
+      }
+    }
+    this.state.elementDropCell.set(null);
+  }
 
   /** 找座標（model pt）下的容器 */
   private containerAt(x: number, y: number, excludeId: string | null): ContainerElement | null {
@@ -467,10 +503,6 @@ export class EditorCanvasComponent {
     e.preventDefault();
     const pt = this.dropPoint(e);
     if (!pt) return;
-    if (action === 'image') {
-      this.imageDrop.emit(pt);
-      return;
-    }
     const els = createElements(action as PaletteAction, 0);
     // 以 drop 點為整組元素的左上角（cvs3 套件保留內部相對位移）
     const minX = Math.min(...els.map(el => el.x));
@@ -575,12 +607,30 @@ export class EditorCanvasComponent {
       window.removeEventListener('pointerup', onUp);
       const d = this.drag;
       const dropTarget = this.dropContainerId();
+      const cellTarget = this.state.elementDropCell();
       this.drag = null;
       this.guideV.set(null);
       this.guideH.set(null);
       this.dropContainerId.set(null);
+      this.state.elementDropCell.set(null);
       this.activeDragCleanup = null;
       if (!d || d.mode !== 'move' || !d.moved) return;
+      // 既有元素（圖片/條碼）放到表格儲存格上 → 該格繼承其來源設定，元素移除
+      if (cellTarget) {
+        const src = this.state.findElement(d.id);
+        const tbl = this.state.findElement(cellTarget.tableId);
+        const patch = src ? elementToCellPatch(src) : null;
+        if (patch && tbl?.type === 'table') {
+          const cells = tbl.cells.map((row, ri) => row.map((cell, ci) =>
+            ri === cellTarget.r && ci === cellTarget.c ? { ...cell, ...patch } : cell));
+          this.state.patchElement(tbl.id, { cells });
+          this.state.removeElement(d.id);
+          this.state.select(tbl.id);
+          this.state.selectedCell.set({ row: cellTarget.r, col: cellTarget.c });
+          this.state.selectedCellRange.set(null);
+          return;
+        }
+      }
       if (d.parent) {
         // 子元素被拖到容器邊界外（中心離開）→ 放開時提升為頂層；落在別的容器上則移進去
         const cur = this.state.findElement(d.id);
@@ -622,6 +672,8 @@ export class EditorCanvasComponent {
     // 閾值 5px：雙擊時的微小晃動不觸發拖曳（否則就地編輯很難點出來）
     if (!this.drag.moved && Math.abs(dxPx) < 5 && Math.abs(dyPx) < 5) return;
     this.drag.moved = true;
+    // 圖片/條碼元素拖曳：追蹤指標下的儲存格（放開時插入）
+    if (this.drag.mode === 'move') this.updateElementDropCell(e);
     const { orig, parent } = this.drag;
     const z = this.z();
     const round = (v: number) => Math.round(v * 10) / 10;

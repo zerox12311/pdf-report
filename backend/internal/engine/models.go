@@ -127,7 +127,12 @@ type Element struct {
 	Children []Element `json:"children"` // 限一層（容器內不再放容器）
 
 	// image
+	// image 三種來源（優先序 Key > URL > AssetID）：
+	//   Key = 動態圖片，渲染資料中該 key 的值是圖片 URL（Sample 為畫布預覽用範例 URL）
+	//   URL = 固定圖片連結（靜態），渲染時抓取
+	//   AssetID = 已上傳圖片
 	AssetID string `json:"assetId"`
+	URL     string `json:"url"`
 	Fit     string `json:"fit"` // contain | stretch
 
 	// rect / line
@@ -157,7 +162,7 @@ type CellBorders struct {
 }
 
 type TableCell struct {
-	Kind   string `json:"kind"` // text | placeholder
+	Kind   string `json:"kind"` // text | placeholder | image | barcode
 	Value  string `json:"value"`
 	Key    string `json:"key"`
 	Sample string `json:"sample"`
@@ -172,6 +177,11 @@ type TableCell struct {
 	Color     string  `json:"color"`     // 逐格文字顏色（空 = 黑）
 	FillColor string  `json:"fillColor"` // 儲存格背景色（空 = 透明；表頭列底色用）
 	AssetID   string  `json:"assetId"`   // Kind = image 時的圖片（contain 縮放進儲存格）
+	URL       string  `json:"url"`       // Kind = image 時的固定圖片連結（優先序 Key > URL > AssetID）
+
+	// Kind = barcode：內容 = Key 綁定（fallback Sample）或 Value 靜態值
+	Symbology string `json:"symbology"` // 條碼類型（空 = code128）
+	ShowText  bool   `json:"showText"`  // 1D 條碼下方顯示人讀文字
 
 	Borders *CellBorders `json:"borders"` // 逐格框線（nil = 四邊都畫）
 	Wrap    bool         `json:"wrap"`    // 自動換行：內容超寬換行、列高自動延伸（false = 單行裁切加 …）

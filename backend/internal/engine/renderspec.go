@@ -255,20 +255,38 @@ type WarnFunc func(msg string)
 // cellText 解析儲存格內容。rowNum > 0 表示在重複列內（$row = 列序號）；
 // root 為整份資料（$sum 等全域彙總對整份資料計算）；group 非 nil 時可用 $gsum/$gcount/$gavg。
 func cellText(cell TableCell, ctx, root any, rowNum int, group []any, warn WarnFunc) string {
-	if cell.Kind != "placeholder" {
+	// 解析 Key 綁定（吃重複列相對 key / $ 函式）；找不到時警告並退回 Sample
+	resolveBound := func() string {
+		if v, ok := resolveCellKeyOK(cell.Key, ctx, root, rowNum, group); ok {
+			return v
+		}
+		if warn != nil && cell.Key != "" {
+			warn("找不到資料 key：" + cell.Key + "（已用範例值代替）")
+		}
+		return cell.Sample
+	}
+	switch cell.Kind {
+	case "placeholder":
+		return formatValue(resolveBound(), cell.Format)
+	case "image":
+		// Key = 動態圖片 URL 綁定（不做值格式化）；無 Key 時圖片來源在繪製端（URL/AssetID）
+		if cell.Key == "" {
+			return ""
+		}
+		return resolveBound()
+	case "barcode":
+		// 條碼內容 = Key 綁定或 Value 靜態值（與條碼元素語意一致）
+		if cell.Key == "" {
+			return cell.Value
+		}
+		return resolveBound()
+	default:
 		// text 儲存格也支援 {{key|fmt}} 行內插值（與文字元件一致），並吃重複列上下文
 		// （$row / $gsum(...) / 相對 key）。無 token 時原樣回傳（零成本）。
 		return interpolateText(cell.Value, func(key string) string {
 			return resolveCellKey(key, ctx, root, rowNum, group, warn)
 		})
 	}
-	v := cell.Sample
-	if r, ok := resolveCellKeyOK(cell.Key, ctx, root, rowNum, group); ok {
-		v = r
-	} else if warn != nil && cell.Key != "" {
-		warn("找不到資料 key：" + cell.Key + "（已用範例值代替）")
-	}
-	return formatValue(v, cell.Format)
 }
 
 // resolveCellKeyOK 依重複列上下文解析儲存格 key（$row / 群組彙總 / 全域彙總 / 資料路徑）。
@@ -407,9 +425,18 @@ func ExpandTableWarn(t *Element, data any, warn WarnFunc) []ExpandedRow {
 			cells := tableRowCells(t, r)
 			texts := make([]string, len(cells))
 			for c, cell := range cells {
-				if cell.Kind == "placeholder" {
+				switch cell.Kind {
+				case "placeholder":
 					texts[c] = formatValue(cell.Sample, cell.Format)
-				} else {
+				case "image":
+					texts[c] = cell.Sample // 動態圖片的範例 URL
+				case "barcode":
+					if cell.Key != "" {
+						texts[c] = cell.Sample
+					} else {
+						texts[c] = cell.Value
+					}
+				default:
 					texts[c] = cell.Value
 				}
 			}

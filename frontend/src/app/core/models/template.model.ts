@@ -185,6 +185,12 @@ export interface ImageElement extends ElementBase {
   type: 'image';
   assetId: string;
   fit: 'contain' | 'stretch';
+  /** 動態圖片：key 綁定的資料值 = 可訪問的圖片 URL（http/https），渲染時由引擎抓取嵌入 */
+  key?: string;
+  /** 範例 URL（畫布預覽與範例資料用） */
+  sample?: string;
+  /** 固定圖片連結（靜態 URL，渲染時抓取）。優先序：key > url > assetId */
+  url?: string;
 }
 
 export interface RectElement extends ElementBase {
@@ -213,7 +219,7 @@ export interface CellBorders {
 }
 
 export interface TableCell {
-  kind: 'text' | 'placeholder' | 'image';
+  kind: 'text' | 'placeholder' | 'image' | 'barcode';
   value: string;
   key: string;
   sample: string;
@@ -236,6 +242,12 @@ export interface TableCell {
   wrap?: boolean;
   /** kind = image 時的圖片（contain 縮放進儲存格） */
   assetId?: string;
+  /** kind = image 時的固定圖片連結（靜態 URL）。優先序：key > url > assetId */
+  url?: string;
+  /** kind = barcode 時的條碼類型（未設 = code128）；內容 = key 綁定（fallback sample）或 value 靜態值 */
+  symbology?: BarcodeSymbology;
+  /** kind = barcode 時 1D 條碼下方顯示人讀文字 */
+  showText?: boolean;
 }
 
 /** 表格中被合併儲存格蓋住的格子（"r,c" 集合） */
@@ -282,10 +294,13 @@ export interface TableElement extends ElementBase {
   repeat?: TableRepeat | null;
 }
 
+/** 條碼類型（元素與表格儲存格共用） */
+export type BarcodeSymbology = 'code128' | 'code39' | 'ean13' | 'qr';
+
 /** 條碼：內容 = key 綁定資料（fallback sample），key 空則用 content 靜態值 */
 export interface BarcodeElement extends ElementBase {
   type: 'barcode';
-  symbology: 'code128' | 'code39' | 'ean13' | 'qr';
+  symbology: BarcodeSymbology;
   content: string;
   key: string;
   sample: string;
