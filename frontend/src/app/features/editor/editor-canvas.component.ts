@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, i
 import { ContainerElement, TemplateElement } from '../../core/models/template.model';
 import { STRIP, modelToVisualY, visualToModelY } from './band-geometry';
 import { CanvasElementComponent } from './canvas-element.component';
-import { EditorStateService } from './editor-state.service';
+import { ContextMenuItem, EditorStateService } from './editor-state.service';
 import { DataKeyPayload, PaletteAction, createElements, placeholderFromData, tableFromArray } from './element-factory';
 import { mmToPt, ptToMm, sectionWatermark } from '../../core/models/template.model';
 import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snapping';
@@ -14,6 +14,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
   imports: [DecimalPipe, CanvasElementComponent],
   template: `
     <div class="canvas-wrap" (pointerdown)="state.select(null)"
+      (contextmenu)="onCanvasMenu($event)"
       (dragover)="onPaletteDragOver($event)" (drop)="onPaletteDrop($event)"
       (dragleave)="dropContainerId.set(null)">
       <div class="page" [style.width.px]="pageW() * z()" [style.height.px]="totalVisualH()">
@@ -85,6 +86,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
           <div
             class="el"
             [attr.data-el-id]="el.id"
+            [class.cellsel]="el.type === 'table'"
             [class.selected]="el.id === state.selectedId()"
             [class.drop-hint]="el.type === 'container' && el.id === dropContainerId()"
             [style.zIndex]="el.aboveWatermark && wm()?.layer === 'above' ? 9 : null"
@@ -93,6 +95,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             [style.width.px]="el.width * z()"
             [style.height.px]="elHeight(el) * z()"
             (pointerdown)="onPointerDown($event, el, 'move')"
+            (contextmenu)="onElementMenu($event, el, null)"
           >
             @if (el.type === 'container') {
               <div class="container-box"
@@ -103,18 +106,24 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
               @for (child of el.children; track child.id) {
                 <div class="el child"
                   [attr.data-el-id]="child.id"
+                  [class.cellsel]="child.type === 'table'"
                   [class.selected]="child.id === state.selectedId()"
                   [style.left.px]="child.x * z()"
                   [style.top.px]="child.y * z()"
                   [style.width.px]="child.width * z()"
                   [style.height.px]="elHeight(child) * z()"
                   (pointerdown)="onPointerDown($event, child, 'move', el)"
+                  (contextmenu)="onElementMenu($event, child, el)"
                 >
                   <app-canvas-element [el]="child" />
                   @if (child.id === state.selectedId()) {
                     <div class="resize-handle" (pointerdown)="onPointerDown($event, child, 'resize', el, 'se')"></div>
                     <div class="resize-e" (pointerdown)="onPointerDown($event, child, 'resize', el, 'e')"></div>
                     <div class="resize-s" (pointerdown)="onPointerDown($event, child, 'resize', el, 's')"></div>
+                    @if (child.type === 'table') {
+                      <div class="move-handle" title="拖曳移動表格"
+                        (pointerdown)="onPointerDown($event, child, 'move', el)">✥</div>
+                    }
                   }
                 </div>
               }
@@ -125,6 +134,10 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
               <div class="resize-handle" (pointerdown)="onPointerDown($event, el, 'resize', null, 'se')"></div>
               <div class="resize-e" (pointerdown)="onPointerDown($event, el, 'resize', null, 'e')"></div>
               <div class="resize-s" (pointerdown)="onPointerDown($event, el, 'resize', null, 's')"></div>
+              @if (el.type === 'table') {
+                <div class="move-handle" title="拖曳移動表格"
+                  (pointerdown)="onPointerDown($event, el, 'move')">✥</div>
+              }
             }
           </div>
         }
@@ -133,8 +146,9 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
   `,
   styles: `
     :host { display: block; flex: 1; overflow: auto; background: #d8dce3; }
-    .canvas-wrap { min-height: 100%; padding: 20px; display: flex; justify-content: center; align-items: flex-start; }
-    .page { position: relative; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.3); flex-shrink: 0; }
+    /* 置中用 margin:auto 而非 justify-content:center——後者在內容寬於視窗時左緣會捲不到 */
+    .canvas-wrap { min-height: 100%; padding: 20px; display: flex; align-items: flex-start; }
+    .page { position: relative; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.3); flex-shrink: 0; margin: 0 auto; }
     .band-bg { background: #fff; }
     .strip { height: 22px; background: linear-gradient(#eceff3, #dde2e9); border-top: 1px solid #c3cad4;
       border-bottom: 1px solid #b6bec9; display: flex; align-items: center; justify-content: space-between;
@@ -185,6 +199,13 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
       background: #2563eb; border: 2px solid #fff; border-radius: 4px; cursor: ew-resize; z-index: 6; }
     .resize-s { position: absolute; bottom: -5px; left: 50%; margin-left: -8px; width: 16px; height: 7px;
       background: #2563eb; border: 2px solid #fff; border-radius: 4px; cursor: ns-resize; z-index: 6; }
+    /* 表格：內容區是儲存格框選（cursor: cell），移動靠左上角手柄（Word 慣例） */
+    .el.cellsel { cursor: cell; }
+    .move-handle { position: absolute; left: -16px; top: -16px; width: 16px; height: 16px;
+      display: flex; align-items: center; justify-content: center; font-size: 11px; line-height: 1;
+      color: #1d4ed8; background: #fff; border: 1.5px solid #2563eb; border-radius: 4px;
+      cursor: move; z-index: 6; user-select: none; }
+    .move-handle:hover { background: #eff6ff; }
     .el.drop-hint { outline: 2px solid #f59e0b; outline-offset: 2px; background: rgba(245, 158, 11, .1);
       box-shadow: 0 0 0 6px rgba(245, 158, 11, .15); }
   `,
@@ -403,8 +424,8 @@ export class EditorCanvasComponent {
     return null;
   }
 
-  /** DragEvent → 頁面 model 座標（pt） */
-  private dropPoint(e: DragEvent): { x: number; y: number } | null {
+  /** DragEvent/MouseEvent → 頁面 model 座標（pt） */
+  private dropPoint(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
     const page = document.querySelector('.page');
     if (!page) return null;
     const r = page.getBoundingClientRect();
@@ -468,6 +489,56 @@ export class EditorCanvasComponent {
 
 
 
+  // ---- 右鍵情境選單 ----
+  private readonly isMac = /Mac|iP/.test(navigator.platform);
+  private key(k: string): string {
+    return (this.isMac ? '⌘' : 'Ctrl+') + k;
+  }
+
+  /** 元素右鍵：動作類操作（樣式類留在屬性面板） */
+  onElementMenu(e: MouseEvent, el: TemplateElement, parent: ContainerElement | null) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.state.select(el.id);
+    const pos = this.state.layerPositionOf(el.id);
+    const top = !pos || pos.index >= pos.count - 1;
+    const bottom = !pos || pos.index <= 0;
+    const items: ContextMenuItem[] = [
+      { label: '複製', shortcut: this.key('C'), run: () => this.state.copyElement(el.id) },
+      { label: '貼上', shortcut: this.key('V'), disabled: !this.state.hasClipboard(), run: () => this.state.paste() },
+      { label: '建立副本', shortcut: this.key('D'), run: () => this.state.duplicateElement(el.id) },
+      { kind: 'sep' },
+      { label: '上移一層', disabled: top, run: () => this.state.moveLayer(el.id, 'up') },
+      { label: '下移一層', disabled: bottom, run: () => this.state.moveLayer(el.id, 'down') },
+      { label: '移到最上層', disabled: top, run: () => this.state.moveLayer(el.id, 'front') },
+      { label: '移到最下層', disabled: bottom, run: () => this.state.moveLayer(el.id, 'back') },
+      { kind: 'sep' },
+      // 容器子元素的浮水印階層跟隨容器（引擎規則），不提供獨立開關
+      ...(parent ? [] : [{
+        label: '置於浮水印之上',
+        checked: !!el.aboveWatermark,
+        run: () => this.state.patchElement(el.id, { aboveWatermark: !el.aboveWatermark }),
+      } satisfies ContextMenuItem]),
+      ...(parent ? [{ label: '移出容器', run: () => this.state.moveOutOfContainer(el.id) } satisfies ContextMenuItem] : []),
+      { kind: 'sep' },
+      { label: '刪除', shortcut: 'Del', danger: true, run: () => this.state.removeElement(el.id) },
+    ];
+    this.state.openContextMenu(e.clientX, e.clientY, items);
+  }
+
+  /** 空白畫布右鍵：貼在滑鼠位置 */
+  onCanvasMenu(e: MouseEvent) {
+    e.preventDefault();
+    const pt = this.dropPoint(e);
+    const items: ContextMenuItem[] = [{
+      label: '貼上',
+      shortcut: this.key('V'),
+      disabled: !this.state.hasClipboard() || !pt,
+      run: () => { if (pt) this.state.pasteAt(pt.x, pt.y); },
+    }];
+    this.state.openContextMenu(e.clientX, e.clientY, items);
+  }
+
   // ---- 元素拖曳 / 縮放 ----
   private drag: {
     mode: 'move' | 'resize';
@@ -488,6 +559,8 @@ export class EditorCanvasComponent {
     e.stopPropagation();
     e.preventDefault();
     this.state.select(el.id);
+    // 右鍵只選取（選單由 contextmenu 開），不進入拖曳
+    if (e.button !== 0) return;
     this.drag = {
       mode, id: el.id, startX: e.clientX, startY: e.clientY,
       orig: { x: el.x, y: el.y, width: el.width, height: el.height },

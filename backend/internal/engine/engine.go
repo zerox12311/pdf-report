@@ -141,6 +141,7 @@ type tableFragment struct {
 
 // cloneElements 深拷貝元素（含容器子元素與可變指標欄位）。
 // Render 過程會就地調整高度/位移，拷貝確保呼叫者的 doc 不被修改（可安全重用/快取）。
+// ⚠ schema 新增「指標/slice」欄位時必須在此補手動深拷貝（scalar 欄位由 copy 帶過，不用）。
 func cloneElements(src []Element) []Element {
 	out := make([]Element, len(src))
 	copy(out, src)
@@ -168,11 +169,51 @@ func cloneElements(src []Element) []Element {
 	return out
 }
 
+// applyWrapHeights 依自動換行儲存格的實際行數調高列高（只增不減）。
+// 需在字型註冊後呼叫；行高幾何與 drawTableCells 的多行繪製一致。
+// rowSpan 合併格以單列需求近似（罕見組合，超出部分維持裁切）。
+func (c *drawCtx) applyWrapHeights(t *Element, rows []ExpandedRow) {
+	if !tableHasWrap(t) {
+		return
+	}
+	for ri := range rows {
+		row := &rows[ri]
+		for ci := range row.Cells {
+			cell := &row.Cells[ci]
+			if !cell.Wrap || cell.Kind == "image" || ci >= len(row.Texts) || row.Texts[ci] == "" {
+				continue
+			}
+			fs := t.FontSize
+			if cell.FontSize > 0 {
+				fs = cell.FontSize
+			}
+			if err := c.setFont(t.FontFamily, fs, cell.Bold); err != nil {
+				continue
+			}
+			cs := max(1, cell.ColSpan)
+			w := 0.0
+			for i := ci; i < min(ci+cs, len(t.ColumnWidths)); i++ {
+				w += t.ColumnWidths[i]
+			}
+			lines := WrapText(row.Texts[ci], w-2*t.CellPadding, c.measure)
+			needed := float64(len(lines))*cellLineHeight*fs + 2*t.CellPadding
+			if needed > row.Height {
+				row.Height = needed
+			}
+		}
+	}
+}
+
 // layout 一次渲染的版面計算結果：band 分類 → 撐高（autoGrow/容器）→ 分頁。
 // 中間狀態集中於此，Render 只剩流程骨架。
 type layout struct {
 	doc  *TemplateDoc
 	data any
+
+	// meas 量測用 drawCtx（applyGrowth 設定；換行列高計算需要字型 metrics）
+	meas *drawCtx
+	// expanded 展開列快取（含換行列高）：同一次渲染中位移/分頁/繪製吃同一份高度
+	expanded map[string][]ExpandedRow
 
 	pageW, pageH  float64
 	contentTop    float64 // 內容區上緣（= 頁首高）
@@ -223,6 +264,23 @@ func newLayout(doc *TemplateDoc, data any) (*layout, error) {
 	return l, nil
 }
 
+// expandTable 展開表格並套用換行列高（快取；同一次渲染高度一致）。
+// meas 未設（理論上不會）時退回無量測展開。
+func (l *layout) expandTable(el *Element) []ExpandedRow {
+	if rows, ok := l.expanded[el.ID]; ok {
+		return rows
+	}
+	rows := ExpandTableWarn(el, l.data, l.warn)
+	if l.meas != nil {
+		l.meas.applyWrapHeights(el, rows)
+	}
+	if l.expanded == nil {
+		l.expanded = map[string][]ExpandedRow{}
+	}
+	l.expanded[el.ID] = rows
+	return rows
+}
+
 // textBlockHeight 文字塊所需高度（行數 × 行高 + 上下內距）；與 drawTextBlock 的行高幾何一致。
 func textBlockHeight(lineCount int, el *Element) float64 {
 	return 2*el.Padding + float64(lineCount)*el.LineHeight*el.FontSize
@@ -231,6 +289,15 @@ func textBlockHeight(lineCount int, el *Element) float64 {
 // applyGrowth 處理 autoGrow 文字與容器撐高：
 // band 內元素只長高自身；內文元素長高後，設計位置在其下緣以下的元素加位移。
 func (l *layout) applyGrowth(meas *drawCtx) {
+	l.meas = meas
+	// 換行儲存格會改變 repeat 展開總高：以量測後高度重算位移
+	// （沒有換行儲存格時跳過，維持既有輸出不變）
+	for _, el := range l.bodyEls {
+		if isRepeatTable(el) && tableHasWrap(el) {
+			l.offsets = l.measuredRepeatOffsets()
+			break
+		}
+	}
 	growText := func(el *Element) float64 {
 		if !el.AutoGrow || (el.Type != "text" && el.Type != "placeholder") {
 			return 0
@@ -251,10 +318,10 @@ func (l *layout) applyGrowth(meas *drawCtx) {
 		el.Height = needed
 		return grow
 	}
-	// 元素展開後的實際高度（repeat 表格 = 展開總高）
+	// 元素展開後的實際高度（repeat/換行表格 = 展開總高）
 	effHeight := func(ch *Element) float64 {
-		if isRepeatTable(ch) {
-			return sumHeights(ExpandTable(ch, l.data))
+		if isRepeatTable(ch) || tableHasWrap(ch) {
+			return sumHeights(l.expandTable(ch))
 		}
 		return ch.Height
 	}
@@ -273,8 +340,8 @@ func (l *layout) applyGrowth(meas *drawCtx) {
 			ch := &el.Children[i]
 			designH := ch.Height
 			var d float64
-			if isRepeatTable(ch) {
-				d = sumHeights(ExpandTable(ch, l.data)) - designH
+			if isRepeatTable(ch) || tableHasWrap(ch) {
+				d = sumHeights(l.expandTable(ch)) - designH
 			} else {
 				d = growText(ch)
 			}
@@ -316,6 +383,14 @@ func (l *layout) applyGrowth(meas *drawCtx) {
 		if el.Type == "container" {
 			grow = growContainer(el)
 		}
+		// 非 repeat 的換行表格：列高增加後撐高自身並推移下方元素
+		// （repeat 表格的位移已在 measuredRepeatOffsets 處理）
+		if !isRepeatTable(el) && tableHasWrap(el) {
+			if d := sumHeights(l.expandTable(el)) - el.Height; d > 0 {
+				el.Height += d
+				grow = d
+			}
+		}
 		if grow > 0 {
 			for _, other := range l.bodyEls {
 				if other.ID != el.ID && other.Y >= designBottom-epsilonPt {
@@ -324,6 +399,33 @@ func (l *layout) applyGrowth(meas *drawCtx) {
 			}
 		}
 	}
+}
+
+// measuredRepeatOffsets 與 ComputeRepeatOffsets 同邏輯，但用量測後（含換行列高）
+// 的展開總高計算位移——只在有換行儲存格的 repeat 表格存在時使用。
+func (l *layout) measuredRepeatOffsets() map[string]float64 {
+	offsets := map[string]float64{}
+	tables := []*Element{}
+	for i := range l.doc.Elements {
+		if isRepeatTable(&l.doc.Elements[i]) {
+			tables = append(tables, &l.doc.Elements[i])
+		}
+	}
+	sort.Slice(tables, func(i, j int) bool { return tables[i].Y < tables[j].Y })
+	for _, t := range tables {
+		designH := sumFloats(t.RowHeights)
+		delta := sumHeights(l.expandTable(t)) - designH
+		if math.Abs(delta) < epsilonGrow {
+			continue
+		}
+		for i := range l.doc.Elements {
+			el := &l.doc.Elements[i]
+			if el.ID != t.ID && el.Y >= t.Y+designH-epsilonPt {
+				offsets[el.ID] += delta
+			}
+		}
+	}
+	return offsets
 }
 
 // locate 把連續座標 c（第 0 頁內容區起算、每頁接續 contentH）換算成（頁碼, 頁內 y）。
@@ -349,7 +451,7 @@ func (l *layout) paginate() {
 		c := el.Y + l.offsets[el.ID] + shift
 
 		if isRepeatTable(el) {
-			rows := ExpandTableWarn(el, l.data, l.warn)
+			rows := l.expandTable(el)
 			headerRowCount := min(PageHeaderRowCount(el), len(rows))
 			headerRows := rows[:headerRowCount]
 			headerRowsH := sumHeights(headerRows)
@@ -709,13 +811,7 @@ var interpolateRe = regexp.MustCompile(`\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s
 // interpolate 把文字中的 {{key|format}} 換成資料值：key 走 resolveKey（資料路徑或 $page/$sum 等引擎 key），
 // 缺 key 走警告機制並以空字串代入。無 token 時原樣回傳（零成本快速路徑）。
 func (c *drawCtx) interpolate(content string) string {
-	if !strings.Contains(content, "{{") {
-		return content
-	}
-	return interpolateRe.ReplaceAllStringFunc(content, func(m string) string {
-		parts := interpolateRe.FindStringSubmatch(m)
-		return formatValue(c.resolveKey(parts[1], ""), parts[2])
-	})
+	return interpolateText(content, func(key string) string { return c.resolveKey(key, "") })
 }
 
 // isVisible 條件顯示：VisibleKey 空 = 顯示；隱藏的元素仍占版面空間。
@@ -771,7 +867,9 @@ func (c *drawCtx) drawElement(el *Element, y float64) error {
 		return c.drawBarcode(el, y)
 	case "table":
 		// 未啟用 repeat 的表格（或位於頁首/頁尾）：整個畫在該位置
-		return c.drawTableFragment(el, y, ExpandTableWarn(el, c.data, c.warn))
+		rows := ExpandTableWarn(el, c.data, c.warn)
+		c.applyWrapHeights(el, rows) // 與 applyGrowth 的列高計算一致（determinstic，同輸入同結果）
+		return c.drawTableFragment(el, y, rows)
 	case "container":
 		return c.drawContainer(el, y)
 	}
@@ -1054,11 +1152,37 @@ func (c *drawCtx) drawTableCells(t *Element, y float64, rows []ExpandedRow) erro
 			x0, y0 := colLeft[ci], rowTop[ri]
 			w := colLeft[ci+cs] - x0
 			h := rowTop[ri+rs] - y0
+			// 背景色先畫，框線與內容蓋在上面
+			if cell != nil && cell.FillColor != "" {
+				fr, fg, fb := parseColor(cell.FillColor)
+				c.pdf.SetFillColor(fr, fg, fb)
+				c.pdf.RectFromUpperLeftWithStyle(x0, y0, w, h, "F")
+			}
 			if hasBorder {
-				c.pdf.Line(x0, y0, x0+w, y0)
-				c.pdf.Line(x0, y0+h, x0+w, y0+h)
-				c.pdf.Line(x0, y0, x0, y0+h)
-				c.pdf.Line(x0+w, y0, x0+w, y0+h)
+				// 逐格框線：nil = 四邊都畫。共用邊只要任一側有開就會畫（鄰格畫自己的那側）
+				var bd *CellBorders
+				if cell != nil {
+					bd = cell.Borders
+				}
+				if bd == nil || bd.Top {
+					c.pdf.Line(x0, y0, x0+w, y0)
+				}
+				if bd == nil || bd.Bottom {
+					c.pdf.Line(x0, y0+h, x0+w, y0+h)
+				}
+				if bd == nil || bd.Left {
+					c.pdf.Line(x0, y0, x0, y0+h)
+				}
+				if bd == nil || bd.Right {
+					c.pdf.Line(x0+w, y0, x0+w, y0+h)
+				}
+				// 斜線（劃掉未使用欄位）：╲ 左上→右下、╱ 左下→右上
+				if bd != nil && bd.DiagDown {
+					c.pdf.Line(x0, y0, x0+w, y0+h)
+				}
+				if bd != nil && bd.DiagUp {
+					c.pdf.Line(x0, y0+h, x0+w, y0)
+				}
 			}
 			if cell != nil && cell.Kind == "image" {
 				pad := t.CellPadding
@@ -1081,8 +1205,46 @@ func (c *drawCtx) drawTableCells(t *Element, y float64, rows []ExpandedRow) erro
 				} else {
 					c.pdf.SetTextColor(0, 0, 0)
 				}
-				lineWidth := c.measure(text)
 				innerW := w - 2*t.CellPadding
+				if cell.Wrap || cell.VAlign == "top" || cell.VAlign == "bottom" {
+					// 文字塊幾何：換行多行或垂直對齊上/下時使用。
+					// 預設（middle、單行）維持下方原公式，輸出 byte 不變。
+					lineH := cellLineHeight * fs
+					var lines []string
+					if cell.Wrap {
+						lines = WrapText(text, innerW, c.measure)
+					} else {
+						lines = []string{truncateToWidth(text, innerW, c.measure)}
+					}
+					blockH := float64(len(lines)) * lineH
+					var blockTop float64
+					switch cell.VAlign {
+					case "top":
+						blockTop = y0 + t.CellPadding
+					case "bottom":
+						blockTop = y0 + h - t.CellPadding - blockH
+					default:
+						blockTop = y0 + (h-blockH)/2
+					}
+					for i, line := range lines {
+						lineWidth := c.measure(line)
+						lx := x0 + t.CellPadding
+						switch cell.Align {
+						case "center":
+							lx = x0 + t.CellPadding + (innerW-lineWidth)/2
+						case "right":
+							lx = x0 + t.CellPadding + innerW - lineWidth
+						}
+						baseline := blockTop + (float64(i)+0.5)*lineH + CellBaselineRatio*fs
+						c.pdf.SetXY(lx, baseline)
+						if err := c.pdf.Text(line); err != nil {
+							return err
+						}
+					}
+					continue
+				}
+				text = truncateToWidth(text, innerW, c.measure) // 單行溢出裁切，不壓到鄰格
+				lineWidth := c.measure(text)
 				lx := x0 + t.CellPadding
 				switch cell.Align {
 				case "center":
@@ -1188,7 +1350,7 @@ func tableHasSpansOrCellStyle(rows []ExpandedRow) bool {
 	for _, row := range rows {
 		for i := range row.Cells {
 			cell := &row.Cells[i]
-			if cell.ColSpan > 1 || cell.RowSpan > 1 || cell.FontSize > 0 || cell.Color != "" || cell.Kind == "image" {
+			if cell.ColSpan > 1 || cell.RowSpan > 1 || cell.FontSize > 0 || cell.Color != "" || cell.FillColor != "" || cell.Borders != nil || cell.Wrap || cell.VAlign != "" || cell.Kind == "image" {
 				return true
 			}
 		}
@@ -1241,8 +1403,9 @@ func (c *drawCtx) drawTableFragment(t *Element, y float64, rows []ExpandedRow) e
 					return err
 				}
 				c.pdf.SetTextColor(0, 0, 0)
-				lineWidth := c.measure(text)
 				innerW := colW - 2*t.CellPadding
+				text = truncateToWidth(text, innerW, c.measure) // 單行溢出裁切，不壓到鄰格
+				lineWidth := c.measure(text)
 				lx := cellX + t.CellPadding
 				switch cell.Align {
 				case "center":

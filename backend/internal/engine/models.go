@@ -145,20 +145,36 @@ type Element struct {
 	Repeat       *TableRepeat  `json:"repeat"`
 }
 
+// CellBorders 儲存格四邊框線開關（Word 式逐格框線；線在兩側儲存格都關掉時才消失）
+type CellBorders struct {
+	Top    bool `json:"top"`
+	Right  bool `json:"right"`
+	Bottom bool `json:"bottom"`
+	Left   bool `json:"left"`
+
+	DiagDown bool `json:"diagDown"` // 左斜線 ╲（左上到右下；劃掉未使用欄位用）
+	DiagUp   bool `json:"diagUp"`   // 右斜線 ╱（左下到右上）
+}
+
 type TableCell struct {
 	Kind   string `json:"kind"` // text | placeholder
 	Value  string `json:"value"`
 	Key    string `json:"key"`
 	Sample string `json:"sample"`
 	Align  string `json:"align"`
+	VAlign string `json:"vAlign"` // 垂直對齊 top|middle|bottom（空 = middle）
 	Bold   bool   `json:"bold"`
 	Format string `json:"format"` // placeholder 格式化：comma | twUpper | 空 = 原樣
 
 	ColSpan  int     `json:"colSpan"`  // 合併儲存格：向右合併欄數（<=1 = 不合併）
 	RowSpan  int     `json:"rowSpan"`  // 合併儲存格：向下合併列數
-	FontSize float64 `json:"fontSize"` // 逐格字級（0 = 用表格字級）
-	Color    string  `json:"color"`    // 逐格文字顏色（空 = 黑）
-	AssetID  string  `json:"assetId"`  // Kind = image 時的圖片（contain 縮放進儲存格）
+	FontSize  float64 `json:"fontSize"`  // 逐格字級（0 = 用表格字級）
+	Color     string  `json:"color"`     // 逐格文字顏色（空 = 黑）
+	FillColor string  `json:"fillColor"` // 儲存格背景色（空 = 透明；表頭列底色用）
+	AssetID   string  `json:"assetId"`   // Kind = image 時的圖片（contain 縮放進儲存格）
+
+	Borders *CellBorders `json:"borders"` // 逐格框線（nil = 四邊都畫）
+	Wrap    bool         `json:"wrap"`    // 自動換行：內容超寬換行、列高自動延伸（false = 單行裁切加 …）
 }
 
 // TableRepeat 陣列迴圈（報表重複列）設定

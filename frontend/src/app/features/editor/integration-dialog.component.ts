@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, output, signal } from '@angular/core';
 import { EditorStateService } from './editor-state.service';
+import { SyntaxHelpComponent } from './syntax-help.component';
 
 /**
  * 「連接」對話框：給宿主系統的整合說明——
@@ -8,6 +9,7 @@ import { EditorStateService } from './editor-state.service';
 @Component({
   selector: 'app-integration-dialog',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [SyntaxHelpComponent],
   template: `
     <div class="backdrop" (click)="close.emit()">
       <div class="dialog" (click)="$event.stopPropagation()">
@@ -54,6 +56,12 @@ Content-Type: application/json</pre>
             </div>
             <p>依這張樣板上的欄位自動產生，可直接當 POST body 試打：</p>
             <pre class="sample">{{ sampleJson() }}</pre>
+          </section>
+
+          <section>
+            <h3>4. 樣板可用的資料語法</h3>
+            <p>樣板文字與表格儲存格支援下列插值、格式與引擎函式——宿主端據此準備 data：</p>
+            <app-syntax-help [always]="true" />
           </section>
         </div>
       </div>

@@ -304,6 +304,228 @@ describe('EditorStateService', () => {
     expect(state.undoCount()).toBe(0);
   });
 
+  it('moveLayer：同層清單內上移/下移/最上/最下；layerPositionOf 回報位置', () => {
+    state.addElement(textEl({ content: 'a' }) as any);
+    state.select(null);
+    state.addElement(textEl({ content: 'b' }) as any);
+    state.select(null);
+    state.addElement(textEl({ content: 'c' }) as any);
+    const ids = state.visibleElements().map(e => e.id);
+    const order = () => state.visibleElements().map(e => (e as TextElement).content);
+    expect(state.layerPositionOf(ids[0])).toEqual({ index: 0, count: 3 });
+    state.moveLayer(ids[0], 'up');
+    expect(order()).toEqual(['b', 'a', 'c']);
+    state.moveLayer(ids[0], 'front');
+    expect(order()).toEqual(['b', 'c', 'a']);
+    state.moveLayer(ids[0], 'down');
+    expect(order()).toEqual(['b', 'a', 'c']);
+    state.moveLayer(ids[0], 'back');
+    expect(order()).toEqual(['a', 'b', 'c']);
+    // 容器子元素在容器內排序
+    state.select(null);
+    state.addElement(containerEl() as any);
+    const cid = state.selectedId()!;
+    state.addElement(textEl({ content: 'x' }) as any);
+    const xid = state.selectedId()!;
+    state.select(cid);
+    state.addElement(textEl({ content: 'y' }) as any);
+    state.moveLayer(xid, 'front');
+    const kids = (state.findElement(cid) as ContainerElement).children;
+    expect((kids.at(-1) as TextElement).content).toBe('x');
+  });
+
+  it('pasteAt 貼在指定座標', () => {
+    state.addElement(textEl() as any);
+    state.copyElement(state.selectedId()!);
+    state.select(null);
+    state.pasteAt(123, 456);
+    const pasted = state.visibleElements().at(-1)!;
+    expect(pasted.x).toBe(123);
+    expect(pasted.y).toBe(456);
+    expect(state.hasClipboard()).toBeTrue();
+  });
+
+  /** 3×3 表格＋重複列在第 1 列＋(0,0) 直向合併兩列 */
+  function addTable(): string {
+    state.select(null);
+    state.addElement({
+      type: 'table', x: 0, y: 0, width: 270, height: 72,
+      columnWidths: [90, 90, 90], rowHeights: [24, 24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1, groupFooterRowIndex: 2 },
+      cells: Array.from({ length: 3 }, (_, r) => Array.from({ length: 3 }, (_, c) =>
+        ({ kind: 'text', value: `${r}${c}`, key: '', sample: '', align: 'left', bold: false }))),
+    } as any);
+    return state.selectedId()!;
+  }
+
+  it('insertTableRow：插入列、推移重複列索引、跨越的合併格加高', () => {
+    const id = addTable();
+    state.patchElement(id, {
+      cells: (state.findElement(id) as TableElement).cells.map((row, r) =>
+        row.map((cell, c) => (r === 1 && c === 2 ? { ...cell, rowSpan: 2 } : cell))),
+    } as any);
+    state.insertTableRow(id, 2); // 在合併範圍（1–2 列）中間插入
+    const t = state.findElement(id) as TableElement;
+    expect(t.cells.length).toBe(4);
+    expect(t.rowHeights.length).toBe(4);
+    expect(t.height).toBe(96);
+    expect(t.cells[2].every(cell => cell.value === '')).toBeTrue(); // 新列是空格
+    expect(t.cells[1][2].rowSpan).toBe(3); // 跨越插入點的合併格加高
+    expect(t.repeat!.rowIndex).toBe(1); // 在插入點前不動
+    expect(t.repeat!.groupFooterRowIndex).toBe(3); // 在插入點後往下推
+  });
+
+  it('removeTableRow：重複列本體被刪則取消重複；錨點被刪內容下移', () => {
+    const id = addTable();
+    state.patchElement(id, {
+      cells: (state.findElement(id) as TableElement).cells.map((row, r) =>
+        row.map((cell, c) => (r === 0 && c === 0 ? { ...cell, rowSpan: 2 } : cell))),
+    } as any);
+    state.removeTableRow(id, 0); // 刪合併錨點列
+    let t = state.findElement(id) as TableElement;
+    expect(t.cells.length).toBe(2);
+    expect(t.cells[0][0].value).toBe('00'); // 錨點內容搬到下一列
+    expect(t.cells[0][0].rowSpan).toBe(1);
+    expect(t.repeat!.rowIndex).toBe(0); // 1 → 0
+    state.removeTableRow(id, 0); // 刪掉重複列本體
+    t = state.findElement(id) as TableElement;
+    expect(t.repeat!.enabled).toBeFalse();
+    state.removeTableRow(id, 0); // 只剩一列 → 拒刪
+    expect((state.findElement(id) as TableElement).cells.length).toBe(1);
+  });
+
+  it('insertTableCol / removeTableCol：欄寬同步、合併格跨度調整', () => {
+    const id = addTable();
+    state.patchElement(id, {
+      cells: (state.findElement(id) as TableElement).cells.map((row, r) =>
+        row.map((cell, c) => (r === 0 && c === 0 ? { ...cell, colSpan: 2 } : cell))),
+    } as any);
+    state.insertTableCol(id, 1); // 在合併範圍（0–1 欄）中間插入
+    let t = state.findElement(id) as TableElement;
+    expect(t.columnWidths.length).toBe(4);
+    expect(t.width).toBe(360);
+    expect(t.cells[0][0].colSpan).toBe(3);
+    expect(t.cells[1][1].value).toBe(''); // 新欄空格
+    state.removeTableCol(id, 1); // 刪合併中段 → 跨度縮回
+    t = state.findElement(id) as TableElement;
+    expect(t.columnWidths.length).toBe(3);
+    expect(t.cells[0][0].colSpan).toBe(2);
+    state.removeTableCol(id, 0); // 刪錨點欄 → 內容右移
+    t = state.findElement(id) as TableElement;
+    expect(t.cells[0][0].value).toBe('00');
+    expect(t.cells[0][0].colSpan).toBe(1);
+  });
+
+  it('toggleRepeatRow：設定/取消/搬移重複列（保留 key）', () => {
+    const id = addTable();
+    state.toggleRepeatRow(id, 2); // 搬到第 2 列
+    let t = state.findElement(id) as TableElement;
+    expect(t.repeat!.rowIndex).toBe(2);
+    expect(t.repeat!.key).toBe('items'); // key 保留
+    state.toggleRepeatRow(id, 2); // 同列再點 = 取消
+    t = state.findElement(id) as TableElement;
+    expect(t.repeat!.enabled).toBeFalse();
+    state.toggleRepeatRow(id, 0); // 再開
+    t = state.findElement(id) as TableElement;
+    expect(t.repeat!.enabled).toBeTrue();
+    expect(t.repeat!.rowIndex).toBe(0);
+  });
+
+  it('patchSelectedCells：Shift 框選範圍批次改樣式；無範圍改單格', () => {
+    const id = addTable();
+    state.selectedCell.set({ row: 0, col: 0 });
+    state.selectedCellRange.set({ r1: 0, c1: 0, r2: 0, c2: 2 });
+    state.patchSelectedCells(id, { fillColor: '#e0f2fe', bold: true });
+    let t = state.findElement(id) as TableElement;
+    expect(t.cells[0].every(c => c.fillColor === '#e0f2fe' && c.bold)).toBeTrue();
+    expect(t.cells[1][0].fillColor).toBeUndefined(); // 範圍外不動
+    // 無範圍 → 只改選取格
+    state.selectedCellRange.set(null);
+    state.selectedCell.set({ row: 1, col: 1 });
+    state.patchSelectedCells(id, { align: 'center' });
+    t = state.findElement(id) as TableElement;
+    expect(t.cells[1][1].align).toBe('center');
+    expect(t.cells[1][0].align).toBe('left');
+  });
+
+  it('applyCellBorders：無框線鏡射鄰格、toggle 邊線、全開還原 undefined', () => {
+    const id = addTable();
+    // (1,1) 無框線 → 自己四邊關 + 四個鄰格面向的邊也關（共用線兩側一致）
+    state.selectedCell.set({ row: 1, col: 1 });
+    state.selectedCellRange.set(null);
+    state.applyCellBorders(id, 'none');
+    let t = state.findElement(id) as TableElement;
+    expect(t.cells[1][1].borders).toEqual({ top: false, right: false, bottom: false, left: false });
+    expect(t.cells[0][1].borders!.bottom).toBeFalse(); // 上鄰的下邊
+    expect(t.cells[2][1].borders!.top).toBeFalse();    // 下鄰的上邊
+    expect(t.cells[1][0].borders!.right).toBeFalse();  // 左鄰的右邊
+    expect(t.cells[1][2].borders!.left).toBeFalse();   // 右鄰的左邊
+    expect(t.cells[0][0].borders).toBeUndefined();     // 沒動到的格子維持未設
+    expect(state.selectionEdgeOn(id, 'top')).toBeFalse();
+    // toggle：再開上邊線
+    state.applyCellBorders(id, 'top');
+    t = state.findElement(id) as TableElement;
+    expect(t.cells[1][1].borders!.top).toBeTrue();
+    expect(state.selectionEdgeOn(id, 'top')).toBeTrue();
+    // 所有框線 → 全開的格子清回 undefined
+    state.selectedCell.set({ row: 0, col: 0 });
+    state.selectedCellRange.set({ r1: 0, c1: 0, r2: 2, c2: 2 });
+    state.applyCellBorders(id, 'all');
+    t = state.findElement(id) as TableElement;
+    expect(t.cells.flat().every(c => c.borders === undefined)).toBeTrue();
+  });
+
+  it('applyCellBorders：範圍 outer/inner 只動對應的線', () => {
+    const id = addTable();
+    state.selectedCell.set({ row: 0, col: 0 });
+    state.selectedCellRange.set({ r1: 0, c1: 0, r2: 1, c2: 1 });
+    state.applyCellBorders(id, 'none'); // 先清空 2×2 範圍
+    state.applyCellBorders(id, 'outer'); // 開外框
+    const t = state.findElement(id) as TableElement;
+    expect(t.cells[0][0].borders!.top).toBeTrue();   // 外框上
+    expect(t.cells[0][0].borders!.left).toBeTrue();  // 外框左
+    expect(t.cells[0][0].borders!.right).toBeFalse();  // 內部線維持關
+    expect(t.cells[0][0].borders!.bottom).toBeFalse();
+    expect(t.cells[1][1].borders!.right).toBeTrue(); // 外框右
+    expect(t.cells[1][1].borders!.bottom).toBeTrue();
+    state.applyCellBorders(id, 'inner'); // 開內部格線
+    const t2 = state.findElement(id) as TableElement;
+    expect(t2.cells[0][0].borders).toBeUndefined(); // 四邊全開 → 還原未設
+  });
+
+  it('applyCellBorders：斜線 toggle 逐格、有斜線時不還原 undefined', () => {
+    const id = addTable();
+    state.selectedCell.set({ row: 0, col: 0 });
+    state.selectedCellRange.set({ r1: 0, c1: 0, r2: 0, c2: 1 });
+    state.applyCellBorders(id, 'diagDown');
+    let t = state.findElement(id) as TableElement;
+    expect(t.cells[0][0].borders!.diagDown).toBeTrue();
+    expect(t.cells[0][1].borders!.diagDown).toBeTrue();
+    expect(t.cells[0][2].borders).toBeUndefined(); // 範圍外
+    expect(t.cells[0][0].borders!.top).toBeTrue(); // 四邊不受影響
+    expect(state.selectionDiagOn(id, 'diagDown')).toBeTrue();
+    // 再按一次 = 取消，四邊全開 → 還原 undefined
+    state.applyCellBorders(id, 'diagDown');
+    t = state.findElement(id) as TableElement;
+    expect(t.cells[0][0].borders).toBeUndefined();
+    expect(state.selectionDiagOn(id, 'diagDown')).toBeFalse();
+  });
+
+  it('clearCell 清內容保留合併跨度', () => {
+    const id = addTable();
+    state.patchElement(id, {
+      cells: (state.findElement(id) as TableElement).cells.map((row, r) =>
+        row.map((cell, c) => (r === 0 && c === 0 ? { ...cell, colSpan: 2, kind: 'placeholder', key: 'k' } : cell))),
+    } as any);
+    state.clearCell(id, 0, 0);
+    const cell = (state.findElement(id) as TableElement).cells[0][0];
+    expect(cell.kind).toBe('text');
+    expect(cell.value).toBe('');
+    expect(cell.key).toBe('');
+    expect(cell.colSpan).toBe(2); // 跨度保留
+  });
+
   it('節管理：新增/切換/紙張覆寫/排序/刪除', () => {
     // 預設一個 flow 節
     expect(state.template().sections.length).toBe(1);

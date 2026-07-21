@@ -2,7 +2,7 @@
 // 讀取端的對應實作在 Go 後端 renderspec.go 的 ResolveRaw/ResolvePath。
 
 /** 把 "a.b" / "items[0].name" 路徑的值寫進物件（產生範例資料用）。 */
-export function setPath(target: any, path: string, value: string): void {
+export function setPath(target: any, path: string, value: unknown): void {
   const segments = path.split('.');
   let current = target;
   for (let s = 0; s < segments.length; s++) {

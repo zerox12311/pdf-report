@@ -159,6 +159,162 @@ func TestTableSpansAndCellStyle(t *testing.T) {
 	}
 }
 
+func TestTableCellWrap(t *testing.T) {
+	// 重複列 bio 欄很長：wrap 開 → 列高延伸、表格變高、下方元素被推移
+	longBio := strings.Repeat("很長的說明文字", 12)
+	base := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[
+	 {"type":"table","id":"tb","x":40,"y":40,"width":300,"height":48,
+	  "columnWidths":[100,200],"rowHeights":[24,24],
+	  "borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+	  "repeat":{"enabled":true,"key":"items","rowIndex":1},
+	  "cells":[
+	   [{"kind":"text","value":"name","bold":true},{"kind":"text","value":"bio","bold":true}],
+	   [{"kind":"placeholder","key":"name","sample":"n"},{"kind":"placeholder","key":"bio","sample":"b"%s}]]},
+	 {"type":"text","id":"below","x":40,"y":100,"width":200,"height":20,
+	  "content":"表尾","fontSize":12,"color":"#000000","align":"left","lineHeight":1.2}]}`
+	data := map[string]any{"items": []any{
+		map[string]any{"name": "A", "bio": longBio},
+		map[string]any{"name": "B", "bio": "短"},
+	}}
+	var wrapped, plain TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, `,"wrap":true`)), &wrapped); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, ``)), &plain); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	out1, warns, err := e.Render(&wrapped, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("warnings: %v", warns)
+	}
+	out2, _, err := e.Render(&plain, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out1, out2) {
+		t.Error("自動換行應改變輸出（列高延伸）")
+	}
+	// 同輸入兩次渲染 byte 相同（決定性）
+	out1b, _, err := e.Render(&wrapped, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out1, out1b) {
+		t.Error("換行渲染應具決定性")
+	}
+	// 大量長資料 → 列高延伸推動分頁（頁數多於不換行版本）
+	many := []any{}
+	for i := 0; i < 40; i++ {
+		many = append(many, map[string]any{"name": fmt.Sprintf("N%d", i), "bio": longBio})
+	}
+	bigData := map[string]any{"items": many}
+	outWrap, _, err := e.Render(&wrapped, bigData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outPlain, _, err := e.Render(&plain, bigData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pdfPageCount(outWrap) <= pdfPageCount(outPlain) {
+		t.Errorf("換行版頁數應多於裁切版：wrap=%d plain=%d", pdfPageCount(outWrap), pdfPageCount(outPlain))
+	}
+}
+
+func TestTableCellBorders(t *testing.T) {
+	base := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[{"type":"table","id":"tb","x":40,"y":40,"width":200,"height":48,
+	"columnWidths":[100,100],"rowHeights":[24,24],
+	"borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+	"cells":[
+	 [{"kind":"text","value":"A"%s},{"kind":"text","value":"B"}],
+	 [{"kind":"text","value":"C"},{"kind":"text","value":"D"}]]}]}`
+	var partial TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, `,"borders":{"top":true,"right":false,"bottom":false,"left":true}`)), &partial); err != nil {
+		t.Fatal(err)
+	}
+	var plain TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, ``)), &plain); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	out1, warns, err := e.Render(&partial, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("warnings: %v", warns)
+	}
+	out2, _, err := e.Render(&plain, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out1, out2) {
+		t.Error("逐格框線應改變輸出")
+	}
+	// 斜線與垂直對齊也應改變輸出
+	var diag, valigned TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, `,"borders":{"top":true,"right":true,"bottom":true,"left":true,"diagDown":true,"diagUp":true}`)), &diag); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, `,"vAlign":"top"`)), &valigned); err != nil {
+		t.Fatal(err)
+	}
+	out3, _, err := e.Render(&diag, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out3, out2) {
+		t.Error("斜線框線應改變輸出")
+	}
+	out4, _, err := e.Render(&valigned, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out4, out2) {
+		t.Error("垂直對齊應改變輸出")
+	}
+}
+
+func TestTableCellFillColor(t *testing.T) {
+	base := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[{"type":"table","id":"tb","x":40,"y":40,"width":300,"height":48,
+	"columnWidths":[100,100,100],"rowHeights":[24,24],
+	"borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+	"cells":[
+	 [{"kind":"text","value":"品名","align":"center","bold":true%s},{"kind":"text","value":"數量","align":"center","bold":true%s},{"kind":"text","value":"金額","align":"center","bold":true%s}],
+	 [{"kind":"text","value":"A"},{"kind":"text","value":"1"},{"kind":"text","value":"100"}]]}]}`
+	fill := `,"fillColor":"#e0f2fe"`
+	var withFill TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, fill, fill, fill)), &withFill); err != nil {
+		t.Fatal(err)
+	}
+	var plain TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, ``, ``, ``)), &plain); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	out1, warns, err := e.Render(&withFill, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("warnings: %v", warns)
+	}
+	out2, _, err := e.Render(&plain, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out1, out2) {
+		t.Error("儲存格背景色應改變輸出")
+	}
+}
+
 func TestAboveWatermarkElements(t *testing.T) {
 	base := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0,
 	"watermark":{"enabled":true,"text":"作廢","fontSize":120,"color":"#f87171","rotation":30,"repeat":false,"gapX":80,"gapY":80,"layer":"above"}},

@@ -1,7 +1,7 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
-import { FontFamily, TableElement, TemplateElement, coveredCells, fontCss } from '../../core/models/template.model';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
+import { CellBorders, FontFamily, TableCell, TableElement, TemplateElement, coveredCells, fontCss } from '../../core/models/template.model';
 import { formatValue } from '../../core/utils/format-value';
-import { EditorStateService } from './editor-state.service';
+import { ContextMenuItem, EditorStateService } from './editor-state.service';
 import { DataKeyPayload } from './element-factory';
 
 /** 單一元素的畫布視覺（不含定位與拖曳，那些由 editor-canvas 的包裝層處理）。container 不在此處理。 */
@@ -28,7 +28,7 @@ import { DataKeyPayload } from './element-factory';
               [style.border]="boxBorder(el)" [style.background]="el.fillColor ?? 'transparent'"
               [style.padding.px]="(el.padding ?? 0) * z()"
               (dblclick)="startSelfEdit($event)"
-            >{{ el.content }}</div>
+            >{{ displayText(el.content) }}</div>
           }
         }
       }
@@ -103,7 +103,8 @@ import { DataKeyPayload } from './element-factory';
       @case ('table') {
         @if (tableEl(); as el) {
           <div class="tbl-wrap" (dblclick)="onTableDbl(el, $event)">
-            <table class="tbl" [style.borderColor]="el.borderColor" [style.fontSize.px]="el.fontSize * z()"
+            <table class="tbl" [style.width.px]="el.width * z()"
+              [style.borderColor]="el.borderColor" [style.fontSize.px]="el.fontSize * z()"
               [style.fontFamily]="fontCssOf(el.fontFamily)">
               @for (row of el.cells; track $index; let r = $index) {
                 <tr [style.height.px]="el.rowHeights[r] * z()"
@@ -113,26 +114,48 @@ import { DataKeyPayload } from './element-factory';
                   @for (cell of row; track $index; let c = $index) {
                     @if (!covered().has(r + ',' + c)) {
                       <td
+                        [attr.data-rc]="r + ',' + c"
                         [attr.colspan]="cell.colSpan && cell.colSpan > 1 ? cell.colSpan : null"
                         [attr.rowspan]="cell.rowSpan && cell.rowSpan > 1 ? cell.rowSpan : null"
                         [style.width.px]="spanWidth(el, c, cell.colSpan) * z()"
-                        [style.border]="el.borderWidth > 0 ? (el.borderWidth * z()) + 'px solid ' + el.borderColor : '1px dashed #d3dae3'"
+                        [style.borderTop]="cellBorderCss(el, cell, 'top')"
+                        [style.borderRight]="cellBorderCss(el, cell, 'right')"
+                        [style.borderBottom]="cellBorderCss(el, cell, 'bottom')"
+                        [style.borderLeft]="cellBorderCss(el, cell, 'left')"
                         [style.padding.px]="el.cellPadding * z()"
                         [style.textAlign]="cell.align"
                         [style.fontWeight]="cell.bold ? 700 : 400"
                         [style.fontSize.px]="cell.fontSize ? cell.fontSize * z() : null"
                         [style.color]="cell.color || null"
+                        [style.backgroundColor]="cell.fillColor || null"
+                        [style.verticalAlign]="cell.vAlign || null"
                         [class.ph]="cell.kind === 'placeholder'"
                         [class.cell-selected]="el.id === state.selectedId() && isCellSelected(r, c)"
                         [class.drop-cell]="dropCell()?.r === r && dropCell()?.c === c"
                         (pointerdown)="onCellDown(el, r, c, $event)"
+                        (contextmenu)="onCellMenu($event, el, r, c)"
                         (dblclick)="onCellDbl(el, r, c, $event)"
                         (dragover)="onCellDragOver($event, r, c)"
                         (dragleave)="dropCell.set(null)"
                         (drop)="onCellDrop($event, el, r, c)"
-                      >@if (cell.kind === 'image') {
+                      >@if (cell.borders?.diagDown || cell.borders?.diagUp) {
+                        <svg class="cell-diag" viewBox="0 0 100 100" preserveAspectRatio="none">
+                          @if (cell.borders?.diagDown) {
+                            <line x1="0" y1="0" x2="100" y2="100" vector-effect="non-scaling-stroke"
+                              [attr.stroke]="el.borderColor" [attr.stroke-width]="diagStroke(el)" />
+                          }
+                          @if (cell.borders?.diagUp) {
+                            <line x1="0" y1="100" x2="100" y2="0" vector-effect="non-scaling-stroke"
+                              [attr.stroke]="el.borderColor" [attr.stroke-width]="diagStroke(el)" />
+                          }
+                        </svg>
+                      }@if (cell.kind === 'image') {
                         @if (cell.assetId) {
-                          <img class="cell-img" [src]="'/api/assets/' + cell.assetId" draggable="false" />
+                          <img class="cell-img" [src]="'/api/assets/' + cell.assetId"
+                            [style.left.px]="el.cellPadding * z()" [style.top.px]="el.cellPadding * z()"
+                            [style.width.px]="cellInner(spanWidth(el, c, cell.colSpan), el.cellPadding) * z()"
+                            [style.height.px]="cellInner(spanHeight(el, r, cell.rowSpan), el.cellPadding) * z()"
+                            draggable="false" />
                         } @else {
                           <span class="cell-img-empty">（未選圖片）</span>
                         }
@@ -144,6 +167,11 @@ import { DataKeyPayload } from './element-factory';
                           (dblclick)="$event.stopPropagation()"
                           (keydown)="onCellEditKey($event)"
                           (blur)="commitCellEdit(el, r, c, $any($event.target).value)" />
+                      } @else if (cell.wrap) {
+                        <!-- 換行示意：absolute 貼齊內距，不撐開畫布列高（實際列高由引擎算） -->
+                        <span class="cell-wrap-text" [style.inset.px]="el.cellPadding * z()"
+                          [style.justifyContent]="cell.vAlign === 'top' ? 'flex-start' : cell.vAlign === 'bottom' ? 'flex-end' : 'center'"
+                          >{{ cell.kind === 'placeholder' ? (cell.sample ? formatted(cell.sample, cell.format) : phLabel(cell.key)) : cell.value }}</span>
                       } @else {{{ cell.kind === 'placeholder' ? (cell.sample ? formatted(cell.sample, cell.format) : phLabel(cell.key)) : cell.value }}}</td>
                     }
                   }
@@ -182,13 +210,20 @@ import { DataKeyPayload } from './element-factory';
     .barcode-box .bc-label { font-size: 9px; color: #475569; text-align: center; padding: 1px 2px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #f8fafc; }
     .tbl { border-collapse: collapse; table-layout: fixed; font-family: 'Noto Sans TC', sans-serif; user-select: none; }
-    .tbl td { overflow: hidden; white-space: nowrap; vertical-align: middle; box-sizing: border-box; background: #fff; }
-    .tbl td.cell-selected { background: rgba(37, 99, 235, .15); }
+    .tbl td { overflow: hidden; white-space: nowrap; vertical-align: middle; box-sizing: border-box; background: #fff; position: relative; }
+    /* 選取用 inset 光暈（不用 background——有自訂背景色的格子 inline 樣式會蓋掉 class） */
+    .tbl td.cell-selected { background: rgba(37, 99, 235, .15); box-shadow: inset 0 0 0 2px rgba(37, 99, 235, .55); }
     .cell-edit { width: 100%; box-sizing: border-box; font: inherit; color: inherit; text-align: inherit;
       border: 1.5px solid #2563eb; border-radius: 2px; padding: 0 2px; background: #fff; outline: none; }
     .tbl td.drop-cell { outline: 2px solid #f59e0b; outline-offset: -2px; background: rgba(245, 158, 11, .18); }
-    .cell-img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; margin: 0 auto; }
+    /* 絕對定位貼齊儲存格內距＝引擎的 contain 矩形；不進 table 排版流，圖片再大也不會撐開列高 */
+    .cell-img { position: absolute; object-fit: contain; }
     .cell-img-empty { color: #94a3b8; font-size: 10px; }
+    /* 換行儲存格：畫布只示意換行效果，超出設計列高的部分裁掉（實際列高渲染時自動延伸） */
+    .cell-wrap-text { position: absolute; overflow: hidden; white-space: pre-wrap; word-break: break-all;
+      text-align: inherit; line-height: 1.2; display: flex; flex-direction: column; }
+    /* 斜線框線（╲╱ 劃掉未使用欄位） */
+    .cell-diag { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .inline-edit { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
       border: 1.5px solid #2563eb; border-radius: 2px; padding: 1px 3px; background: #fff; outline: none;
       resize: none; font-family: inherit; }
@@ -222,9 +257,52 @@ export class CanvasElementComponent {
     return '{{' + key + '}}';
   }
 
+  /** 斜線筆寬（跟表格框線同寬，最細 1px 保持可見） */
+  diagStroke(el: TableElement): number {
+    return Math.max(1, el.borderWidth * this.z());
+  }
+
+  /**
+   * 儲存格單邊框線 CSS。border-collapse 下「none 輸給 solid」——
+   * 共用線任一側有開就顯示，兩側都關才消失，與引擎畫線規則一致。
+   */
+  cellBorderCss(el: TableElement, cell: TableCell, edge: keyof CellBorders): string {
+    if (el.borderWidth <= 0) return '1px dashed #d3dae3';
+    const on = cell.borders ? cell.borders[edge] : true;
+    return on ? (el.borderWidth * this.z()) + 'px solid ' + el.borderColor : 'none';
+  }
+
   /** 畫布即時套用格式（千分位/國字大寫/民國年），讓所見即所得 */
   formatted(sample: string, format: Parameters<typeof formatValue>[1]): string {
     return formatValue(sample, format);
+  }
+
+  /** 範例資料（資料分頁的 JSON；空/壞則用畫布欄位自動生成），供文字插值畫布預覽 */
+  private sampleData = computed<Record<string, unknown>>(() => {
+    const txt = this.state.previewData().trim();
+    if (txt) {
+      try {
+        const d: unknown = JSON.parse(txt);
+        if (d && typeof d === 'object' && !Array.isArray(d)) return d as Record<string, unknown>;
+      } catch { /* 壞 JSON → fallback */ }
+    }
+    return this.state.buildSampleData();
+  });
+
+  /** 文字行內插值的畫布預覽：資料 key 以範例資料代入；$ 引擎函式與缺 key 保留 token 提示 */
+  displayText(content: string): string {
+    if (!content.includes('{{')) return content;
+    const data = this.sampleData();
+    return content.replace(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g, (m, key: string, fmt?: string) => {
+      if (key.startsWith('$')) return m; // $page/$sum 等由引擎計算，畫布保留 token
+      let cur: unknown = data;
+      for (const part of key.replace(/\[(\d+)\]/g, '.$1').split('.')) {
+        if (cur == null || typeof cur !== 'object') { cur = undefined; break; }
+        cur = (cur as Record<string, unknown>)[part];
+      }
+      if (cur == null || typeof cur === 'object') return m; // 找不到 → 保留 token（看得出沒綁到）
+      return formatValue(String(cur), (fmt ?? '') as Parameters<typeof formatValue>[1]);
+    });
   }
 
   fontCssOf(family: FontFamily | undefined): string {
@@ -267,6 +345,19 @@ export class CanvasElementComponent {
     let w = 0;
     for (let i = 0; i < cs; i++) w += el.columnWidths[c + i];
     return w;
+  }
+
+  /** 合併格的顯示高度（列高加總） */
+  spanHeight(el: TableElement, r: number, rowSpan: number | undefined): number {
+    const rs = Math.min(rowSpan ?? 1, el.rowHeights.length - r);
+    let h = 0;
+    for (let i = 0; i < rs; i++) h += el.rowHeights[r + i];
+    return h;
+  }
+
+  /** 儲存格內距後的可用邊長（引擎 drawImageRect 的 contain 矩形） */
+  cellInner(size: number, pad: number): number {
+    return Math.max(0, size - 2 * pad);
   }
 
   // ---- 元素本體就地編輯（雙擊；文字=content、資料欄位=sample、條碼=sample/content） ----
@@ -447,15 +538,105 @@ export class CanvasElementComponent {
   }
 
   /** 表格已選取時點儲存格 → 選中該格；Shift+點選 = 框出範圍（合併用） */
+  /**
+   * Word/Excel 式操作：表格內容區不拖動表格（移動用左上角手柄）。
+   * 點選 = 選表格＋選格；按住拖曳 = 框選範圍；Shift+點選 = 從錨點框選。
+   */
   onCellDown(el: TableElement, row: number, col: number, ev?: Event) {
-    if (el.id !== this.state.selectedId()) return;
+    const pe = ev as PointerEvent | undefined;
+    // 右鍵的選取由 onCellMenu 處理（這裡處理會把 Shift 框好的範圍清掉）
+    if (pe?.button === 2) return;
+    pe?.stopPropagation(); // 不讓表格進入移動拖曳
+    this.state.select(el.id);
     const anchor = this.state.selectedCell();
-    if ((ev as PointerEvent | undefined)?.shiftKey && anchor) {
+    if (pe?.shiftKey && anchor) {
       this.state.selectedCellRange.set({ r1: anchor.row, c1: anchor.col, r2: row, c2: col });
       return;
     }
     this.state.selectedCell.set({ row, col });
     this.state.selectedCellRange.set(null);
+    if (!pe) return;
+    // Excel 式拖曳框選：跟著指標下的儲存格擴張範圍（限同一張表）
+    const table = (pe.currentTarget as HTMLElement | null)?.closest('table');
+    const onMove = (e: PointerEvent) => {
+      const td = document.elementFromPoint(e.clientX, e.clientY)?.closest('td[data-rc]');
+      if (!td || td.closest('table') !== table) return;
+      const [r2, c2] = (td as HTMLElement).dataset['rc']!.split(',').map(Number);
+      if (r2 === row && c2 === col) {
+        this.state.selectedCellRange.set(null);
+      } else {
+        this.state.selectedCellRange.set({ r1: row, c1: col, r2, c2 });
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      this.cellDragCleanup = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    this.cellDragCleanup = onUp;
+  }
+
+  /** 進行中框選拖曳的清理（元件銷毀時呼叫，防洩漏） */
+  private cellDragCleanup: (() => void) | null = null;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.cellDragCleanup?.());
+  }
+
+  /** 儲存格右鍵選單（結構操作；表格整體樣式留在屬性面板） */
+  onCellMenu(e: MouseEvent, el: TableElement, r: number, c: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.state.select(el.id);
+    // 右鍵在已框選的範圍內 → 保留範圍（合併用）；否則改選這一格
+    const range = this.state.selectedCellRange();
+    const inRange = !!range
+      && r >= Math.min(range.r1, range.r2) && r <= Math.max(range.r1, range.r2)
+      && c >= Math.min(range.c1, range.c2) && c <= Math.max(range.c1, range.c2);
+    if (!inRange) {
+      this.state.selectedCell.set({ row: r, col: c });
+      this.state.selectedCellRange.set(null);
+    }
+    const cell = el.cells[r][c];
+    const rows = el.cells.length;
+    const cols = el.columnWidths.length;
+    const rep = el.repeat;
+    const merged = (cell.colSpan ?? 1) > 1 || (cell.rowSpan ?? 1) > 1;
+    const items: ContextMenuItem[] = [
+      { label: '上方插入列', run: () => this.state.insertTableRow(el.id, r) },
+      { label: '下方插入列', run: () => this.state.insertTableRow(el.id, r + (cell.rowSpan ?? 1)) },
+      { label: '左方插入欄', run: () => this.state.insertTableCol(el.id, c) },
+      { label: '右方插入欄', run: () => this.state.insertTableCol(el.id, c + (cell.colSpan ?? 1)) },
+      { kind: 'sep' },
+      { label: '刪除此列', disabled: rows <= 1, danger: true, run: () => this.state.removeTableRow(el.id, r) },
+      { label: '刪除此欄', disabled: cols <= 1, danger: true, run: () => this.state.removeTableCol(el.id, c) },
+      { kind: 'sep' },
+      {
+        label: '合併儲存格',
+        disabled: !inRange,
+        run: () => {
+          const err = this.state.mergeSelectedCells(el.id);
+          if (err) alert(err);
+        },
+      },
+      ...(merged ? [{ label: '取消合併', run: () => this.state.unmergeCell(el.id, r, c) }] : []),
+      { kind: 'sep' },
+      {
+        label: '設為重複列（資料列）',
+        checked: !!rep?.enabled && rep.rowIndex === r,
+        run: () => this.state.toggleRepeatRow(el.id, r),
+      },
+      {
+        // 依右鍵格的目前狀態切換，套用到整個選取範圍（同屬性面板的批次樣式）
+        label: '自動換行（列高自動延伸）',
+        checked: !!cell.wrap,
+        run: () => this.state.patchSelectedCells(el.id, { wrap: cell.wrap ? undefined : true }),
+      },
+      { label: '清除儲存格內容', run: () => this.state.clearCell(el.id, r, c) },
+    ];
+    this.state.openContextMenu(e.clientX, e.clientY, items);
   }
 
   // ---- 表格欄/列分隔線拖曳（單欄寬/單列高） ----

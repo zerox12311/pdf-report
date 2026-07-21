@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// 繪製規則常數與純函式（由原 C# RenderSpec.cs 移植）。
+// 繪製規則常數與純函式（換行/路徑解析/插值/表格展開）；不依賴 gopdf，可獨立測試。
 // 資料 data 為 encoding/json 以 UseNumber 解碼的 any（map[string]any / []any / string / json.Number / bool）。
 
 // BaselineRatio 第一行 baseline 相對元素框頂端的偏移比例（× fontSize）。
@@ -18,6 +18,9 @@ const BaselineRatio = 0.88
 
 // CellBaselineRatio 表格儲存格文字垂直置中時，baseline 相對儲存格中線的偏移比例（× fontSize）。
 const CellBaselineRatio = 0.35
+
+// cellLineHeight 儲存格自動換行的行高倍數（與文字元件預設 lineHeight 一致）
+const cellLineHeight = 1.2
 
 // Tokenize 斷詞：CJK 逐字、拉丁字母/數字成詞、空白單獨成 token。
 func Tokenize(text string) []string {
@@ -253,21 +256,74 @@ type WarnFunc func(msg string)
 // root 為整份資料（$sum 等全域彙總對整份資料計算）；group 非 nil 時可用 $gsum/$gcount/$gavg。
 func cellText(cell TableCell, ctx, root any, rowNum int, group []any, warn WarnFunc) string {
 	if cell.Kind != "placeholder" {
-		return cell.Value
+		// text 儲存格也支援 {{key|fmt}} 行內插值（與文字元件一致），並吃重複列上下文
+		// （$row / $gsum(...) / 相對 key）。無 token 時原樣回傳（零成本）。
+		return interpolateText(cell.Value, func(key string) string {
+			return resolveCellKey(key, ctx, root, rowNum, group, warn)
+		})
 	}
 	v := cell.Sample
-	if cell.Key == "$row" && rowNum > 0 {
-		v = strconv.Itoa(rowNum)
-	} else if g, ok := resolveGroupAggregate(group, cell.Key); ok {
-		v = g
-	} else if agg, ok := ResolveAggregate(root, cell.Key); ok {
-		v = agg
-	} else if r, ok := ResolvePath(ctx, cell.Key); ok {
+	if r, ok := resolveCellKeyOK(cell.Key, ctx, root, rowNum, group); ok {
 		v = r
 	} else if warn != nil && cell.Key != "" {
 		warn("找不到資料 key：" + cell.Key + "（已用範例值代替）")
 	}
 	return formatValue(v, cell.Format)
+}
+
+// resolveCellKeyOK 依重複列上下文解析儲存格 key（$row / 群組彙總 / 全域彙總 / 資料路徑）。
+func resolveCellKeyOK(key string, ctx, root any, rowNum int, group []any) (string, bool) {
+	if key == "$row" && rowNum > 0 {
+		return strconv.Itoa(rowNum), true
+	}
+	if g, ok := resolveGroupAggregate(group, key); ok {
+		return g, true
+	}
+	if agg, ok := ResolveAggregate(root, key); ok {
+		return agg, true
+	}
+	if r, ok := ResolvePath(ctx, key); ok {
+		return r, true
+	}
+	return "", false
+}
+
+// resolveCellKey 同上，但找不到時回空字串並警告（插值用；插值無 sample fallback）。
+func resolveCellKey(key string, ctx, root any, rowNum int, group []any, warn WarnFunc) string {
+	if v, ok := resolveCellKeyOK(key, ctx, root, rowNum, group); ok {
+		return v
+	}
+	if warn != nil && key != "" {
+		warn("找不到資料 key：" + key + "（已用範例值代替）")
+	}
+	return ""
+}
+
+// interpolateText 把 {{key|fmt}} 換成 resolve 求得的值。無 token 原樣回傳。
+// 與 drawCtx.interpolate 共用同一 regex，文字元件與儲存格插值行為一致。
+func interpolateText(content string, resolve func(key string) string) string {
+	if !strings.Contains(content, "{{") {
+		return content
+	}
+	return interpolateRe.ReplaceAllStringFunc(content, func(m string) string {
+		parts := interpolateRe.FindStringSubmatch(m)
+		return formatValue(resolve(parts[1]), parts[2])
+	})
+}
+
+// truncateToWidth 單行裁切：超出 maxWidth 時逐字截斷並加 …（儲存格單行排版用）。
+func truncateToWidth(text string, maxWidth float64, measure func(string) float64) string {
+	if maxWidth <= 0 || measure(text) <= maxWidth {
+		return text
+	}
+	runes := []rune(text)
+	ell := "…"
+	for n := len(runes) - 1; n >= 0; n-- {
+		if measure(string(runes[:n])+ell) <= maxWidth {
+			return string(runes[:n]) + ell
+		}
+	}
+	return ell
 }
 
 // tableRowCells 取樣板第 r 列的儲存格（越界回空）。
@@ -415,6 +471,22 @@ func sumFloats(v []float64) float64 {
 
 func isRepeatTable(e *Element) bool {
 	return e.Type == "table" && e.Repeat != nil && e.Repeat.Enabled && e.Repeat.Key != ""
+}
+
+// tableHasWrap 表格是否有自動換行儲存格。
+// 沒有時完全跳過換行列高計算——確保既有樣板輸出 byte 不變（golden）。
+func tableHasWrap(e *Element) bool {
+	if e.Type != "table" {
+		return false
+	}
+	for _, row := range e.Cells {
+		for _, cell := range row {
+			if cell.Wrap {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ComputeRepeatOffsets 計算重複列造成的位移：展開後變高（矮）的表格，

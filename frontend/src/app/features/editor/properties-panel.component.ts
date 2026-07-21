@@ -164,7 +164,7 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
                   [ngModel]="el.repeat!.rowIndex + 1"
                   (ngModelChange)="patchRepeat(el, { rowIndex: num($event) - 1 })" />
               </label>
-              <div class="hint">重複列的儲存格 key 用「相對路徑」（例：name、qty）；渲染時該列依陣列筆數展開，下方元素自動往下推。序號用 $row。</div>
+              <div class="hint">重複列的儲存格 key 用「相對路徑」（例：name、qty）；渲染時該列依陣列筆數展開，下方元素自動往下推。序號用 $row。<b>變更重複列位置時，已綁 key 的儲存格不會自動搬移</b>——請確認相對 key 位於新的重複列上。</div>
               <label class="full">群組欄位（相對路徑，留空不分組）
                 <input [ngModel]="el.repeat!.groupBy ?? ''" (ngModelChange)="patchRepeat(el, { groupBy: $event })" placeholder="例：category" />
               </label>
@@ -198,49 +198,104 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
             </div>
             @if (selectedTableCell(); as cell) {
               <div class="cell-editor">
-                <div class="sub">儲存格 ({{ state.selectedCell()!.row + 1 }}, {{ state.selectedCell()!.col + 1 }})</div>
-                <label class="full">類型
-                  <select [ngModel]="cell.kind" (ngModelChange)="patchCell(el, { kind: $event })">
-                    <option value="text">靜態文字</option>
-                    <option value="placeholder">資料欄位</option>
-                    <option value="image">圖片</option>
-                  </select>
-                </label>
-                @if (cell.kind === 'image') {
-                  <button class="merge" (click)="pickCellImage(el)">{{ cell.assetId ? '更換圖片…' : '選擇圖片…' }}</button>
-                  <div class="hint">也可以直接把元件盤的「圖片」拖到儲存格上。圖片以等比縮放置入格內。</div>
-                } @else if (cell.kind === 'text') {
-                  <label class="full">文字 <input [ngModel]="cell.value" (ngModelChange)="patchCell(el, { value: $event })" /></label>
+                @if (cellCount() > 1) {
+                  <div class="sub">儲存格（已選 {{ cellCount() }} 格）</div>
+                  <div class="hint">樣式（對齊/粗體/字級/顏色/背景色）一次套用到選取範圍。</div>
                 } @else {
-                  <label class="full">key <input [ngModel]="cell.key" (ngModelChange)="patchCell(el, { key: $event })" placeholder="例：items[0].name" /></label>
-                  <div class="hint">重複列內用相對路徑（name、qty）；序號 $row；小計 $gsum(欄位)/$gcount；總計 $sum(items.欄位)。</div>
-                  <label class="full">範例值 <input [ngModel]="cell.sample" (ngModelChange)="patchCell(el, { sample: $event })" /></label>
-                  <label class="full">格式（數值）
-                    <select [ngModel]="cell.format ?? ''" (ngModelChange)="patchCell(el, { format: $event })">
-                      @for (f of formats; track f.value) { <option [value]="f.value">{{ f.label }}</option> }
+                  <div class="sub">儲存格 ({{ state.selectedCell()!.row + 1 }}, {{ state.selectedCell()!.col + 1 }})</div>
+                }
+                @if (cellCount() === 1) {
+                  <label class="full">類型
+                    <select [ngModel]="cell.kind" (ngModelChange)="patchCell(el, { kind: $event })">
+                      <option value="text">靜態文字</option>
+                      <option value="placeholder">資料欄位</option>
+                      <option value="image">圖片</option>
                     </select>
                   </label>
+                  @if (cell.kind === 'image') {
+                    <button class="merge" (click)="pickCellImage(el)">{{ cell.assetId ? '更換圖片…' : '選擇圖片…' }}</button>
+                    <div class="hint">也可以直接把元件盤的「圖片」拖到儲存格上。圖片以等比縮放置入格內。</div>
+                  } @else if (cell.kind === 'text') {
+                    <label class="full">文字 <input [ngModel]="cell.value" (ngModelChange)="patchCell(el, { value: $event })" /></label>
+                  } @else {
+                    <label class="full">key <input [ngModel]="cell.key" (ngModelChange)="patchCell(el, { key: $event })" placeholder="例：items[0].name" /></label>
+                    <div class="hint">重複列內用相對路徑（name、qty）；序號 $row；小計 $gsum(欄位)/$gcount；總計 $sum(items.欄位)。</div>
+                    <label class="full">範例值 <input [ngModel]="cell.sample" (ngModelChange)="patchCell(el, { sample: $event })" /></label>
+                    <label class="full">格式（數值）
+                      <select [ngModel]="cell.format ?? ''" (ngModelChange)="patchCell(el, { format: $event })">
+                        @for (f of formats; track f.value) { <option [value]="f.value">{{ f.label }}</option> }
+                      </select>
+                    </label>
+                  }
                 }
                 <div class="grid2">
-                  <label>對齊
-                    <select [ngModel]="cell.align" (ngModelChange)="patchCell(el, { align: $event })">
+                  <label>水平對齊
+                    <select [ngModel]="cell.align" (ngModelChange)="patchCellStyle(el, { align: $event })">
                       <option value="left">左</option><option value="center">中</option><option value="right">右</option>
                     </select>
                   </label>
-                  <label class="row"><input type="checkbox" [ngModel]="cell.bold" (ngModelChange)="patchCell(el, { bold: $event })" /> 粗體</label>
+                  <label>垂直對齊
+                    <select [ngModel]="cell.vAlign ?? 'middle'"
+                      (ngModelChange)="patchCellStyle(el, { vAlign: $event === 'middle' ? undefined : $event })">
+                      <option value="top">上</option><option value="middle">中</option><option value="bottom">下</option>
+                    </select>
+                  </label>
                 </div>
+                <label class="row"><input type="checkbox" [ngModel]="cell.bold" (ngModelChange)="patchCellStyle(el, { bold: $event })" /> 粗體</label>
+                <label class="row">
+                  <input type="checkbox" [ngModel]="cell.wrap ?? false"
+                    (ngModelChange)="patchCellStyle(el, { wrap: $event || undefined })" /> 自動換行（列高自動延伸）
+                </label>
+                @if (cell.wrap) {
+                  <div class="hint">內容超寬時換行、該列列高自動增加（適合長說明欄）；未勾選 = 單行裁切加「…」。實際列高以預覽/PDF 為準。</div>
+                }
+                <label class="full">字級（0 = 用表格）
+                  <input type="number" min="0" [ngModel]="cell.fontSize ?? 0"
+                    (ngModelChange)="patchCellStyle(el, { fontSize: num($event) > 0 ? num($event) : undefined })" />
+                </label>
                 <div class="grid2">
-                  <label>字級（0 = 用表格）
-                    <input type="number" min="0" [ngModel]="cell.fontSize ?? 0"
-                      (ngModelChange)="patchCell(el, { fontSize: num($event) > 0 ? num($event) : undefined })" />
+                  <label>文字顏色
+                    <span class="colorrow">
+                      <input type="color" [ngModel]="cell.color || '#000000'"
+                        (ngModelChange)="patchCellStyle(el, { color: $event })" />
+                      @if (cell.color) {
+                        <button class="clearcolor" title="還原預設（黑）"
+                          (click)="patchCellStyle(el, { color: undefined })">×</button>
+                      }
+                    </span>
                   </label>
-                  <label class="row">
-                    <input type="checkbox" [ngModel]="cell.color != null && cell.color !== ''"
-                      (ngModelChange)="patchCell(el, { color: $event ? '#cc0000' : undefined })" /> 自訂顏色
+                  <label>背景色
+                    <span class="colorrow">
+                      <input type="color" [ngModel]="cell.fillColor || '#ffffff'"
+                        (ngModelChange)="patchCellStyle(el, { fillColor: $event })" />
+                      @if (cell.fillColor) {
+                        <button class="clearcolor" title="清除（透明）"
+                          (click)="patchCellStyle(el, { fillColor: undefined })">×</button>
+                      }
+                    </span>
                   </label>
                 </div>
-                @if (cell.color) {
-                  <label>顏色 <input type="color" [ngModel]="cell.color" (ngModelChange)="patchCell(el, { color: $event })" /></label>
+                <div class="sub">框線（選取範圍）</div>
+                @if (el.borderWidth > 0) {
+                  <div class="borderbtns">
+                    <button [class.on]="state.selectionEdgeOn(el.id, 'top')" (click)="state.applyCellBorders(el.id, 'top')">上框線</button>
+                    <button [class.on]="state.selectionEdgeOn(el.id, 'bottom')" (click)="state.applyCellBorders(el.id, 'bottom')">下框線</button>
+                    <button [class.on]="state.selectionEdgeOn(el.id, 'left')" (click)="state.applyCellBorders(el.id, 'left')">左框線</button>
+                    <button [class.on]="state.selectionEdgeOn(el.id, 'right')" (click)="state.applyCellBorders(el.id, 'right')">右框線</button>
+                  </div>
+                  <div class="borderbtns">
+                    <button (click)="state.applyCellBorders(el.id, 'all')">所有框線</button>
+                    <button (click)="state.applyCellBorders(el.id, 'outer')">外框線</button>
+                    <button (click)="state.applyCellBorders(el.id, 'inner')">內框線</button>
+                    <button (click)="state.applyCellBorders(el.id, 'none')">無框線</button>
+                  </div>
+                  <div class="borderbtns">
+                    <button [class.on]="state.selectionDiagOn(el.id, 'diagDown')" (click)="state.applyCellBorders(el.id, 'diagDown')">╲ 左斜線</button>
+                    <button [class.on]="state.selectionDiagOn(el.id, 'diagUp')" (click)="state.applyCellBorders(el.id, 'diagUp')">╱ 右斜線</button>
+                  </div>
+                  <div class="hint">上下左右可切換選取範圍該側的線（亮 = 顯示中）；共用的線兩側都關掉才會消失。斜線可劃掉未使用的欄位。</div>
+                } @else {
+                  <div class="hint">表格框線寬為 0（框線透明），逐格框線無效——先把上方「框線寬」調大。</div>
                 }
                 <div class="sub">合併儲存格</div>
                 @if (state.selectedCellRange()) {
@@ -249,10 +304,10 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
                 @if ((cell.colSpan ?? 1) > 1 || (cell.rowSpan ?? 1) > 1) {
                   <button class="merge" (click)="unmergeCell(el)">取消合併（目前 {{ cell.colSpan ?? 1 }}×{{ cell.rowSpan ?? 1 }}）</button>
                 }
-                <div class="hint">先點一格，再 <b>Shift+點選</b> 另一格框出範圍後按合併；重複列內只能左右合併。</div>
+                <div class="hint">在表格上<b>按住拖曳</b>（或先點一格再 Shift+點選）框出範圍：可一次套樣式或合併；重複列內只能左右合併。移動表格請拖左上角 ✥ 手柄。</div>
               </div>
             } @else {
-              <div class="hint">點畫布上的儲存格可編輯內容；Shift+點選可框範圍合併儲存格。</div>
+              <div class="hint">點儲存格可編輯內容；按住拖曳可框選範圍（同 Excel）。移動表格請拖選取後左上角的 ✥ 手柄。</div>
             }
           }
         }
@@ -315,6 +370,16 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
     .grid4 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .full { width: 100%; }
+    .borderbtns { display: flex; gap: 4px; margin-bottom: 4px; }
+    .borderbtns button { flex: 1; font: inherit; font-size: 11px; padding: 4px 2px; cursor: pointer;
+      border: 1px solid #cbd5e1; border-radius: 4px; background: #fff; color: #475569; white-space: nowrap; }
+    .borderbtns button:hover { background: #f1f5f9; }
+    .borderbtns button.on { background: #eff6ff; border-color: #93b4f8; color: #1d4ed8; font-weight: 700; }
+    .colorrow { display: flex; align-items: center; gap: 4px; }
+    .colorrow input[type=color] { flex: 1; min-width: 0; }
+    .clearcolor { width: 20px; height: 20px; padding: 0; border: 1px solid #cbd5e1; border-radius: 4px;
+      background: #fff; color: #64748b; font-size: 13px; line-height: 1; cursor: pointer; flex-shrink: 0; }
+    .clearcolor:hover { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
     .merge { font: inherit; padding: 5px 10px; border: 1px solid #93b4f8; background: #eff6ff;
       color: #1d4ed8; border-radius: 5px; cursor: pointer; }
     .merge:hover { background: #dbeafe; }
@@ -339,6 +404,14 @@ export class PropertiesPanelComponent {
     const sc = this.state.selectedCell();
     if (!el || el.type !== 'table' || !sc) return null;
     return el.cells[sc.row]?.[sc.col] ?? null;
+  });
+
+  /** 選取的儲存格數（Shift 框選範圍；1 = 單格） */
+  cellCount = computed<number>(() => {
+    if (!this.selectedTableCell()) return 0;
+    const range = this.state.selectedCellRange();
+    if (!range) return 1;
+    return (Math.abs(range.r2 - range.r1) + 1) * (Math.abs(range.c2 - range.c1) + 1);
   });
 
   fontFamilies = FONT_FAMILIES;
@@ -376,6 +449,11 @@ export class PropertiesPanelComponent {
     const cells = el.cells.map((row, r) =>
       row.map((cell, c) => (r === sc.row && c === sc.col ? { ...cell, ...patch } : cell)));
     this.state.patchElement(el.id, { cells });
+  }
+
+  /** 樣式類修改套用到整個選取範圍（單格時等同 patchCell） */
+  patchCellStyle(el: TableElement, patch: Partial<TableCell>) {
+    this.state.patchSelectedCells(el.id, patch);
   }
 
   toggleRepeat(el: TableElement, enabled: boolean) {

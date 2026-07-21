@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { FormsModule } from '@angular/forms';
 import { EditorStateService } from './editor-state.service';
 import { DataKeyPayload } from './element-factory';
+import { SyntaxHelpComponent } from './syntax-help.component';
 
 interface DataNode {
   label: string;
@@ -19,7 +20,7 @@ interface DataNode {
 @Component({
   selector: 'app-data-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, SyntaxHelpComponent],
   template: `
     <div class="panel">
       <h3>資料</h3>
@@ -49,6 +50,7 @@ interface DataNode {
           }
         </div>
       }
+      <app-syntax-help />
     </div>
   `,
   styles: `

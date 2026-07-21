@@ -200,12 +200,26 @@ export interface LineElement extends ElementBase {
   strokeWidth: number;
 }
 
+/** 儲存格四邊框線開關（Word 式逐格框線；線在兩側儲存格都關掉時才消失） */
+export interface CellBorders {
+  top: boolean;
+  right: boolean;
+  bottom: boolean;
+  left: boolean;
+  /** 左斜線 ╲（左上到右下；劃掉未使用欄位用） */
+  diagDown?: boolean;
+  /** 右斜線 ╱（左下到右上） */
+  diagUp?: boolean;
+}
+
 export interface TableCell {
   kind: 'text' | 'placeholder' | 'image';
   value: string;
   key: string;
   sample: string;
   align: 'left' | 'center' | 'right';
+  /** 垂直對齊（未設 = middle）；與 align 組成九點對齊 */
+  vAlign?: 'top' | 'middle' | 'bottom';
   bold: boolean;
   format?: ValueFormat;
   /** 合併儲存格：向右/向下合併的格數（<=1 或未設 = 不合併；被蓋住的格子不顯示） */
@@ -214,6 +228,12 @@ export interface TableCell {
   /** 逐格文字樣式（未設 = 用表格層級的字級／黑色） */
   fontSize?: number;
   color?: string;
+  /** 儲存格背景色（未設 = 透明；表頭列底色用） */
+  fillColor?: string;
+  /** 逐格框線（未設 = 四邊都畫；只在表格框線寬 > 0 時有意義） */
+  borders?: CellBorders;
+  /** 自動換行：內容超寬時換行、列高自動延伸（未設 = 單行裁切加 …） */
+  wrap?: boolean;
   /** kind = image 時的圖片（contain 縮放進儲存格） */
   assetId?: string;
 }

@@ -1,10 +1,26 @@
 import { Injectable, computed, signal } from '@angular/core';
 import {
-  ContainerElement, DocSection, ElementPatch, NewTemplateElement, PageSettings, TableElement,
-  TemplateDoc, TemplateElement, cloneWithNewIds, emptyCell, emptyTemplate, newId, normalizeTemplate,
-  sectionPage,
+  CellBorders, ContainerElement, DocSection, ElementPatch, NewTemplateElement, PageSettings,
+  TableCell, TableElement, TableRepeat, TemplateDoc, TemplateElement, cloneWithNewIds, emptyCell,
+  emptyTemplate, newId, normalizeTemplate, sectionPage,
 } from '../../core/models/template.model';
 import { setPath } from '../../core/utils/set-path';
+
+/** 右鍵選單項目：sep = 分隔線 */
+export type ContextMenuItem =
+  | { kind: 'sep' }
+  | {
+      kind?: 'item';
+      label: string;
+      /** 顯示在右側的快捷鍵提示 */
+      shortcut?: string;
+      /** 開關類項目的勾選狀態 */
+      checked?: boolean;
+      disabled?: boolean;
+      /** 破壞性動作（刪除）標紅 */
+      danger?: boolean;
+      run: () => void;
+    };
 
 @Injectable()
 export class EditorStateService {
@@ -21,6 +37,17 @@ export class EditorStateService {
   readonly rulerUnit = signal<'pt' | 'mm' | 'in'>('pt');
   /** 圖片上傳目標為某儲存格時的請求（editor-page 監聽並開檔案選擇器） */
   readonly imagePickRequest = signal<{ tableId: string; r: number; c: number } | null>(null);
+
+  /** 右鍵選單（viewport 座標；null = 關閉）。項目由觸發端組好丟進來 */
+  readonly contextMenu = signal<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+
+  openContextMenu(x: number, y: number, items: ContextMenuItem[]) {
+    this.contextMenu.set({ x, y, items });
+  }
+
+  closeContextMenu() {
+    this.contextMenu.set(null);
+  }
 
   // ---- 復原/重做：immutable 快照歷史 ----
   private history: TemplateDoc[] = [];
@@ -421,6 +448,62 @@ export class EditorStateService {
     this.dirty.set(true);
   }
 
+  /** 剪貼簿是否有東西（右鍵選單「貼上」的啟用狀態） */
+  hasClipboard(): boolean {
+    return this.clipboard !== null;
+  }
+
+  /** 貼在指定座標（右鍵空白畫布用；頂層、目前節） */
+  pasteAt(x: number, y: number) {
+    if (!this.clipboard) return;
+    this.record();
+    const copy = cloneWithNewIds(this.clipboard);
+    copy.x = Math.round(Math.max(0, x));
+    copy.y = Math.round(Math.max(0, y));
+    this.template.update(t => this.pushTo(t, this.activeKey(), copy));
+    this.select(copy.id);
+    this.dirty.set(true);
+  }
+
+  /**
+   * 圖層順序（同一層清單內移動；晚畫的在上層）：
+   * up/down 移一層、front/back 移到最上/最下層。容器子元素在容器內移動。
+   */
+  moveLayer(id: string, action: 'up' | 'down' | 'front' | 'back') {
+    const reorder = (list: TemplateElement[]): TemplateElement[] | null => {
+      const i = list.findIndex(e => e.id === id);
+      if (i < 0) return null;
+      const out = [...list];
+      const [el] = out.splice(i, 1);
+      const at = action === 'front' ? out.length
+        : action === 'back' ? 0
+        : action === 'up' ? Math.min(out.length, i + 1)
+        : Math.max(0, i - 1);
+      if (at === i && action !== 'front' && action !== 'back') return null;
+      out.splice(at, 0, el);
+      return out;
+    };
+    const parent = this.parentOf(id);
+    if (parent) {
+      const children = reorder(parent.children);
+      if (children) this.patchElement(parent.id, { children } as Partial<ContainerElement>);
+      return;
+    }
+    this.record();
+    this.template.update(t => this.mapLists(t, els => reorder(els) ?? els));
+    this.dirty.set(true);
+  }
+
+  /** 元素在其所屬清單（節頂層或容器內）的圖層位置：0 = 最下層 */
+  layerPositionOf(id: string): { index: number; count: number } | null {
+    const parent = this.parentOf(id);
+    const list = parent ? parent.children : this.template().sections.find(s =>
+      s.elements.some(e => e.id === id))?.elements;
+    if (!list) return null;
+    const index = list.findIndex(e => e.id === id);
+    return index < 0 ? null : { index, count: list.length };
+  }
+
   /** 把元素移進容器（座標轉為容器相對並夾在範圍內）；容器不能移進容器 */
   moveIntoContainer(id: string, containerId: string) {
     const el = this.findElement(id);
@@ -485,15 +568,309 @@ export class EditorStateService {
     } as Partial<TableElement>);
   }
 
+  /** 找表格元素（表格結構操作的共用前置） */
+  private tableOf(id: string): TableElement | null {
+    const el = this.findElement(id);
+    return el?.type === 'table' ? el : null;
+  }
+
+  /** 在 at 位置前插入一列（列高複製相鄰列；跨越插入點的合併格自動加高一格） */
+  insertTableRow(tableId: string, at: number) {
+    const t = this.tableOf(tableId);
+    if (!t || at < 0 || at > t.cells.length) return;
+    const cols = t.columnWidths.length;
+    const rowHeights = [...t.rowHeights];
+    rowHeights.splice(at, 0, t.rowHeights[Math.min(Math.max(at - 1, 0), t.rowHeights.length - 1)] ?? 24);
+    const cells = t.cells.map((row, r) => row.map(cell => {
+      const rs = cell.rowSpan ?? 1;
+      return rs > 1 && r < at && r + rs > at ? { ...cell, rowSpan: rs + 1 } : cell;
+    }));
+    cells.splice(at, 0, Array.from({ length: cols }, () => emptyCell()));
+    // 重複列/群組列索引在插入點之後的往下推
+    const shift = (v: number | null | undefined) => (v != null && v >= at ? v + 1 : v);
+    const repeat = t.repeat ? {
+      ...t.repeat,
+      rowIndex: shift(t.repeat.rowIndex) as number,
+      groupHeaderRowIndex: shift(t.repeat.groupHeaderRowIndex),
+      groupFooterRowIndex: shift(t.repeat.groupFooterRowIndex),
+    } : t.repeat;
+    this.patchElement(tableId, {
+      cells, rowHeights, repeat,
+      height: rowHeights.reduce((a, b) => a + b, 0),
+    } as Partial<TableElement>);
+  }
+
+  /** 刪除一列（至少留一列）。跨此列的合併格縮一格；合併錨點被刪時內容下移到次列 */
+  removeTableRow(tableId: string, at: number) {
+    const t = this.tableOf(tableId);
+    if (!t || t.cells.length <= 1 || at < 0 || at >= t.cells.length) return;
+    const rowHeights = t.rowHeights.filter((_, r) => r !== at);
+    const cells = t.cells.map(row => row.map(cell => ({ ...cell })));
+    for (let r = 0; r < cells.length; r++) {
+      for (let c = 0; c < cells[r].length; c++) {
+        const rs = cells[r][c].rowSpan ?? 1;
+        if (rs <= 1) continue;
+        if (r < at && r + rs > at) {
+          cells[r][c].rowSpan = rs - 1;
+        } else if (r === at && r + 1 < cells.length) {
+          // 錨點列被刪：內容搬到合併範圍的下一列，跨度縮一
+          cells[r + 1][c] = { ...cells[r][c], rowSpan: rs - 1 };
+        }
+      }
+    }
+    cells.splice(at, 1);
+    const shift = (v: number | null | undefined) => (v != null && v > at ? v - 1 : v);
+    let repeat = t.repeat;
+    if (repeat) {
+      repeat = {
+        ...repeat,
+        // 重複列本體被刪 = 取消重複；群組列被刪 = 清掉該群組列
+        enabled: repeat.rowIndex === at ? false : repeat.enabled,
+        rowIndex: repeat.rowIndex === at ? 0 : (shift(repeat.rowIndex) as number),
+        groupHeaderRowIndex: repeat.groupHeaderRowIndex === at ? null : shift(repeat.groupHeaderRowIndex),
+        groupFooterRowIndex: repeat.groupFooterRowIndex === at ? null : shift(repeat.groupFooterRowIndex),
+      };
+    }
+    this.selectedCell.set(null);
+    this.selectedCellRange.set(null);
+    this.patchElement(tableId, {
+      cells, rowHeights, repeat,
+      height: rowHeights.reduce((a, b) => a + b, 0),
+    } as Partial<TableElement>);
+  }
+
+  /** 在 at 位置前插入一欄（欄寬複製相鄰欄；跨越插入點的合併格自動加寬一格） */
+  insertTableCol(tableId: string, at: number) {
+    const t = this.tableOf(tableId);
+    if (!t || at < 0 || at > t.columnWidths.length) return;
+    const columnWidths = [...t.columnWidths];
+    columnWidths.splice(at, 0, t.columnWidths[Math.min(Math.max(at - 1, 0), t.columnWidths.length - 1)] ?? 90);
+    const cells = t.cells.map(row => {
+      const out = row.map((cell, c) => {
+        const cs = cell.colSpan ?? 1;
+        return cs > 1 && c < at && c + cs > at ? { ...cell, colSpan: cs + 1 } : cell;
+      });
+      out.splice(at, 0, emptyCell());
+      return out;
+    });
+    this.patchElement(tableId, {
+      cells, columnWidths,
+      width: columnWidths.reduce((a, b) => a + b, 0),
+    } as Partial<TableElement>);
+  }
+
+  /** 刪除一欄（至少留一欄）。跨此欄的合併格縮一格；合併錨點被刪時內容右移到次欄 */
+  removeTableCol(tableId: string, at: number) {
+    const t = this.tableOf(tableId);
+    if (!t || t.columnWidths.length <= 1 || at < 0 || at >= t.columnWidths.length) return;
+    const columnWidths = t.columnWidths.filter((_, c) => c !== at);
+    const cells = t.cells.map(row => {
+      const out = row.map(cell => ({ ...cell }));
+      for (let c = 0; c < out.length; c++) {
+        const cs = out[c].colSpan ?? 1;
+        if (cs <= 1) continue;
+        if (c < at && c + cs > at) {
+          out[c].colSpan = cs - 1;
+        } else if (c === at && c + 1 < out.length) {
+          out[c + 1] = { ...out[c], colSpan: cs - 1 };
+        }
+      }
+      out.splice(at, 1);
+      return out;
+    });
+    this.selectedCell.set(null);
+    this.selectedCellRange.set(null);
+    this.patchElement(tableId, {
+      cells, columnWidths,
+      width: columnWidths.reduce((a, b) => a + b, 0),
+    } as Partial<TableElement>);
+  }
+
+  /** 重複列開關：該列已是重複列 → 取消；否則把重複列設到該列（保留 key/群組設定） */
+  toggleRepeatRow(tableId: string, row: number) {
+    const t = this.tableOf(tableId);
+    if (!t) return;
+    const rep = t.repeat;
+    const repeat: TableRepeat = rep?.enabled && rep.rowIndex === row
+      ? { ...rep, enabled: false }
+      : {
+          enabled: true,
+          key: rep?.key ?? '',
+          rowIndex: row,
+          groupBy: rep?.groupBy,
+          groupHeaderRowIndex: rep?.groupHeaderRowIndex ?? null,
+          groupFooterRowIndex: rep?.groupFooterRowIndex ?? null,
+        };
+    this.patchElement(tableId, { repeat } as Partial<TableElement>);
+  }
+
+  /** 目前選取的儲存格範圍（無 Shift 框選時 = 單格）；未選格回 null */
+  selectedCellBounds(): { r1: number; r2: number; c1: number; c2: number } | null {
+    const sc = this.selectedCell();
+    if (!sc) return null;
+    const range = this.selectedCellRange();
+    if (!range) return { r1: sc.row, r2: sc.row, c1: sc.col, c2: sc.col };
+    return {
+      r1: Math.min(range.r1, range.r2), r2: Math.max(range.r1, range.r2),
+      c1: Math.min(range.c1, range.c2), c2: Math.max(range.c1, range.c2),
+    };
+  }
+
+  /** 批次修改選取範圍內的所有儲存格（多格選取一次改樣式）；無範圍時只改選取格 */
+  patchSelectedCells(tableId: string, patch: Partial<TableCell>) {
+    const t = this.tableOf(tableId);
+    const b = this.selectedCellBounds();
+    if (!t || !b) return;
+    const cells = t.cells.map((row, r) => row.map((cell, c) =>
+      r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2 ? { ...cell, ...patch } : cell));
+    this.patchElement(tableId, { cells } as Partial<TableElement>);
+  }
+
+  /**
+   * 選取範圍某一側的框線目前是否顯示（Word 式：共用線任一側有開就會畫）。
+   * 供框線按鈕顯示狀態與 toggle 判斷。
+   */
+  selectionEdgeOn(tableId: string, edge: keyof CellBorders): boolean {
+    const t = this.tableOf(tableId);
+    const b = this.selectedCellBounds();
+    if (!t || !b) return true;
+    const own = (r: number, c: number, e: keyof CellBorders) =>
+      t.cells[r]?.[c]?.borders ? t.cells[r][c].borders![e] : true;
+    const cellsOnEdge: [number, number][] = [];
+    if (edge === 'top') for (let c = b.c1; c <= b.c2; c++) cellsOnEdge.push([b.r1, c]);
+    if (edge === 'bottom') for (let c = b.c1; c <= b.c2; c++) cellsOnEdge.push([b.r2, c]);
+    if (edge === 'left') for (let r = b.r1; r <= b.r2; r++) cellsOnEdge.push([r, b.c1]);
+    if (edge === 'right') for (let r = b.r1; r <= b.r2; r++) cellsOnEdge.push([r, b.c2]);
+    return cellsOnEdge.every(([r, c]) => {
+      if (own(r, c, edge)) return true;
+      // 鄰格面向這條線的那側
+      switch (edge) {
+        case 'top': return r > 0 && own(r - 1, c, 'bottom');
+        case 'bottom': return r < t.cells.length - 1 && own(r + 1, c, 'top');
+        case 'left': return c > 0 && own(r, c - 1, 'right');
+        default: return c < t.columnWidths.length - 1 && own(r, c + 1, 'left');
+      }
+    });
+  }
+
+  /** 選取範圍內的儲存格是否全都有指定斜線（斜線按鈕的顯示/toggle 狀態） */
+  selectionDiagOn(tableId: string, which: 'diagDown' | 'diagUp'): boolean {
+    const t = this.tableOf(tableId);
+    const b = this.selectedCellBounds();
+    if (!t || !b) return false;
+    for (let r = b.r1; r <= b.r2; r++) {
+      for (let c = b.c1; c <= b.c2; c++) {
+        if (!t.cells[r]?.[c]?.borders?.[which]) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * 對選取範圍套框線動作（Word 式）：
+   * top/bottom/left/right = 切換範圍該側邊線；none/all = 全關/全開；
+   * outer = 開範圍外框；inner = 開範圍內部格線；
+   * diagDown/diagUp = 切換斜線 ╲╱（逐格，無共用線問題）。
+   * 邊線一律同步鏡射相鄰格的同一條線——兩側一致，線才會真的消失。
+   */
+  applyCellBorders(tableId: string, action: 'top' | 'bottom' | 'left' | 'right' | 'none' | 'all' | 'outer' | 'inner' | 'diagDown' | 'diagUp') {
+    const t = this.tableOf(tableId);
+    const b = this.selectedCellBounds();
+    if (!t || !b) return;
+    const full = (): CellBorders => ({ top: true, right: true, bottom: true, left: true });
+    const cells = t.cells.map(row => row.map(cell =>
+      ({ ...cell, borders: cell.borders ? { ...cell.borders } : full() })));
+    const set = (r: number, c: number, edge: keyof CellBorders, val: boolean) => {
+      const cell = cells[r]?.[c];
+      if (cell) cell.borders[edge] = val;
+      const [nr, nc, ne]: [number, number, keyof CellBorders] =
+        edge === 'top' ? [r - 1, c, 'bottom']
+        : edge === 'bottom' ? [r + 1, c, 'top']
+        : edge === 'left' ? [r, c - 1, 'right']
+        : [r, c + 1, 'left'];
+      const n = cells[nr]?.[nc];
+      if (n) n.borders[ne] = val;
+    };
+    const eachEdge = (edge: keyof CellBorders, val: boolean) => {
+      if (edge === 'top') for (let c = b.c1; c <= b.c2; c++) set(b.r1, c, 'top', val);
+      if (edge === 'bottom') for (let c = b.c1; c <= b.c2; c++) set(b.r2, c, 'bottom', val);
+      if (edge === 'left') for (let r = b.r1; r <= b.r2; r++) set(r, b.c1, 'left', val);
+      if (edge === 'right') for (let r = b.r1; r <= b.r2; r++) set(r, b.c2, 'right', val);
+    };
+    switch (action) {
+      case 'diagDown': case 'diagUp': {
+        const val = !this.selectionDiagOn(tableId, action);
+        for (let r = b.r1; r <= b.r2; r++) {
+          for (let c = b.c1; c <= b.c2; c++) {
+            const cell = cells[r]?.[c];
+            if (cell) cell.borders[action] = val || undefined;
+          }
+        }
+        break;
+      }
+      case 'top': case 'bottom': case 'left': case 'right':
+        eachEdge(action, !this.selectionEdgeOn(tableId, action));
+        break;
+      case 'none':
+      case 'all': {
+        const val = action === 'all';
+        for (let r = b.r1; r <= b.r2; r++) {
+          for (let c = b.c1; c <= b.c2; c++) {
+            set(r, c, 'top', val);
+            set(r, c, 'bottom', val);
+            set(r, c, 'left', val);
+            set(r, c, 'right', val);
+          }
+        }
+        break;
+      }
+      case 'outer':
+        eachEdge('top', true);
+        eachEdge('bottom', true);
+        eachEdge('left', true);
+        eachEdge('right', true);
+        break;
+      case 'inner':
+        for (let r = b.r1; r <= b.r2; r++) {
+          for (let c = b.c1; c <= b.c2; c++) {
+            if (r < b.r2) set(r, c, 'bottom', true);
+            if (c < b.c2) set(r, c, 'right', true);
+          }
+        }
+        break;
+    }
+    // 全開且無斜線的格子還原成未設（schema 精簡；無逐格框線的表格保持引擎快速路徑）
+    const cleaned = cells.map(row => row.map(cell => {
+      const bd = cell.borders;
+      return bd.top && bd.right && bd.bottom && bd.left && !bd.diagDown && !bd.diagUp
+        ? { ...cell, borders: undefined }
+        : cell;
+    }));
+    this.patchElement(tableId, { cells: cleaned } as Partial<TableElement>);
+  }
+
+  /** 清空儲存格內容（回到空白文字格；保留合併跨度） */
+  clearCell(tableId: string, row: number, col: number) {
+    const t = this.tableOf(tableId);
+    if (!t) return;
+    const cells = t.cells.map((r, ri) => r.map((cell, ci) =>
+      ri === row && ci === col
+        ? { ...emptyCell(), colSpan: cell.colSpan, rowSpan: cell.rowSpan, borders: cell.borders }
+        : cell));
+    this.patchElement(tableId, { cells } as Partial<TableElement>);
+  }
+
   /** 從所有 placeholder（含表格儲存格）產生範例資料物件。 */
   buildSampleData(): Record<string, unknown> {
     const data: Record<string, unknown> = {};
+    // 全數字的範例值以數字型別輸出（宿主看到的範例才是正確示範；引擎兩者都吃）
+    const coerce = (s: string): unknown => (/^-?\d+(\.\d+)?$/.test(s) ? Number(s) : s);
     const all = this.allLists(this.template()).flat().flatMap(e =>
       e.type === 'container' ? [e as TemplateElement, ...e.children] : [e]);
     for (const el of all) {
       // $ 開頭是引擎保留 key（$page/$pages），不放進範例資料
       if (el.type === 'placeholder' && el.key && !el.key.startsWith('$')) {
-        setPath(data, el.key, el.sample || '範例');
+        setPath(data, el.key, coerce(el.sample || '範例'));
       }
       // 文字元素的行內插值 token {{key|format}} 也要有範例資料
       if (el.type === 'text' && el.content.includes('{{')) {
@@ -503,7 +880,7 @@ export class EditorStateService {
           const fmt = m[2] ?? '';
           const sample = fmt === 'comma' || fmt === 'twUpper' ? '12345'
             : fmt.startsWith('rocDate') ? '2026-07-20' : '範例';
-          setPath(data, key, sample);
+          setPath(data, key, coerce(sample));
         }
       }
       if (el.type === 'barcode' && el.key && !el.key.startsWith('$')) {
@@ -520,15 +897,15 @@ export class EditorStateService {
             if (cell.kind !== 'placeholder' || !cell.key || cell.key.startsWith('$')) continue;
             if (isRepeatRow) {
               for (let i = 0; i < rowCount; i++) {
-                setPath(data, `${rep!.key}[${i}].${cell.key}`, (cell.sample || '範例') + (i + 1));
+                setPath(data, `${rep!.key}[${i}].${cell.key}`, coerce((cell.sample || '範例') + (i + 1)));
               }
             } else if (isGroupRow) {
               // 群組首/尾列的相對 key 也屬於陣列元素
               for (let i = 0; i < rowCount; i++) {
-                setPath(data, `${rep!.key}[${i}].${cell.key}`, cell.sample || '範例');
+                setPath(data, `${rep!.key}[${i}].${cell.key}`, coerce(cell.sample || '範例'));
               }
             } else {
-              setPath(data, cell.key, cell.sample || '範例');
+              setPath(data, cell.key, coerce(cell.sample || '範例'));
             }
           }
         }

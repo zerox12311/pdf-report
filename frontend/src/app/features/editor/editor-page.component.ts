@@ -5,6 +5,7 @@ import { ELEMENT_META, TemplateElement, emptyTemplate } from '../../core/models/
 import { FontService } from '../../core/services/font.service';
 import { HostBridgeService } from '../../core/services/host-bridge.service';
 import { TemplateApiService } from '../../core/services/template-api.service';
+import { ContextMenuComponent } from './context-menu.component';
 import { DataPanelComponent } from './data-panel.component';
 import { EditorCanvasComponent } from './editor-canvas.component';
 import { EditorStateService } from './editor-state.service';
@@ -22,7 +23,7 @@ interface PaletteItem {
 @Component({
   selector: 'app-editor-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, EditorCanvasComponent, PropertiesPanelComponent, PreviewPanelComponent, IntegrationDialogComponent, DataPanelComponent],
+  imports: [FormsModule, RouterLink, EditorCanvasComponent, PropertiesPanelComponent, PreviewPanelComponent, IntegrationDialogComponent, DataPanelComponent, ContextMenuComponent],
   providers: [EditorStateService],
   template: `
     <div class="editor">
@@ -39,6 +40,7 @@ interface PaletteItem {
       @if (showIntegration()) {
         <app-integration-dialog (close)="showIntegration.set(false)" />
       }
+      <app-context-menu />
 
       <div class="body">
         <!-- 左側：元件 + 大綱（Jasper 的 Palette / Outline） -->
