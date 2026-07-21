@@ -1,15 +1,37 @@
 # PDF 樣板編輯器 demo
 # 啟動：docker compose up --build
-# 入口：http://localhost:8090（前端），http://localhost:8091/swagger（後端 API）
+# 入口：http://localhost:8090（前端），http://localhost:8091（後端 API）
+# 本機開發：docker compose up -d db 後，後端連 postgres://pdftpl:pdftpl@localhost:5442/pdftpl?sslmode=disable
 name: pdf-template-demo # compose project name，與其他專案隔離
 
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pdftpl
+      POSTGRES_USER: pdftpl
+      POSTGRES_PASSWORD: pdftpl
+    ports:
+      - "5442:5432" # 本機開發/測試用（避開本機既有的 5432）
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdftpl -d pdftpl"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
   backend:
     build: ./backend
     ports:
       - "8091:8080"
+    environment:
+      DATABASE_URL: postgres://pdftpl:pdftpl@db:5432/pdftpl?sslmode=disable
     volumes:
-      - pdf-storage:/app/storage # 樣板 JSON 與上傳圖片持久化
+      - pdf-storage:/app/storage # 上傳圖片/匯入字型的二進位檔持久化（結構化資料在 Postgres）
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -20,3 +42,4 @@ services:
 
 volumes:
   pdf-storage:
+  pg-data:

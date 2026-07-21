@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"pdftemplate/internal/db"
 	"pdftemplate/internal/engine"
 	"pdftemplate/internal/httpapi"
 	"pdftemplate/internal/store"
@@ -29,19 +30,25 @@ func main() {
 		fontsDir = "fonts"
 	}
 
-	templates, err := store.NewTemplateStore(root)
+	g, err := db.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	assets, err := store.NewAssetStore(root)
+	// 舊檔案儲存時代的資料一次性匯入（表空才執行，可重跑）
+	if err := store.ImportLegacy(g, root); err != nil {
+		log.Fatal(err)
+	}
+
+	templates := store.NewTemplateStore(g)
+	assets, err := store.NewAssetStore(g, root)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fonts, err := store.NewFontStore(root)
+	fonts, err := store.NewFontStore(g, root)
 	if err != nil {
 		log.Fatal(err)
 	}
-	eng := engine.NewEngine(fontsDir, assets)
+	eng := engine.NewEngine(fontsDir, assets.EngineSource())
 	eng.SetUserFontsDir(fonts.Dir())
 
 	srv := &http.Server{

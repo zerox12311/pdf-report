@@ -12,33 +12,35 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"pdftemplate/internal/db"
 	"pdftemplate/internal/engine"
 	"pdftemplate/internal/store"
+	"pdftemplate/internal/testdb"
 )
 
-// newTestServer 建一組乾淨的儲存與引擎（temp 目錄），回傳 handler 與 stores。
-func newTestServer(t *testing.T) (http.Handler, *store.TemplateStore, *store.AssetStore, string) {
+// newTestServer 建一組乾淨的儲存與引擎（獨立測試 DB + temp 目錄），回傳 handler 與 stores。
+func newTestServer(t *testing.T) (http.Handler, *store.TemplateStore, *store.AssetStore, *gorm.DB) {
 	t.Helper()
 	root := t.TempDir()
-	templates, err := store.NewTemplateStore(root)
+	g := testdb.Open(t)
+	templates := store.NewTemplateStore(g)
+	assets, err := store.NewAssetStore(g, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assets, err := store.NewAssetStore(root)
+	fonts, err := store.NewFontStore(g, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fonts, err := store.NewFontStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	eng := engine.NewEngine("../../fonts", assets) // 使用 repo 內的字型檔
+	eng := engine.NewEngine("../../fonts", assets.EngineSource()) // 使用 repo 內的字型檔
 	eng.SetUserFontsDir(fonts.Dir())
-	return New(templates, assets, fonts, eng), templates, assets, root
+	return New(templates, assets, fonts, eng), templates, assets, g
 }
 
 func doJSON(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -107,7 +109,7 @@ func TestTemplateCRUD(t *testing.T) {
 }
 
 func TestTemplateErrors(t *testing.T) {
-	h, _, _, root := newTestServer(t)
+	h, _, _, g := newTestServer(t)
 
 	// POST 壞 JSON
 	if rec := doJSON(h, "POST", "/api/templates", "{not json"); rec.Code != 400 {
@@ -143,9 +145,9 @@ func TestTemplateErrors(t *testing.T) {
 	if rec := doJSON(h, "DELETE", "/api/templates/nope", ""); rec.Code != 404 {
 		t.Errorf("delete missing: %d", rec.Code)
 	}
-	// List 失敗：移除 templates 目錄
-	if err := os.RemoveAll(filepath.Join(root, "templates")); err != nil {
-		t.Fatal(err)
+	// List 失敗：關閉 DB 連線 → 500
+	if sqlDB, err := g.DB(); err == nil {
+		_ = sqlDB.Close()
 	}
 	if rec := doJSON(h, "GET", "/api/templates", ""); rec.Code != 500 {
 		t.Errorf("list error: %d", rec.Code)
@@ -154,7 +156,7 @@ func TestTemplateErrors(t *testing.T) {
 
 func TestRenderByID(t *testing.T) {
 	h, templates, _, _ := newTestServer(t)
-	id, _, err := templates.Save([]byte(minimalTemplate), "")
+	id, _, err := templates.Save(db.DefaultTenantID, []byte(minimalTemplate), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +195,7 @@ func TestRenderByID(t *testing.T) {
 	}
 
 	// 樣板檔解析失敗（elements 型別錯誤）
-	badID, _, err := templates.Save([]byte(`{"name":"bad","elements":"not-an-array"}`), "")
+	badID, _, err := templates.Save(db.DefaultTenantID, []byte(`{"name":"bad","elements":"not-an-array"}`), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +204,7 @@ func TestRenderByID(t *testing.T) {
 	}
 
 	// 引擎渲染失敗（頁首+頁尾吃光內容區）
-	failID, _, err := templates.Save([]byte(`{"name":"f","page":{"width":595,"height":842,"headerHeight":500,"footerHeight":500},"elements":[]}`), "")
+	failID, _, err := templates.Save(db.DefaultTenantID, []byte(`{"name":"f","page":{"width":595,"height":842,"headerHeight":500,"footerHeight":500},"elements":[]}`), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +219,7 @@ func TestRenderWarningsAndStrict(t *testing.T) {
 	tpl := `{"name":"w","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
 		"elements":[{"type":"placeholder","id":"p","x":10,"y":10,"width":100,"height":20,
 		"key":"who","sample":"某人","fontSize":12,"color":"#000000","align":"left","lineHeight":1.2,"bold":false}]}`
-	id, _, err := templates.Save([]byte(tpl), "")
+	id, _, err := templates.Save(db.DefaultTenantID, []byte(tpl), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +412,7 @@ func fontMultipart(t *testing.T, name string, data []byte) (*bytes.Buffer, strin
 }
 
 func TestFonts(t *testing.T) {
-	h, _, _, _ := newTestServer(t)
+	h, _, _, g := newTestServer(t)
 
 	// 真 TTF（repo 內字型檔）上傳成功
 	ttf, err := os.ReadFile("../../fonts/NotoSansMono-Regular.ttf")
@@ -486,6 +488,16 @@ func TestFonts(t *testing.T) {
 		t.Errorf("missing file: %d", rec.Code)
 	}
 
+	// List 失敗：關閉 DB → 500（放在渲染測試前會壞其他步驟，這裡最後測）
+	defer func() {
+		if sqlDB, err := g.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+		if rec := doJSON(h, "GET", "/api/fonts", ""); rec.Code != 500 {
+			t.Errorf("fonts list db error: %d", rec.Code)
+		}
+	}()
+
 	// 用匯入字型渲染（fontFamily = 字型 id）→ 成功且無警告
 	tpl := `{"template":{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
 	 "elements":[{"type":"text","id":"a","x":40,"y":40,"width":200,"height":20,"content":"custom font","fontSize":14,
@@ -496,5 +508,41 @@ func TestFonts(t *testing.T) {
 	}
 	if rec.Header().Get("X-Render-Warnings-Count") != "" {
 		t.Errorf("unexpected warnings: %s", rec.Header().Get("X-Render-Warnings"))
+	}
+}
+
+// ---- 補滿輔助函式覆蓋 ----
+
+// templateGetError 的 500 分支：DB 掛掉時 Get 失敗但不是 not-found。
+func TestTemplateGetInternalError(t *testing.T) {
+	h, templates, _, g := newTestServer(t)
+	id, _, err := templates.Save(db.DefaultTenantID, []byte(minimalTemplate), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sqlDB, err := g.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+	if rec := doJSON(h, "GET", "/api/templates/"+id, ""); rec.Code != 500 {
+		t.Errorf("db down get should 500: %d", rec.Code)
+	}
+}
+
+// recoverJSON 的 panic 分支：直接掛一條會 panic 的路由。
+func TestRecoverPanic(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(recoverJSON())
+	r.GET("/boom", func(c *gin.Context) { panic("boom") })
+	rec := doJSON(r, "GET", "/boom", "")
+	if rec.Code != 500 || !strings.Contains(rec.Body.String(), "伺服器錯誤") {
+		t.Errorf("panic should 500 json: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// extractData 的壞 JSON 防禦分支（正常流程到不了：外層 Unmarshal 會先擋）。
+func TestExtractDataJunk(t *testing.T) {
+	if extractData([]byte("junk")) != nil {
+		t.Error("junk body should extract nil")
 	}
 }

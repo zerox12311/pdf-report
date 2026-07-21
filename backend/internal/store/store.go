@@ -1,3 +1,6 @@
+// Package store：業務資料存取層。
+// 結構化資料（樣板 JSONB、圖片/字型中繼資料）走 PostgreSQL/GORM，
+// 二進位檔（圖片/字型）留檔案系統（storage/），全部按租戶隔離。
 package store
 
 import (
@@ -8,10 +11,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 	"time"
+
+	"gorm.io/gorm"
+
+	"pdftemplate/internal/db"
 )
 
 // writeFileAtomic 先寫同目錄 temp 檔再 rename（同一 filesystem 的 rename 是原子的），
@@ -51,6 +56,14 @@ func SafeID(id string) bool {
 	return true
 }
 
+// notFoundAs 把 GORM 的 record-not-found 統一轉成 os.ErrNotExist（httpapi 以此分類 404）。
+func notFoundAs(err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return os.ErrNotExist
+	}
+	return err
+}
+
 // TemplateSummary 樣板清單項目。
 type TemplateSummary struct {
 	ID        string `json:"id"`
@@ -58,130 +71,174 @@ type TemplateSummary struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
-// ---------- 樣板儲存（raw JSON passthrough） ----------
+// ---------- 樣板儲存（raw JSON passthrough → JSONB） ----------
 
 type TemplateStore struct {
-	dir string
-	mu  sync.Mutex // 序列化寫入；讀取靠原子 rename 保護，不需鎖
+	g *gorm.DB
 }
 
-func NewTemplateStore(root string) (*TemplateStore, error) {
-	dir := filepath.Join(root, "templates")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	return &TemplateStore{dir: dir}, nil
+func NewTemplateStore(g *gorm.DB) *TemplateStore {
+	return &TemplateStore{g: g}
 }
-
-func (s *TemplateStore) path(id string) string { return filepath.Join(s.dir, id+".json") }
 
 // Save 儲存原始 JSON（只改寫 id / updatedAt），schema 其餘欄位原樣保留。
 // 數字用 json.Number 保留原始字面（passthrough 不損毀精度）。
-func (s *TemplateStore) Save(raw []byte, forceID string) (string, []byte, error) {
+func (s *TemplateStore) Save(tenantID string, raw []byte, forceID string) (string, []byte, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.UseNumber()
 	var doc map[string]any
 	if err := dec.Decode(&doc); err != nil {
-		return "", nil, fmt.Errorf("樣板 JSON 解析失敗: %w", err)
+		return "", nil, errors.New("樣板 JSON 解析失敗（body 需為樣板 JSON 物件）")
 	}
 	id := forceID
 	if id == "" {
 		id = newID()
 	}
+	now := time.Now().UTC()
 	doc["id"] = id
-	doc["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-	out, err := json.MarshalIndent(doc, "", "  ")
+	doc["updatedAt"] = now.Format(time.RFC3339)
+	out, err := json.Marshal(doc)
 	if err != nil {
 		return "", nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := writeFileAtomic(s.path(id), out); err != nil {
+	name, _ := doc["name"].(string)
+	row := db.Template{ID: id, TenantID: tenantID, Name: name, Doc: out, UpdatedAt: now}
+	err = s.g.Where("id = ? AND tenant_id = ?", id, tenantID).
+		Assign(map[string]any{"name": name, "doc": out, "updated_at": now}).
+		FirstOrCreate(&row).Error
+	if err != nil {
 		return "", nil, err
 	}
 	return id, out, nil
 }
 
-func (s *TemplateStore) Get(id string) ([]byte, error) {
+func (s *TemplateStore) Get(tenantID, id string) ([]byte, error) {
 	if !SafeID(id) {
 		return nil, os.ErrNotExist
 	}
-	return os.ReadFile(s.path(id))
+	var row db.Template
+	if err := s.g.Where("id = ? AND tenant_id = ?", id, tenantID).First(&row).Error; err != nil {
+		return nil, notFoundAs(err)
+	}
+	return row.Doc, nil
 }
 
-func (s *TemplateStore) Delete(id string) error {
+func (s *TemplateStore) Delete(tenantID, id string) error {
 	if !SafeID(id) {
 		return os.ErrNotExist
 	}
-	return os.Remove(s.path(id))
+	res := s.g.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&db.Template{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return os.ErrNotExist
+	}
+	return nil
 }
 
-func (s *TemplateStore) List() ([]TemplateSummary, error) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
+func (s *TemplateStore) List(tenantID string) ([]TemplateSummary, error) {
+	var rows []db.Template
+	if err := s.g.Select("id", "name", "updated_at").
+		Where("tenant_id = ?", tenantID).
+		Order("updated_at DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	list := []TemplateSummary{}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var sum TemplateSummary
-		if json.Unmarshal(raw, &sum) == nil && sum.ID != "" {
-			list = append(list, sum)
-		}
+	list := make([]TemplateSummary, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, TemplateSummary{
+			ID: r.ID, Name: r.Name, UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
+		})
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].UpdatedAt > list[j].UpdatedAt })
 	return list, nil
 }
 
-// ---------- 圖片儲存 ----------
+// ---------- 圖片儲存（檔案 + DB 中繼資料） ----------
 
-type AssetStore struct{ dir string }
+type AssetStore struct {
+	g   *gorm.DB
+	dir string
+}
 
-func NewAssetStore(root string) (*AssetStore, error) {
+func NewAssetStore(g *gorm.DB, root string) (*AssetStore, error) {
 	dir := filepath.Join(root, "assets")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return &AssetStore{dir: dir}, nil
+	return &AssetStore{g: g, dir: dir}, nil
 }
 
-func (s *AssetStore) Save(data []byte, contentType string) (string, error) {
-	var ext string
+func extOf(contentType string) (string, error) {
 	switch contentType {
 	case "image/png":
-		ext = ".png"
+		return ".png", nil
 	case "image/jpeg":
-		ext = ".jpg"
-	default:
-		return "", errors.New("僅支援 PNG/JPEG")
+		return ".jpg", nil
+	}
+	return "", errors.New("僅支援 PNG/JPEG")
+}
+
+func (s *AssetStore) Save(tenantID string, data []byte, contentType string) (string, error) {
+	ext, err := extOf(contentType)
+	if err != nil {
+		return "", err
 	}
 	id := newID()
 	if err := writeFileAtomic(filepath.Join(s.dir, id+ext), data); err != nil {
 		return "", err
 	}
+	if err := s.g.Create(&db.Asset{ID: id, TenantID: tenantID, ContentType: contentType}).Error; err != nil {
+		return "", err
+	}
 	return id, nil
 }
 
-func (s *AssetStore) Get(id string) ([]byte, string, error) {
+func (s *AssetStore) Get(tenantID, id string) ([]byte, string, error) {
 	if !SafeID(id) {
 		return nil, "", os.ErrNotExist
 	}
-	if b, err := os.ReadFile(filepath.Join(s.dir, id+".png")); err == nil {
-		return b, "image/png", nil
+	var row db.Asset
+	if err := s.g.Where("id = ? AND tenant_id = ?", id, tenantID).First(&row).Error; err != nil {
+		return nil, "", notFoundAs(err)
 	}
-	if b, err := os.ReadFile(filepath.Join(s.dir, id+".jpg")); err == nil {
-		return b, "image/jpeg", nil
+	ext, err := extOf(row.ContentType)
+	if err != nil {
+		return nil, "", os.ErrNotExist
 	}
-	return nil, "", os.ErrNotExist
+	b, err := os.ReadFile(filepath.Join(s.dir, id+ext))
+	if err != nil {
+		return nil, "", err
+	}
+	return b, row.ContentType, nil
 }
 
-// ---------- 自訂字型儲存 ----------
+// EngineSource 給渲染引擎的圖片來源：僅憑 id 取檔。
+// id 是 128-bit 隨機值（不可枚舉），且樣板本身已按租戶隔離，
+// 引擎層不再重複帶租戶（渲染的樣板引用哪張圖就取哪張）。
+type engineSource struct{ s *AssetStore }
+
+func (e engineSource) Get(id string) ([]byte, string, error) {
+	if !SafeID(id) {
+		return nil, "", os.ErrNotExist
+	}
+	var row db.Asset
+	if err := e.s.g.Where("id = ?", id).First(&row).Error; err != nil {
+		return nil, "", notFoundAs(err)
+	}
+	ext, err := extOf(row.ContentType)
+	if err != nil {
+		return nil, "", os.ErrNotExist
+	}
+	b, err := os.ReadFile(filepath.Join(e.s.dir, id+ext))
+	if err != nil {
+		return nil, "", err
+	}
+	return b, row.ContentType, nil
+}
+
+func (s *AssetStore) EngineSource() engineSource { return engineSource{s: s} }
+
+// ---------- 自訂字型儲存（檔案 + DB 中繼資料） ----------
 
 // FontInfo 已匯入字型的中繼資料。
 type FontInfo struct {
@@ -189,21 +246,20 @@ type FontInfo struct {
 	Name string `json:"name"`
 }
 
-// FontStore 使用者匯入的字型：{id}.ttf 檔 + fonts.json 索引（名稱）。
 type FontStore struct {
+	g   *gorm.DB
 	dir string
-	mu  sync.Mutex
 }
 
-func NewFontStore(root string) (*FontStore, error) {
+func NewFontStore(g *gorm.DB, root string) (*FontStore, error) {
 	dir := filepath.Join(root, "fonts")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return &FontStore{dir: dir}, nil
+	return &FontStore{g: g, dir: dir}, nil
 }
 
-// Dir 字型檔目錄（引擎掃描用）。
+// Dir 字型檔目錄（引擎掃描用；字型 id 全域唯一，租戶隔離在 API 層）。
 func (s *FontStore) Dir() string { return s.dir }
 
 // validFontMagic TTF/OTF 檔頭：sfnt 0x00010000、'OTTO'、'true'、'ttcf'。
@@ -218,60 +274,111 @@ func validFontMagic(data []byte) bool {
 	return false
 }
 
-// Save 驗檔頭後存檔並更新索引；回傳字型資訊。
-func (s *FontStore) Save(name string, data []byte) (FontInfo, error) {
+// Save 驗檔頭後存檔並寫入中繼資料。
+func (s *FontStore) Save(tenantID, name string, data []byte) (FontInfo, error) {
 	if !validFontMagic(data) {
 		return FontInfo{}, errors.New("僅支援 TTF/OTF 字型檔（檔案內容驗證失敗）")
 	}
 	if name == "" {
 		name = "自訂字型"
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	id := newID()
 	if err := writeFileAtomic(filepath.Join(s.dir, id+".ttf"), data); err != nil {
 		return FontInfo{}, err
 	}
-	list, _ := s.readIndex()
-	list = append(list, FontInfo{ID: id, Name: name})
-	if err := s.writeIndex(list); err != nil {
+	if err := s.g.Create(&db.Font{ID: id, TenantID: tenantID, Name: name}).Error; err != nil {
 		return FontInfo{}, err
 	}
 	return FontInfo{ID: id, Name: name}, nil
 }
 
-// List 已匯入字型清單（依索引順序）；索引缺失/損壞視為空清單。
-func (s *FontStore) List() []FontInfo {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	list, _ := s.readIndex()
-	return list
-}
-
-// Get 字型檔內容。
-func (s *FontStore) Get(id string) ([]byte, error) {
-	if !SafeID(id) {
-		return nil, os.ErrNotExist
+// List 已匯入字型清單（依建立時間）。
+func (s *FontStore) List(tenantID string) ([]FontInfo, error) {
+	var rows []db.Font
+	if err := s.g.Where("tenant_id = ?", tenantID).Order("created_at").Find(&rows).Error; err != nil {
+		return nil, err
 	}
-	return os.ReadFile(filepath.Join(s.dir, id+".ttf"))
-}
-
-func (s *FontStore) readIndex() ([]FontInfo, error) {
-	b, err := os.ReadFile(filepath.Join(s.dir, "fonts.json"))
-	if err != nil {
-		return []FontInfo{}, nil // 無索引 = 空清單
-	}
-	var list []FontInfo
-	if err := json.Unmarshal(b, &list); err != nil {
-		return []FontInfo{}, nil
+	list := make([]FontInfo, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, FontInfo{ID: r.ID, Name: r.Name})
 	}
 	return list, nil
 }
 
-func (s *FontStore) writeIndex(list []FontInfo) error {
-	b, err := json.Marshal(list)
-	if err != nil {
+// Get 字型檔內容（先過租戶檢查再讀檔）。
+func (s *FontStore) Get(tenantID, id string) ([]byte, error) {
+	if !SafeID(id) {
+		return nil, os.ErrNotExist
+	}
+	var row db.Font
+	if err := s.g.Where("id = ? AND tenant_id = ?", id, tenantID).First(&row).Error; err != nil {
+		return nil, notFoundAs(err)
+	}
+	return os.ReadFile(filepath.Join(s.dir, id+".ttf"))
+}
+
+// ---------- 舊檔案儲存的一次性匯入 ----------
+
+// ImportLegacy 把檔案系統時代的資料匯進 DB（歸 default 租戶）：
+// templates/*.json、fonts/fonts.json 索引、assets/ 目錄下的圖檔。
+// 只在對應資料表為空時執行，安全可重跑。
+func ImportLegacy(g *gorm.DB, root string) error {
+	// 樣板
+	var n int64
+	if err := g.Model(&db.Template{}).Count(&n).Error; err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(s.dir, "fonts.json"), b)
+	if n == 0 {
+		entries, _ := os.ReadDir(filepath.Join(root, "templates"))
+		ts := NewTemplateStore(g)
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			raw, err := os.ReadFile(filepath.Join(root, "templates", e.Name()))
+			if err != nil {
+				continue
+			}
+			id := strings.TrimSuffix(e.Name(), ".json")
+			if _, _, err := ts.Save(db.DefaultTenantID, raw, id); err != nil {
+				return fmt.Errorf("匯入舊樣板 %s: %w", id, err)
+			}
+		}
+	}
+	// 字型（舊 fonts.json 索引）
+	if err := g.Model(&db.Font{}).Count(&n).Error; err != nil {
+		return err
+	}
+	if n == 0 {
+		if b, err := os.ReadFile(filepath.Join(root, "fonts", "fonts.json")); err == nil {
+			var list []FontInfo
+			if json.Unmarshal(b, &list) == nil {
+				for _, f := range list {
+					_ = g.Create(&db.Font{ID: f.ID, TenantID: db.DefaultTenantID, Name: f.Name}).Error
+				}
+			}
+		}
+	}
+	// 圖片（掃目錄）
+	if err := g.Model(&db.Asset{}).Count(&n).Error; err != nil {
+		return err
+	}
+	if n == 0 {
+		entries, _ := os.ReadDir(filepath.Join(root, "assets"))
+		for _, e := range entries {
+			name := e.Name()
+			var ct string
+			switch {
+			case strings.HasSuffix(name, ".png"):
+				ct = "image/png"
+			case strings.HasSuffix(name, ".jpg"):
+				ct = "image/jpeg"
+			default:
+				continue
+			}
+			id := name[:len(name)-4]
+			_ = g.Create(&db.Asset{ID: id, TenantID: db.DefaultTenantID, ContentType: ct}).Error
+		}
+	}
+	return nil
 }
