@@ -348,6 +348,56 @@ describe('EditorStateService', () => {
     expect(state.undoCount()).toBe(0);
   });
 
+  it('多選對齊/分佈：alignSelected 與 distributeSelected', () => {
+    // 三個元素不同位置
+    state.addElement(textEl({ x: 10, y: 10, width: 100, height: 20 }) as any);
+    const a = state.selectedId()!;
+    state.select(null);
+    state.addElement(textEl({ x: 50, y: 60, width: 40, height: 20 }) as any);
+    const b = state.selectedId()!;
+    state.select(null);
+    state.addElement(textEl({ x: 200, y: 100, width: 60, height: 20 }) as any);
+    const c = state.selectedId()!;
+    // 多選三個
+    state.selectMany([a, b, c]);
+    expect(state.selectedIds()).toEqual([a, b, c]);
+    // 左對齊 → 全部 x = min x = 10
+    state.alignSelected('left');
+    expect(state.findElement(a)!.x).toBe(10);
+    expect(state.findElement(b)!.x).toBe(10);
+    expect(state.findElement(c)!.x).toBe(10);
+    // 頂端對齊 → 全部 y = min y = 10
+    state.alignSelected('top');
+    expect(state.findElement(a)!.y).toBe(10);
+    expect(state.findElement(c)!.y).toBe(10);
+    // 重設 y 做垂直分佈
+    state.patchElement(a, { y: 0 });
+    state.patchElement(b, { y: 50 });
+    state.patchElement(c, { y: 200 });
+    state.distributeSelected('v');
+    // 中心等距：a 中心 10、c 中心 210，b 中心應為 110 → b.y = 110 - 10 = 100
+    expect(state.findElement(b)!.y).toBe(100);
+  });
+
+  it('多選：toggleSelect 加選移除、removeSelected 一步刪除', () => {
+    state.addElement(textEl() as any);
+    const a = state.selectedId()!;
+    state.select(null);
+    state.addElement(textEl() as any);
+    const b = state.selectedId()!;
+    state.select(a);
+    state.toggleSelect(b); // 加選 b
+    expect(state.selectedIds().sort()).toEqual([a, b].sort());
+    state.toggleSelect(b); // 移除 b
+    expect(state.selectedIds()).toEqual([a]);
+    // 多選刪除
+    state.toggleSelect(b);
+    state.removeSelected();
+    expect(state.findElement(a)).toBeNull();
+    expect(state.findElement(b)).toBeNull();
+    expect(state.selectedId()).toBeNull();
+  });
+
   it('moveLayer：同層清單內上移/下移/最上/最下；layerPositionOf 回報位置', () => {
     state.addElement(textEl({ content: 'a' }) as any);
     state.select(null);

@@ -1,31 +1,37 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
-  ELEMENT_META, ElementPatch, FONT_FAMILIES, VALUE_FORMATS,
-  TableCell, TableElement, TemplateElement,
+  CornerRadii, ELEMENT_META, ElementPatch, FONT_FAMILIES, VALUE_FORMATS,
+  RectElement, TableCell, TableElement, TemplateElement, cornerRadiiOf,
 } from '../../core/models/template.model';
 import { FontService } from '../../core/services/font.service';
 import { EditorStateService } from './editor-state.service';
 import { PagePropertiesComponent } from './properties/page-properties.component';
 import { TextStyleFormComponent } from './properties/text-style-form.component';
+import { ScrubDirective } from './scrub.directive';
 
 @Component({
   selector: 'app-properties-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, TextStyleFormComponent, PagePropertiesComponent],
+  imports: [FormsModule, TextStyleFormComponent, PagePropertiesComponent, ScrubDirective],
   template: `
     <div class="panel">
       @if (state.selected(); as el) {
         <h3>屬性 <span class="type-tag">{{ typeName(el.type) }}</span>
           <span class="band-tag" [title]="'依 Y 座標判定；移動元素跨過虛線會換區'">{{ bandOf(el) }}</span></h3>
 
+        <!-- 標籤可左右拖曳調整數值（Figma 式 scrub；指標鎖定可無限拖） -->
         <div class="grid4">
-          <label>X <input type="number" [ngModel]="el.x" (ngModelChange)="patch(el, { x: num($event) })" /></label>
-          <label>Y <input type="number" [ngModel]="el.y" (ngModelChange)="patch(el, { y: num($event) })" /></label>
-          <label>寬 <input type="number" [ngModel]="el.width" [disabled]="el.type === 'table'"
-            (ngModelChange)="patch(el, { width: num($event) })" /></label>
-          <label>高 <input type="number" [ngModel]="el.height" [disabled]="el.type === 'table'"
-            (ngModelChange)="patch(el, { height: num($event) })" /></label>
+          <label [appScrub]="el.x" (scrubChange)="patch(el, { x: $event })">X
+            <input type="number" [ngModel]="el.x" (ngModelChange)="patch(el, { x: num($event) })" /></label>
+          <label [appScrub]="el.y" (scrubChange)="patch(el, { y: $event })">Y
+            <input type="number" [ngModel]="el.y" (ngModelChange)="patch(el, { y: num($event) })" /></label>
+          <label [appScrub]="el.width" [scrubMin]="1" (scrubChange)="scrubSize(el, { width: $event })">寬
+            <input type="number" [ngModel]="el.width" [disabled]="el.type === 'table'"
+              (ngModelChange)="patch(el, { width: num($event) })" /></label>
+          <label [appScrub]="el.height" [scrubMin]="0" (scrubChange)="scrubSize(el, { height: $event })">高
+            <input type="number" [ngModel]="el.height" [disabled]="el.type === 'table'"
+              (ngModelChange)="patch(el, { height: num($event) })" /></label>
         </div>
 
         @switch (el.type) {
@@ -125,9 +131,51 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
           }
           @case ('rect') {
             <div class="grid2">
+              <label>形狀
+                <select [ngModel]="el.shape ?? 'rect'" (ngModelChange)="patch(el, { shape: $event === 'rect' ? undefined : $event })">
+                  <option value="rect">矩形</option>
+                  <option value="ellipse">橢圓 / 圓</option>
+                </select>
+              </label>
+              @if ((el.shape ?? 'rect') === 'rect') {
+                <label [appScrub]="radiusOf(el, 0)" [scrubMin]="0"
+                  (scrubChange)="setUniformRadius(el, $event + '')">圓角
+                  <span class="radius-row">
+                    <input type="text" [ngModel]="uniformRadiusText(el)" [placeholder]="'0'"
+                      (ngModelChange)="setUniformRadius(el, $event)" />
+                    <button class="radius-toggle" [class.on]="perCorner()" title="分別設定四角"
+                      (click)="perCorner.set(!perCorner())">⛶</button>
+                  </span>
+                </label>
+              }
+            </div>
+            @if ((el.shape ?? 'rect') === 'rect' && perCorner()) {
+              <div class="grid2 radius-grid">
+                <label [appScrub]="radiusOf(el, 0)" [scrubMin]="0" (scrubChange)="setCornerRadius(el, 'tl', $event)">◜ 左上
+                  <input type="number" min="0" step="1" [ngModel]="radiusOf(el, 0)"
+                    (ngModelChange)="setCornerRadius(el, 'tl', num($event))" /></label>
+                <label [appScrub]="radiusOf(el, 1)" [scrubMin]="0" (scrubChange)="setCornerRadius(el, 'tr', $event)">◝ 右上
+                  <input type="number" min="0" step="1" [ngModel]="radiusOf(el, 1)"
+                    (ngModelChange)="setCornerRadius(el, 'tr', num($event))" /></label>
+                <label [appScrub]="radiusOf(el, 3)" [scrubMin]="0" (scrubChange)="setCornerRadius(el, 'bl', $event)">◟ 左下
+                  <input type="number" min="0" step="1" [ngModel]="radiusOf(el, 3)"
+                    (ngModelChange)="setCornerRadius(el, 'bl', num($event))" /></label>
+                <label [appScrub]="radiusOf(el, 2)" [scrubMin]="0" (scrubChange)="setCornerRadius(el, 'br', $event)">◞ 右下
+                  <input type="number" min="0" step="1" [ngModel]="radiusOf(el, 2)"
+                    (ngModelChange)="setCornerRadius(el, 'br', num($event))" /></label>
+              </div>
+            }
+            <div class="grid2">
               <label>框線色 <input type="color" [ngModel]="el.strokeColor" (ngModelChange)="patch(el, { strokeColor: $event })" /></label>
               <label>框線寬 <input type="number" step="0.5" [ngModel]="el.strokeWidth" (ngModelChange)="patch(el, { strokeWidth: num($event) })" /></label>
             </div>
+            <label class="full">框線型
+              <select [ngModel]="el.lineStyle ?? 'solid'" (ngModelChange)="patch(el, { lineStyle: $event === 'solid' ? undefined : $event })">
+                <option value="solid">實線</option>
+                <option value="dashed">虛線 ┄</option>
+                <option value="dotted">點線 ┈</option>
+              </select>
+            </label>
             <label class="row">
               <input type="checkbox" [ngModel]="el.strokeWidth === 0"
                 (ngModelChange)="patch(el, { strokeWidth: $event ? 0 : 1 })" /> 外框透明（只留填色）
@@ -145,6 +193,13 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
               <label>線色 <input type="color" [ngModel]="el.strokeColor" (ngModelChange)="patch(el, { strokeColor: $event })" /></label>
               <label>線寬 <input type="number" step="0.5" [ngModel]="el.strokeWidth" (ngModelChange)="patch(el, { strokeWidth: num($event) })" /></label>
             </div>
+            <label class="full">線型
+              <select [ngModel]="el.lineStyle ?? 'solid'" (ngModelChange)="patch(el, { lineStyle: $event === 'solid' ? undefined : $event })">
+                <option value="solid">實線</option>
+                <option value="dashed">虛線 ┄</option>
+                <option value="dotted">點線 ┈</option>
+              </select>
+            </label>
           }
           @case ('table') {
             <div class="grid2">
@@ -434,6 +489,16 @@ import { TextStyleFormComponent } from './properties/text-style-form.component';
       border: 1px solid #cbd5e1; border-radius: 4px; background: #fff; color: #475569; white-space: nowrap; }
     .borderbtns button:hover { background: #f1f5f9; }
     .borderbtns button.on { background: #eff6ff; border-color: #93b4f8; color: #1d4ed8; font-weight: 700; }
+    /* 可拖曳調整的數值標籤（Figma 式 scrub）：標籤顯示 ↔ 游標，輸入框維持文字游標 */
+    .scrubbable { cursor: ew-resize; user-select: none; }
+    .scrubbable input, .scrubbable select, .scrubbable button { cursor: auto; user-select: text; }
+    /* 圓角：統一輸入＋展開四角（Figma 式） */
+    .radius-row { display: flex; align-items: center; gap: 4px; }
+    .radius-row input { flex: 1; min-width: 0; }
+    .radius-toggle { width: 24px; height: 24px; flex-shrink: 0; padding: 0; cursor: pointer;
+      border: 1px solid #cbd5e1; border-radius: 4px; background: #fff; color: #475569; font-size: 11px; }
+    .radius-toggle.on { background: #eff6ff; border-color: #93b4f8; color: #1d4ed8; }
+    .radius-grid { margin-top: -2px; }
     .colorrow { display: flex; align-items: center; gap: 4px; }
     .colorrow input[type=color] { flex: 1; min-width: 0; }
     .clearcolor { width: 20px; height: 20px; padding: 0; border: 1px solid #cbd5e1; border-radius: 4px;
@@ -485,6 +550,12 @@ export class PropertiesPanelComponent {
     this.state.patchElement(el.id, patch);
   }
 
+  /** 寬/高 scrub：表格的寬高是欄寬/列高的衍生值，不直接改 */
+  scrubSize(el: TemplateElement, patch: ElementPatch) {
+    if (el.type === 'table') return;
+    this.patch(el, patch);
+  }
+
   pickCellImage(el: TableElement) {
     const sc = this.state.selectedCell();
     if (sc) this.state.imagePickRequest.set({ tableId: el.id, r: sc.row, c: sc.col });
@@ -493,6 +564,41 @@ export class PropertiesPanelComponent {
   /** 圖片元素的「上傳圖片…」：開檔案選擇器，上傳後設 assetId（並清掉 URL 綁定） */
   pickElementImage(el: TemplateElement) {
     this.state.imagePickRequest.set({ elementId: el.id });
+  }
+
+  // ---- 圓角（Figma 式：統一輸入＋展開四角）----
+  /** 四角獨立輸入是否展開 */
+  perCorner = signal(false);
+
+  /** 第 i 角的半徑（順序 tl, tr, br, bl） */
+  radiusOf(el: RectElement, i: number): number {
+    return cornerRadiiOf(el)[i];
+  }
+
+  /** 統一輸入框的顯示值：四角相同 → 數字；不同 → 「混合」（同 Figma 的 Mixed） */
+  uniformRadiusText(el: RectElement): string {
+    const [tl, tr, br, bl] = cornerRadiiOf(el);
+    return tl === tr && tr === br && br === bl ? String(tl) : '混合';
+  }
+
+  /** 統一輸入：設定四角相同（清掉個別半徑）；非數字（如「混合」）忽略 */
+  setUniformRadius(el: RectElement, text: string) {
+    const v = parseFloat(text);
+    if (isNaN(v)) return;
+    const r = Math.max(0, v);
+    this.patch(el, { cornerRadius: r || undefined, cornerRadii: undefined });
+  }
+
+  /** 個別角：寫進 cornerRadii（其餘角沿用目前值） */
+  setCornerRadius(el: RectElement, corner: 'tl' | 'tr' | 'br' | 'bl', v: number) {
+    const [tl, tr, br, bl] = cornerRadiiOf(el);
+    const next: CornerRadii = { tl, tr, br, bl, [corner]: Math.max(0, v) } as CornerRadii;
+    // 四角又相同 → 收斂回統一值，schema 保持精簡
+    if (next.tl === next.tr && next.tr === next.br && next.br === next.bl) {
+      this.patch(el, { cornerRadius: next.tl || undefined, cornerRadii: undefined });
+      return;
+    }
+    this.patch(el, { cornerRadii: next, cornerRadius: undefined });
   }
 
   mergeCells(el: TableElement) {

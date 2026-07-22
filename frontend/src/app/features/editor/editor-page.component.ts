@@ -72,8 +72,9 @@ interface PaletteItem {
               @for (item of group.items; track item.el.id) {
                 <div class="node" [class.active]="item.el.id === state.selectedId()"
                   [class.drop-target]="dropTargetId() === item.el.id"
+                  [class.node-hidden]="item.el.hidden"
                   [style.paddingLeft.px]="6 + item.depth * 16"
-                  draggable="true"
+                  [draggable]="!item.el.locked"
                   (dragstart)="onOutlineDragStart($event, item.el.id)"
                   (dragend)="clearOutlineDrag()"
                   (dragover)="onOutlineDragOver($event, item.el)"
@@ -82,6 +83,10 @@ interface PaletteItem {
                   (click)="revealEl(item.el.id)">
                   <span class="icon">{{ item.icon }}</span>
                   <span class="label">{{ item.label }}</span>
+                  <button class="del icon-hide" [class.on]="item.el.hidden" [title]="item.el.hidden ? '顯示' : '隱藏'"
+                    (click)="toggleHidden($event, item.el.id)">{{ item.el.hidden ? '🚫' : '👁' }}</button>
+                  <button class="del icon-lock" [class.on]="item.el.locked" [title]="item.el.locked ? '解鎖' : '鎖定'"
+                    (click)="toggleLocked($event, item.el.id)">🔒</button>
                   <button class="del" title="複製" (click)="dupEl($event, item.el.id)">⧉</button>
                   <button class="del" title="刪除" (click)="removeEl($event, item.el.id)">✕</button>
                 </div>
@@ -107,6 +112,22 @@ interface PaletteItem {
                 }
                 <button class="add" (click)="state.addSection('flow')" title="新增內容節（有頁首/頁尾 band、內容自動分頁）">＋節</button>
                 <button class="add" (click)="state.addSection('single')" title="新增獨立頁（如封面/封底，單獨一頁）">＋獨立頁</button>
+              </div>
+            }
+            @if (tab() === 'design' && state.selectedIds().length > 1) {
+              <div class="zoom align-group" title="對齊/分佈選取的元素">
+                <button class="zbtn" (click)="state.alignSelected('left')" title="左對齊">⇤</button>
+                <button class="zbtn" (click)="state.alignSelected('hcenter')" title="水平置中">⇔</button>
+                <button class="zbtn" (click)="state.alignSelected('right')" title="右對齊">⇥</button>
+                <span class="sep"></span>
+                <button class="zbtn" (click)="state.alignSelected('top')" title="頂端對齊">⤒</button>
+                <button class="zbtn" (click)="state.alignSelected('vcenter')" title="垂直置中">⇕</button>
+                <button class="zbtn" (click)="state.alignSelected('bottom')" title="底端對齊">⤓</button>
+                @if (state.selectedIds().length > 2) {
+                  <span class="sep"></span>
+                  <button class="zbtn" (click)="state.distributeSelected('h')" title="水平等距分佈">↔</button>
+                  <button class="zbtn" (click)="state.distributeSelected('v')" title="垂直等距分佈">↕</button>
+                }
               </div>
             }
             @if (tab() === 'design') {
@@ -188,6 +209,11 @@ interface PaletteItem {
     .node .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .node .del { visibility: hidden; border: none; background: none; cursor: pointer; color: inherit; font-size: 11px; padding: 0 2px; }
     .node:hover .del { visibility: visible; }
+    /* 眼睛/鎖：啟用時常駐＋背景色塊（彩色 emoji 吃不到 color，改用背景表達狀態） */
+    .node .del.on { visibility: visible; border-radius: 4px; padding: 1px 4px; font-size: 12px; }
+    .node .del.icon-hide.on { background: #fecaca; box-shadow: inset 0 0 0 1.5px #dc2626; }
+    .node .del.icon-lock.on { background: #fed7aa; box-shadow: inset 0 0 0 1.5px #ea580c; }
+    .node.node-hidden .label { opacity: .45; text-decoration: line-through; }
     .node.drop-target { outline: 1.5px dashed #2563eb; outline-offset: -1.5px; }
     .band-name.drop-target { outline: 1.5px dashed #2563eb; outline-offset: -1.5px; border-radius: 4px; }
 
@@ -205,6 +231,8 @@ interface PaletteItem {
     .zbtn:hover:not(:disabled) { background: #eff6ff; color: #1d4ed8; }
     .zbtn:disabled { opacity: .4; cursor: default; }
     .undo-group { margin-right: 8px; }
+    .align-group { margin-right: 8px; }
+    .align-group .sep { width: 1px; height: 16px; background: #c3cad4; margin: 0 3px; display: inline-block; }
     .zval { min-width: 42px; text-align: center; cursor: pointer; font-variant-numeric: tabular-nums; }
     .zval:hover { color: #1d4ed8; }
     .surface-switch { display: flex; gap: 2px; margin-right: 12px; background: #dbe2ea; border-radius: 7px; padding: 2px; }
@@ -406,6 +434,16 @@ export class EditorPageComponent {
   dupEl(e: Event, id: string) {
     e.stopPropagation();
     this.state.duplicateElement(id);
+  }
+
+  toggleHidden(e: Event, id: string) {
+    e.stopPropagation();
+    this.state.toggleHidden(id);
+  }
+
+  toggleLocked(e: Event, id: string) {
+    e.stopPropagation();
+    this.state.toggleLocked(id);
   }
 
   /** 大綱點選：選取並把畫布捲動到該元素 */

@@ -26,6 +26,8 @@ export type ContextMenuItem =
 export class EditorStateService {
   readonly template = signal<TemplateDoc>(emptyTemplate());
   readonly selectedId = signal<string | null>(null);
+  /** 多選集合（頂層元素）：含 primary（selectedId）；單選時 = [selectedId] */
+  readonly selectedIds = signal<string[]>([]);
   readonly selectedCell = signal<{ row: number; col: number } | null>(null);
   /** 儲存格範圍選取（Shift+點選；合併儲存格用），錨點為 selectedCell */
   readonly selectedCellRange = signal<{ r1: number; c1: number; r2: number; c2: number } | null>(null);
@@ -257,6 +259,112 @@ export class EditorStateService {
       this.selectedCellRange.set(null);
     }
     this.selectedId.set(id);
+    this.selectedIds.set(id ? [id] : []);
+  }
+
+  /** Shift+點選：加入/移除多選集合（primary 設為該元素）；只限頂層元素 */
+  toggleSelect(id: string) {
+    const cur = this.selectedIds();
+    if (cur.includes(id)) {
+      const next = cur.filter(x => x !== id);
+      this.selectedIds.set(next);
+      this.selectedId.set(next.length ? next[next.length - 1] : null);
+    } else {
+      this.selectedIds.set([...cur, id]);
+      this.selectedId.set(id);
+    }
+    this.selectedCell.set(null);
+    this.selectedCellRange.set(null);
+  }
+
+  /** 框選：設定多選集合（primary = 最後一個）；空陣列 = 取消選取 */
+  selectMany(ids: string[]) {
+    this.selectedIds.set(ids);
+    this.selectedId.set(ids.length ? ids[ids.length - 1] : null);
+    this.selectedCell.set(null);
+    this.selectedCellRange.set(null);
+  }
+
+  /** 目前多選的頂層元素（過濾掉找不到/非頂層的） */
+  private selectedTopElements(): TemplateElement[] {
+    const top = this.visibleElements();
+    return this.selectedIds()
+      .map(id => top.find(e => e.id === id))
+      .filter((e): e is TemplateElement => !!e);
+  }
+
+  /**
+   * 對齊選取的頂層元素（相對選取整體的 bounding box）。
+   * 2 個以上才有意義；鎖定元素跳過。
+   */
+  alignSelected(edge: 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom') {
+    const els = this.selectedTopElements().filter(e => !e.locked);
+    if (els.length < 2) return;
+    const minX = Math.min(...els.map(e => e.x));
+    const maxX = Math.max(...els.map(e => e.x + e.width));
+    const minY = Math.min(...els.map(e => e.y));
+    const maxY = Math.max(...els.map(e => e.y + e.height));
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    this.record();
+    this.template.update(t => this.mapLists(t, list => list.map(e => {
+      if (!this.selectedIds().includes(e.id) || e.locked) return e;
+      switch (edge) {
+        case 'left': return { ...e, x: Math.round(minX) };
+        case 'right': return { ...e, x: Math.round(maxX - e.width) };
+        case 'hcenter': return { ...e, x: Math.round(cx - e.width / 2) };
+        case 'top': return { ...e, y: Math.round(minY) };
+        case 'bottom': return { ...e, y: Math.round(maxY - e.height) };
+        case 'vcenter': return { ...e, y: Math.round(cy - e.height / 2) };
+      }
+    })));
+    this.dirty.set(true);
+  }
+
+  /**
+   * 分佈：依中心等距排列（3 個以上）；首尾中心固定，中間等分。鎖定元素跳過。
+   */
+  distributeSelected(axis: 'h' | 'v') {
+    const els = this.selectedTopElements().filter(e => !e.locked);
+    if (els.length < 3) return;
+    const center = (e: TemplateElement) => axis === 'h' ? e.x + e.width / 2 : e.y + e.height / 2;
+    const sorted = [...els].sort((a, b) => center(a) - center(b));
+    const first = center(sorted[0]);
+    const last = center(sorted[sorted.length - 1]);
+    const step = (last - first) / (sorted.length - 1);
+    const target = new Map<string, number>();
+    sorted.forEach((e, i) => target.set(e.id, first + step * i));
+    this.record();
+    this.template.update(t => this.mapLists(t, list => list.map(e => {
+      const c = target.get(e.id);
+      if (c === undefined || e.locked) return e;
+      return axis === 'h'
+        ? { ...e, x: Math.round(c - e.width / 2) }
+        : { ...e, y: Math.round(c - e.height / 2) };
+    })));
+    this.dirty.set(true);
+  }
+
+  /** 一起移動多選元素（拖曳用）：對每個選取的頂層元素套用 dx/dy。
+   *  record 的 400ms 節流會把連續拖曳合併成一步 undo。 */
+  moveSelectedBy(origins: Map<string, { x: number; y: number }>, dx: number, dy: number) {
+    this.record();
+    this.template.update(t => this.mapLists(t, list => list.map(e => {
+      const o = origins.get(e.id);
+      if (!o) return e;
+      return { ...e, x: Math.max(0, Math.round(o.x + dx)), y: Math.max(0, Math.round(o.y + dy)) };
+    })));
+    this.dirty.set(true);
+  }
+
+  /** 刪除多選的所有頂層元素（一步 undo） */
+  removeSelected() {
+    const ids = this.selectedIds();
+    if (ids.length === 0) return;
+    this.record();
+    this.template.update(t => this.mapLists(t, list => list.filter(e => !ids.includes(e.id))));
+    this.select(null);
+    this.dirty.set(true);
   }
 
   /** 合併選取範圍的儲存格；回傳錯誤訊息（null = 成功）。範圍不可跨到重複/群組列邊界 */
@@ -472,6 +580,24 @@ export class EditorStateService {
    * 圖層順序（同一層清單內移動；晚畫的在上層）：
    * up/down 移一層、front/back 移到最上/最下層。容器子元素在容器內移動。
    */
+  /** 鎖定切換（純編輯器：畫布不可選/拖）；鎖定時清掉選取避免殘留 handle */
+  toggleLocked(id: string) {
+    const el = this.findElement(id);
+    if (!el) return;
+    const locked = !el.locked;
+    this.patchElement(id, { locked: locked || undefined });
+    if (locked && this.selectedId() === id) this.select(null);
+  }
+
+  /** 隱藏切換（設計＋渲染都不顯示）；隱藏時清掉選取 */
+  toggleHidden(id: string) {
+    const el = this.findElement(id);
+    if (!el) return;
+    const hidden = !el.hidden;
+    this.patchElement(id, { hidden: hidden || undefined });
+    if (hidden && this.selectedId() === id) this.select(null);
+  }
+
   moveLayer(id: string, action: 'up' | 'down' | 'front' | 'back') {
     const reorder = (list: TemplateElement[]): TemplateElement[] | null => {
       const i = list.findIndex(e => e.id === id);

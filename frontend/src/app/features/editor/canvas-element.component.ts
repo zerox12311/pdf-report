@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
-import { CellBorders, FontFamily, TableCell, TableElement, TemplateElement, coveredCells, fontCss } from '../../core/models/template.model';
+import { CellBorders, FontFamily, RectElement, TableCell, TableElement, TemplateElement, cornerRadiiOf, coveredCells, fontCss } from '../../core/models/template.model';
 import { formatValue } from '../../core/utils/format-value';
 import { ContextMenuItem, EditorStateService } from './editor-state.service';
 import { DataKeyPayload, paletteToCellPatch } from './element-factory';
@@ -67,15 +67,17 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
       @case ('rect') {
         @if (rectEl(); as el) {
           <div class="rect-box"
-            [style.border]="el.strokeWidth > 0 ? (el.strokeWidth * z()) + 'px solid ' + el.strokeColor : 'none'"
-            [style.background]="el.fillColor ?? 'transparent'"></div>
+            [style.border]="el.strokeWidth > 0 ? (el.strokeWidth * z()) + 'px ' + (el.lineStyle ?? 'solid') + ' ' + el.strokeColor : 'none'"
+            [style.background]="el.fillColor ?? 'transparent'"
+            [style.borderRadius]="rectRadiusCss(el)"></div>
         }
       }
       @case ('line') {
         @if (lineEl(); as el) {
           <svg class="line-box" preserveAspectRatio="none">
             <line x1="0" y1="0" [attr.x2]="el.width * z()" [attr.y2]="el.height * z()"
-              [attr.stroke]="el.strokeColor" [attr.stroke-width]="el.strokeWidth * z()" />
+              [attr.stroke]="el.strokeColor" [attr.stroke-width]="el.strokeWidth * z()"
+              [attr.stroke-dasharray]="lineDash(el.lineStyle)" />
           </svg>
         }
       }
@@ -274,6 +276,23 @@ export class CanvasElementComponent {
   isElementDropCell(el: TableElement, r: number, c: number): boolean {
     const d = this.state.elementDropCell();
     return !!d && d.tableId === el.id && d.r === r && d.c === c;
+  }
+
+  /** 矩形/橢圓的 CSS border-radius（橢圓 50%；矩形四角各自半徑 ×zoom） */
+  rectRadiusCss(el: RectElement): string | null {
+    if (el.shape === 'ellipse') return '50%';
+    const [tl, tr, br, bl] = cornerRadiiOf(el);
+    if (!tl && !tr && !br && !bl) return null;
+    const z = this.z();
+    return `${tl * z}px ${tr * z}px ${br * z}px ${bl * z}px`;
+  }
+
+  /** 線條虛線的 SVG dash pattern（畫布示意；PDF 以引擎為準）；實線回 null */
+  lineDash(style: string | undefined): string | null {
+    const z = this.z();
+    if (style === 'dashed') return `${5 * z} ${5 * z}`;
+    if (style === 'dotted') return `${2 * z} ${3 * z}`;
+    return null;
   }
 
   /** 斜線筆寬（跟表格框線同寬，最細 1px 保持可見） */

@@ -154,6 +154,10 @@ func cloneElements(src []Element) []Element {
 			v := *src[i].FillColor
 			out[i].FillColor = &v
 		}
+		if src[i].CornerRadii != nil {
+			v := *src[i].CornerRadii
+			out[i].CornerRadii = &v
+		}
 		if src[i].Repeat != nil {
 			r := *src[i].Repeat
 			if r.GroupHeaderRow != nil {
@@ -824,6 +828,9 @@ func (c *drawCtx) interpolate(content string) string {
 // isVisible 條件顯示：VisibleKey 空 = 顯示；隱藏的元素仍占版面空間。
 // key 與比較值都支援 $page / $pages（例：$page eq 1 → 只在第一頁；$page eq $pages → 只在末頁）。
 func (c *drawCtx) isVisible(el *Element) bool {
+	if el.Hidden {
+		return false // 設計者手動隱藏：不畫（保留版面空間）
+	}
 	if el.VisibleKey == "" {
 		return true
 	}
@@ -866,7 +873,14 @@ func (c *drawCtx) drawElement(el *Element, y float64) error {
 		r, g, b := parseColor(el.StrokeColor)
 		c.pdf.SetStrokeColor(r, g, b)
 		c.pdf.SetLineWidth(el.StrokeWidth)
+		dashed := el.LineStyle == "dashed" || el.LineStyle == "dotted"
+		if dashed {
+			c.pdf.SetLineType(el.LineStyle)
+		}
 		c.pdf.Line(el.X, y, el.X+el.Width, y+el.Height)
+		if dashed {
+			c.pdf.SetLineType("solid") // 還原，避免影響後續元素
+		}
 		return nil
 	case "image":
 		return c.drawImage(el, y)
@@ -973,12 +987,20 @@ func (c *drawCtx) drawRect(el *Element, y float64) error {
 	if !hasStroke && !hasFill {
 		return nil
 	}
+	// 圓角矩形/橢圓走多邊形近似路徑（gopdf 的矩形/橢圓 API 不支援圓角+填色）
+	if el.Shape == "ellipse" || hasCornerRadius(el) {
+		return c.drawRoundedOrEllipse(el, y, hasStroke, hasFill)
+	}
 	style := ""
+	dashed := hasStroke && (el.LineStyle == "dashed" || el.LineStyle == "dotted")
 	if hasStroke {
 		r, g, b := parseColor(el.StrokeColor)
 		c.pdf.SetStrokeColor(r, g, b)
 		c.pdf.SetLineWidth(el.StrokeWidth)
 		style += "D"
+		if dashed {
+			c.pdf.SetLineType(el.LineStyle)
+		}
 	}
 	if hasFill {
 		r, g, b := parseColor(*el.FillColor)
@@ -986,6 +1008,95 @@ func (c *drawCtx) drawRect(el *Element, y float64) error {
 		style += "F"
 	}
 	c.pdf.RectFromUpperLeftWithStyle(el.X, y, el.Width, el.Height, style)
+	if dashed {
+		c.pdf.SetLineType("solid") // 還原，避免影響後續元素
+	}
+	return nil
+}
+
+// cornerRadiiOf 元素的四角半徑（個別 CornerRadii 優先於統一 CornerRadius）：tl, tr, br, bl
+func cornerRadiiOf(el *Element) (float64, float64, float64, float64) {
+	if c := el.CornerRadii; c != nil {
+		return c.TL, c.TR, c.BR, c.BL
+	}
+	r := el.CornerRadius
+	return r, r, r, r
+}
+
+// hasCornerRadius 是否有任一角需要圓角（決定是否走多邊形路徑；無圓角維持原快速路徑）
+func hasCornerRadius(el *Element) bool {
+	tl, tr, br, bl := cornerRadiiOf(el)
+	return tl > 0 || tr > 0 || br > 0 || bl > 0
+}
+
+// drawRoundedOrEllipse 用多邊形近似畫圓角矩形/橢圓（可填色+描邊+虛線）。
+// 座標 top-left（y 已是頁內座標；Polygon 內部轉 PDF bottom-left）。
+func (c *drawCtx) drawRoundedOrEllipse(el *Element, y float64, hasStroke, hasFill bool) error {
+	var pts []gopdf.Point
+	if el.Shape == "ellipse" {
+		cx, cy := el.X+el.Width/2, y+el.Height/2
+		rx, ry := el.Width/2, el.Height/2
+		const seg = 72
+		for i := 0; i < seg; i++ {
+			th := 2 * math.Pi * float64(i) / float64(seg)
+			pts = append(pts, gopdf.Point{X: cx + rx*math.Cos(th), Y: cy + ry*math.Sin(th)})
+		}
+	} else {
+		x, w, h := el.X, el.Width, el.Height
+		tl, tr, br, bl := cornerRadiiOf(el)
+		// 夾在幾何上限內（相鄰兩角半徑和不可超過該邊長；單角不超過半邊）
+		clamp := func(r float64) float64 {
+			if m := math.Min(w, h) / 2; r > m {
+				return m
+			}
+			if r < 0 {
+				return 0
+			}
+			return r
+		}
+		tl, tr, br, bl = clamp(tl), clamp(tr), clamp(br), clamp(bl)
+		const arc = 8
+		// y 向下座標：θ=0 右、π/2 下、π 左、3π/2 上；順時針沿邊界四角圓弧
+		// r=0 的角退化成單一角落點（直角）
+		addArc := func(cx, cy, r, start, end float64) {
+			if r <= 0 {
+				pts = append(pts, gopdf.Point{X: cx, Y: cy})
+				return
+			}
+			for i := 0; i <= arc; i++ {
+				th := start + (end-start)*float64(i)/float64(arc)
+				pts = append(pts, gopdf.Point{X: cx + r*math.Cos(th), Y: cy + r*math.Sin(th)})
+			}
+		}
+		addArc(x+w-tr, y+tr, tr, 1.5*math.Pi, 2*math.Pi)  // 右上角（r=0 → 角落點 x+w, y）
+		addArc(x+w-br, y+h-br, br, 0, 0.5*math.Pi)        // 右下角
+		addArc(x+bl, y+h-bl, bl, 0.5*math.Pi, math.Pi)    // 左下角
+		addArc(x+tl, y+tl, tl, math.Pi, 1.5*math.Pi)      // 左上角
+	}
+	style := ""
+	if hasFill {
+		r, g, b := parseColor(*el.FillColor)
+		c.pdf.SetFillColor(r, g, b)
+		style = "F"
+	}
+	dashed := hasStroke && (el.LineStyle == "dashed" || el.LineStyle == "dotted")
+	if hasStroke {
+		r, g, b := parseColor(el.StrokeColor)
+		c.pdf.SetStrokeColor(r, g, b)
+		c.pdf.SetLineWidth(el.StrokeWidth)
+		if dashed {
+			c.pdf.SetLineType(el.LineStyle)
+		}
+		if hasFill {
+			style = "DF"
+		} else {
+			style = "D"
+		}
+	}
+	c.pdf.Polygon(pts, style)
+	if dashed {
+		c.pdf.SetLineType("solid")
+	}
 	return nil
 }
 

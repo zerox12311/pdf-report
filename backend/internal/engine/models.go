@@ -102,6 +102,11 @@ type Element struct {
 	VisibleOp  string `json:"visibleOp"`  // truthy(預設) | falsy | eq | ne
 	VisibleVal string `json:"visibleVal"` // eq / ne 的比較值
 
+	// Hidden 設計者手動隱藏：不畫但保留版面空間（與條件顯示同閘門）。
+	// Locked 純編輯器概念（畫布不可選/拖），引擎忽略。
+	Hidden bool `json:"hidden"`
+	Locked bool `json:"locked"`
+
 	// text / placeholder 外框與底色（BorderColor/BorderWidth/FillColor 與 table/rect 共用欄位）
 	Padding  float64 `json:"padding"`  // 文字內距（pt）
 	AutoGrow bool    `json:"autoGrow"` // 內容超出時自動增高（內文區元素會把下方元素往下推）
@@ -136,9 +141,13 @@ type Element struct {
 	Fit     string `json:"fit"` // contain | stretch
 
 	// rect / line
-	StrokeColor string  `json:"strokeColor"`
-	StrokeWidth float64 `json:"strokeWidth"`
-	FillColor   *string `json:"fillColor"`
+	StrokeColor  string  `json:"strokeColor"`
+	StrokeWidth  float64 `json:"strokeWidth"`
+	FillColor    *string `json:"fillColor"`
+	LineStyle    string  `json:"lineStyle"`    // 線型（空 = 實線）｜dashed｜dotted
+	Shape        string       `json:"shape"`        // 形狀（空 = rect）｜ellipse
+	CornerRadius float64      `json:"cornerRadius"` // 圓角半徑 pt（四角相同時用此值）
+	CornerRadii  *CornerRadii `json:"cornerRadii"`  // 四角獨立半徑（有值時優先於 CornerRadius）
 
 	// table
 	ColumnWidths []float64     `json:"columnWidths"`
@@ -151,6 +160,14 @@ type Element struct {
 }
 
 // CellBorders 儲存格四邊框線開關（Word 式逐格框線；線在兩側儲存格都關掉時才消失）
+// CornerRadii 四角獨立圓角半徑（pt）：左上/右上/右下/左下
+type CornerRadii struct {
+	TL float64 `json:"tl"`
+	TR float64 `json:"tr"`
+	BR float64 `json:"br"`
+	BL float64 `json:"bl"`
+}
+
 type CellBorders struct {
 	Top    bool `json:"top"`
 	Right  bool `json:"right"`

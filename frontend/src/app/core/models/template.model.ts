@@ -124,6 +124,10 @@ export interface ElementBase {
   /** 置於浮水印之上：上層浮水印（蓋在內容上方）不會蓋住此元素（條碼/金額適用）。
    *  容器內子元素跟隨容器設定 */
   aboveWatermark?: boolean;
+  /** 鎖定（純編輯器）：畫布上不可選/拖/縮放，只能從大綱操作；不影響渲染 */
+  locked?: boolean;
+  /** 隱藏：設計時與渲染都不顯示（保留版面空間，與條件顯示 visibleKey 同閘門）；設計者手動關 */
+  hidden?: boolean;
 }
 
 /** 字型家族：sans 黑體（預設）| serif 明體 | mono 等寬（英數）| 其他 = 匯入字型的 id */
@@ -193,17 +197,46 @@ export interface ImageElement extends ElementBase {
   url?: string;
 }
 
+/** 線型：實線（未設）｜虛線｜點線（裁切線/騎縫線用） */
+export type LineStyle = 'dashed' | 'dotted';
+
 export interface RectElement extends ElementBase {
   type: 'rect';
   strokeColor: string;
   strokeWidth: number;
   fillColor: string | null;
+  /** 框線線型（未設 = 實線） */
+  lineStyle?: LineStyle;
+  /** 形狀（未設 = 矩形）：ellipse = 橢圓/圓（印章框用） */
+  shape?: 'rect' | 'ellipse';
+  /** 圓角半徑（pt，shape=rect 時有效；0/未設 = 直角）。四角相同時用此值 */
+  cornerRadius?: number;
+  /** 四角獨立半徑（pt）；有值時優先於 cornerRadius（Figma 式混合圓角） */
+  cornerRadii?: CornerRadii;
+}
+
+/** 四角圓角半徑（pt）：左上/右上/右下/左下 */
+export interface CornerRadii {
+  tl: number;
+  tr: number;
+  br: number;
+  bl: number;
+}
+
+/** 元素的四角半徑（統一 cornerRadius 或個別 cornerRadii）；回傳 [tl,tr,br,bl] */
+export function cornerRadiiOf(el: { cornerRadius?: number; cornerRadii?: CornerRadii }): [number, number, number, number] {
+  const c = el.cornerRadii;
+  if (c) return [c.tl ?? 0, c.tr ?? 0, c.br ?? 0, c.bl ?? 0];
+  const r = el.cornerRadius ?? 0;
+  return [r, r, r, r];
 }
 
 export interface LineElement extends ElementBase {
   type: 'line';
   strokeColor: string;
   strokeWidth: number;
+  /** 線型（未設 = 實線） */
+  lineStyle?: LineStyle;
 }
 
 /** 儲存格四邊框線開關（Word 式逐格框線；線在兩側儲存格都關掉時才消失） */

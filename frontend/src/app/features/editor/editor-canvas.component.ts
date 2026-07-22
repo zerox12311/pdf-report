@@ -1,6 +1,6 @@
 import { DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, signal } from '@angular/core';
-import { ContainerElement, TemplateElement } from '../../core/models/template.model';
+import { ContainerElement, CornerRadii, TemplateElement, cornerRadiiOf } from '../../core/models/template.model';
 import { STRIP, modelToVisualY, visualToModelY } from './band-geometry';
 import { CanvasElementComponent } from './canvas-element.component';
 import { ContextMenuItem, EditorStateService } from './editor-state.service';
@@ -13,11 +13,16 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [DecimalPipe, CanvasElementComponent],
   template: `
-    <div class="canvas-wrap" (pointerdown)="state.select(null)"
+    <div class="canvas-wrap" (pointerdown)="onCanvasPointerDown($event)"
       (contextmenu)="onCanvasMenu($event)"
       (dragover)="onPaletteDragOver($event)" (drop)="onPaletteDrop($event)"
       (dragleave)="dropContainerId.set(null)">
       <div class="page" [style.width.px]="pageW() * z()" [style.height.px]="totalVisualH()">
+        <!-- 框選矩形（畫布空白拖曳）-->
+        @if (marquee(); as m) {
+          <div class="marquee" [style.left.px]="m.x" [style.top.px]="m.y"
+            [style.width.px]="m.w" [style.height.px]="m.h"></div>
+        }
         <!-- 浮水印（示意；目前節的有效浮水印，輸出以後端為準） -->
         @if (wm(); as w) {
           @if (w.enabled) {
@@ -87,7 +92,10 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             class="el"
             [attr.data-el-id]="el.id"
             [class.cellsel]="el.type === 'table'"
-            [class.selected]="el.id === state.selectedId()"
+            [class.selected]="state.selectedIds().includes(el.id)"
+            [class.multi]="state.selectedIds().length > 1 && state.selectedIds().includes(el.id)"
+            [class.el-hidden]="el.hidden"
+            [class.el-locked]="el.locked"
             [class.drop-hint]="el.type === 'container' && el.id === dropContainerId()"
             [style.zIndex]="el.aboveWatermark && wm()?.layer === 'above' ? 9 : null"
             [style.left.px]="el.x * z()"
@@ -108,6 +116,8 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                   [attr.data-el-id]="child.id"
                   [class.cellsel]="child.type === 'table'"
                   [class.selected]="child.id === state.selectedId()"
+                  [class.el-hidden]="child.hidden"
+                  [class.el-locked]="child.locked"
                   [style.left.px]="child.x * z()"
                   [style.top.px]="child.y * z()"
                   [style.width.px]="child.width * z()"
@@ -116,6 +126,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                   (contextmenu)="onElementMenu($event, child, el)"
                 >
                   <app-canvas-element [el]="child" />
+                  @if (child.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
                   @if (child.id === state.selectedId()) {
                     <div class="resize-handle" (pointerdown)="onPointerDown($event, child, 'resize', el, 'se')"></div>
                     <div class="resize-e" (pointerdown)="onPointerDown($event, child, 'resize', el, 'e')"></div>
@@ -130,7 +141,17 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             } @else {
               <app-canvas-element [el]="el" />
             }
-            @if (el.id === state.selectedId()) {
+            @if (el.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
+            <!-- 圓角把手（Figma 式）：矩形選取時四角各一，拖曳調整（四角一起變） -->
+            @if (el.type === 'rect' && (el.shape ?? 'rect') === 'rect' && el.id === state.selectedId()
+                 && state.selectedIds().length <= 1 && !el.locked) {
+              @for (corner of cornerHandles(el); track corner.key) {
+                <div class="radius-handle" [style.left.px]="corner.x" [style.top.px]="corner.y"
+                  [title]="'拖曳調整圓角（目前 ' + corner.r + ' pt）'"
+                  (pointerdown)="onRadiusDown($event, el, corner.key)"></div>
+              }
+            }
+            @if (el.id === state.selectedId() && state.selectedIds().length <= 1) {
               <div class="resize-handle" (pointerdown)="onPointerDown($event, el, 'resize', null, 'se')"></div>
               <div class="resize-e" (pointerdown)="onPointerDown($event, el, 'resize', null, 'e')"></div>
               <div class="resize-s" (pointerdown)="onPointerDown($event, el, 'resize', null, 's')"></div>
@@ -186,6 +207,21 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
     .guide-v { top: 0; bottom: 0; width: 0; border-left: 1px dashed #f43f5e; }
     .guide-h { left: 0; right: 0; height: 0; border-top: 1px dashed #f43f5e; }
     .el { position: absolute; cursor: move; box-sizing: border-box; z-index: 2; }
+    .el.el-hidden { display: none; }
+    /* 鎖定：游標禁止＋常駐鎖角標＋hover 橘虛線外框，讓「動不了」一眼可見 */
+    .el.el-locked { cursor: not-allowed; }
+    .el.el-locked:hover { outline: 1.5px dashed #ea580c; outline-offset: 1px; }
+    /* 圓角把手（Figma 式）：角落內側小圓點，拖曳調整圓角 */
+    .radius-handle { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
+      background: #fff; border: 1.5px solid #2563eb; border-radius: 50%; cursor: nwse-resize; z-index: 7; }
+    .radius-handle:hover { background: #2563eb; }
+    .lock-badge { position: absolute; top: -8px; right: -8px; z-index: 6; font-size: 11px;
+      line-height: 1; padding: 1px 2px; background: #fff7ed; border: 1px solid #ea580c;
+      border-radius: 4px; opacity: .85; pointer-events: none; }
+    .el.el-locked:hover .lock-badge { opacity: 1; }
+    .el.multi { outline: 1.5px solid #7c3aed; }
+    .marquee { position: absolute; z-index: 30; pointer-events: none;
+      border: 1px solid #7c3aed; background: rgba(124, 58, 237, .1); }
     .el.selected { outline: 1.5px solid #2563eb; z-index: 5; }
     .el:hover:not(.selected) { outline: 1px dashed #93b4f8; }
     .el.child { z-index: 3; }
@@ -315,7 +351,10 @@ export class EditorCanvasComponent {
         case 'ArrowDown': this.state.patchElement(el.id, { y: el.y + step }); break;
         case 'ArrowLeft': this.state.patchElement(el.id, { x: Math.max(0, el.x - step) }); break;
         case 'ArrowRight': this.state.patchElement(el.id, { x: el.x + step }); break;
-        case 'Delete': case 'Backspace': this.state.removeElement(el.id); break;
+        case 'Delete': case 'Backspace':
+          if (this.state.selectedIds().length > 1) this.state.removeSelected();
+          else this.state.removeElement(el.id);
+          break;
         case 'Escape': this.state.select(null); break;
         default: return;
       }
@@ -521,6 +560,56 @@ export class EditorCanvasComponent {
 
 
 
+  // ---- 圓角把手（Figma 式）----
+  /** 四角把手的畫面位置（元素內部座標 px）與目前半徑；把手隨半徑往內移 */
+  cornerHandles(el: TemplateElement & { cornerRadius?: number; cornerRadii?: CornerRadii }) {
+    const z = this.z();
+    const [tl, tr, br, bl] = cornerRadiiOf(el);
+    const w = el.width * z;
+    const h = el.height * z;
+    // 把手離角落的距離＝半徑（最小 10px 讓沒圓角時也抓得到）
+    const off = (r: number) => Math.max(10, r * z);
+    return [
+      { key: 'tl' as const, r: Math.round(tl), x: off(tl), y: off(tl) },
+      { key: 'tr' as const, r: Math.round(tr), x: w - off(tr), y: off(tr) },
+      { key: 'br' as const, r: Math.round(br), x: w - off(br), y: h - off(br) },
+      { key: 'bl' as const, r: Math.round(bl), x: off(bl), y: h - off(bl) },
+    ];
+  }
+
+  /**
+   * 拖曳圓角把手：沿對角線往內拖 = 半徑變大（四角一起變，同 Figma）；
+   * 個別角的調整在屬性面板。
+   */
+  onRadiusDown(e: PointerEvent, el: TemplateElement & { width: number; height: number }, corner: 'tl' | 'tr' | 'br' | 'bl') {
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.button !== 0) return;
+    this.state.select(el.id);
+    const z = this.z();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const [tl] = cornerRadiiOf(el as never);
+    const startR = tl;
+    const maxR = Math.min(el.width, el.height) / 2;
+    const onMove = (ev: PointerEvent) => {
+      // 往元素內側的位移量（各角方向不同）→ 取兩軸平均當半徑增量
+      const dx = (ev.clientX - startX) / z * (corner === 'tl' || corner === 'bl' ? 1 : -1);
+      const dy = (ev.clientY - startY) / z * (corner === 'tl' || corner === 'tr' ? 1 : -1);
+      const r = Math.max(0, Math.min(maxR, Math.round(startR + (dx + dy) / 2)));
+      // 四角一起變：清掉個別半徑
+      this.state.patchElement(el.id, { cornerRadius: r || undefined, cornerRadii: undefined });
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      this.activeDragCleanup = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    this.activeDragCleanup = onUp;
+  }
+
   // ---- 右鍵情境選單 ----
   private readonly isMac = /Mac|iP/.test(navigator.platform);
   private key(k: string): string {
@@ -553,9 +642,58 @@ export class EditorCanvasComponent {
       } satisfies ContextMenuItem]),
       ...(parent ? [{ label: '移出容器', run: () => this.state.moveOutOfContainer(el.id) } satisfies ContextMenuItem] : []),
       { kind: 'sep' },
+      { label: '鎖定（畫布不可選/拖）', checked: !!el.locked, run: () => this.state.toggleLocked(el.id) },
+      { label: '隱藏（設計＋渲染都不顯示）', checked: !!el.hidden, run: () => this.state.toggleHidden(el.id) },
+      { kind: 'sep' },
       { label: '刪除', shortcut: 'Del', danger: true, run: () => this.state.removeElement(el.id) },
     ];
     this.state.openContextMenu(e.clientX, e.clientY, items);
+  }
+
+  // ---- 框選（marquee）：畫布空白處拖曳選取多個頂層元素 ----
+  marquee = signal<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  onCanvasPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const page = document.querySelector('.page');
+    if (!page) { this.state.select(null); return; }
+    const rect = page.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const addToSel = e.shiftKey;
+    const base = addToSel ? [...this.state.selectedIds()] : [];
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+      moved = true;
+      // 框（畫面 px，相對 page 左上）
+      const x = Math.min(startX, ev.clientX) - rect.left;
+      const y = Math.min(startY, ev.clientY) - rect.top;
+      const w = Math.abs(dx);
+      const h = Math.abs(dy);
+      this.marquee.set({ x, y, w, h });
+      // 框選命中：把框轉 model 座標，與頂層元素 bbox 相交者選取
+      const mx1 = x / this.z();
+      const my1 = this.visualToModelY(y);
+      const mx2 = (x + w) / this.z();
+      const my2 = this.visualToModelY(y + h);
+      const hit = this.state.visibleElements()
+        .filter(el => !el.locked && !el.hidden
+          && el.x < mx2 && el.x + el.width > mx1 && el.y < my2 && el.y + el.height > my1)
+        .map(el => el.id);
+      const set = new Set([...base, ...hit]);
+      this.state.selectMany([...set]);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      this.marquee.set(null);
+      if (!moved && !addToSel) this.state.select(null); // 純點擊空白 = 取消選取
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   }
 
   /** 空白畫布右鍵：貼在滑鼠位置 */
@@ -585,21 +723,42 @@ export class EditorCanvasComponent {
     resizeDir: 'se' | 'e' | 's';
     parent: ContainerElement | null;
     moved: boolean;
+    /** 多選一起移動時，各選取頂層元素的起始座標（null = 單選/縮放） */
+    multiOrigins: Map<string, { x: number; y: number }> | null;
   } | null = null;
 
   onPointerDown(e: PointerEvent, el: TemplateElement, mode: 'move' | 'resize', parent: ContainerElement | null = null, dir: 'se' | 'e' | 's' = 'se') {
+    // 鎖定元素：畫布上完全穿透（不選/不拖），只能從大綱管理；事件冒泡到畫布空白 → 取消選取
+    if (el.locked) return;
     e.stopPropagation();
     e.preventDefault();
-    this.state.select(el.id);
+    // Shift+點選（頂層元素、非縮放）：加入/移除多選，不進入拖曳
+    if (e.shiftKey && !parent && mode === 'move') {
+      this.state.toggleSelect(el.id);
+      return;
+    }
+    // 點到已在多選集合中的元素 → 保持多選（一起拖）；否則單選
+    const inMulti = !parent && mode === 'move' && this.state.selectedIds().includes(el.id) && this.state.selectedIds().length > 1;
+    if (!inMulti) this.state.select(el.id);
     // 右鍵只選取（選單由 contextmenu 開），不進入拖曳
     if (e.button !== 0) return;
+    // 多選拖曳：記錄所有選取頂層元素的起始座標
+    let multiOrigins: Map<string, { x: number; y: number }> | null = null;
+    if (inMulti) {
+      multiOrigins = new Map();
+      const top = this.state.visibleElements();
+      for (const id of this.state.selectedIds()) {
+        const se = top.find(x => x.id === id);
+        if (se && !se.locked) multiOrigins.set(id, { x: se.x, y: se.y });
+      }
+    }
     this.drag = {
       mode, id: el.id, startX: e.clientX, startY: e.clientY,
       orig: { x: el.x, y: el.y, width: el.width, height: el.height },
       origTable: el.type === 'table' ? { cols: [...el.columnWidths], rows: [...el.rowHeights] } : null,
       elType: el.type,
       resizeDir: dir,
-      parent, moved: false,
+      parent, moved: false, multiOrigins,
     };
     const onMove = (ev: PointerEvent) => this.onPointerMove(ev);
     const onUp = () => {
@@ -615,6 +774,7 @@ export class EditorCanvasComponent {
       this.state.elementDropCell.set(null);
       this.activeDragCleanup = null;
       if (!d || d.mode !== 'move' || !d.moved) return;
+      if (d.multiOrigins) return; // 多選一起移動：不做容器/儲存格插入
       // 既有元素（圖片/條碼）放到表格儲存格上 → 該格繼承其來源設定，元素移除
       if (cellTarget) {
         const src = this.state.findElement(d.id);
@@ -672,6 +832,15 @@ export class EditorCanvasComponent {
     // 閾值 5px：雙擊時的微小晃動不觸發拖曳（否則就地編輯很難點出來）
     if (!this.drag.moved && Math.abs(dxPx) < 5 && Math.abs(dyPx) < 5) return;
     this.drag.moved = true;
+    // 多選一起移動（頂層、無磁吸，用 primary 的 band 映射算共同 delta）
+    if (this.drag.mode === 'move' && this.drag.multiOrigins) {
+      const zoom = this.z();
+      const po = this.drag.multiOrigins.get(this.drag.id)!;
+      const dx = dxPx / zoom;
+      const dy = this.visualToModelY(this.modelToVisualY(po.y) + dyPx) - po.y;
+      this.state.moveSelectedBy(this.drag.multiOrigins, dx, dy);
+      return;
+    }
     // 圖片/條碼元素拖曳：追蹤指標下的儲存格（放開時插入）
     if (this.drag.mode === 'move') this.updateElementDropCell(e);
     const { orig, parent } = this.drag;

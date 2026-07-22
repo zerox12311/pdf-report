@@ -163,6 +163,125 @@ func TestTableSpansAndCellStyle(t *testing.T) {
 	}
 }
 
+func TestRoundedAndEllipse(t *testing.T) {
+	base := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[{"type":"rect","id":"r","x":40,"y":40,"width":200,"height":100,"strokeColor":"#000","strokeWidth":1,"fillColor":null%s}]}`
+	e := NewEngine("../../fonts", nil)
+	render := func(extra string) []byte {
+		var doc TemplateDoc
+		if err := json.Unmarshal([]byte(fmt.Sprintf(base, extra)), &doc); err != nil {
+			t.Fatal(err)
+		}
+		out, _, err := e.Render(&doc, map[string]any{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	plain := render("")
+	rounded := render(`,"cornerRadius":16`)
+	ellipse := render(`,"shape":"ellipse"`)
+	if bytes.Equal(plain, rounded) {
+		t.Error("圓角矩形應改變輸出")
+	}
+	if bytes.Equal(plain, ellipse) {
+		t.Error("橢圓應改變輸出")
+	}
+	if bytes.Equal(rounded, ellipse) {
+		t.Error("圓角與橢圓輸出應不同")
+	}
+	// 決定性
+	if !bytes.Equal(ellipse, render(`,"shape":"ellipse"`)) {
+		t.Error("橢圓渲染應具決定性")
+	}
+	// 四角獨立半徑：與統一半徑不同；四角相同的 cornerRadii 等同 cornerRadius
+	mixed := render(`,"cornerRadii":{"tl":20,"tr":20,"br":0,"bl":0}`)
+	if bytes.Equal(mixed, rounded) {
+		t.Error("四角獨立半徑應與統一半徑輸出不同")
+	}
+	if bytes.Equal(mixed, plain) {
+		t.Error("四角獨立半徑應改變輸出")
+	}
+	sameAsUniform := render(`,"cornerRadii":{"tl":16,"tr":16,"br":16,"bl":16}`)
+	if !bytes.Equal(sameAsUniform, rounded) {
+		t.Error("四角皆 16 的 cornerRadii 應與 cornerRadius:16 輸出相同")
+	}
+}
+
+func TestHiddenElement(t *testing.T) {
+	base := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[
+	 {"type":"text","id":"a","x":40,"y":40,"width":200,"height":20,"content":"顯示","fontSize":12,"color":"#000","align":"left","lineHeight":1.2},
+	 {"type":"text","id":"b","x":40,"y":80,"width":200,"height":20,"content":"可能隱藏","fontSize":12,"color":"#000","align":"left","lineHeight":1.2%s}]}`
+	e := NewEngine("../../fonts", nil)
+	var shown TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, "")), &shown); err != nil {
+		t.Fatal(err)
+	}
+	var hidden TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, `,"hidden":true`)), &hidden); err != nil {
+		t.Fatal(err)
+	}
+	outShown, _, err := e.Render(&shown, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outHidden, _, err := e.Render(&hidden, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(outShown, outHidden) {
+		t.Error("hidden 元素應不輸出（改變 PDF）")
+	}
+	// Locked 引擎忽略：locked 不影響輸出
+	var locked TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, `,"locked":true`)), &locked); err != nil {
+		t.Fatal(err)
+	}
+	outLocked, _, err := e.Render(&locked, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(outShown, outLocked) {
+		t.Error("locked 是純編輯器概念，引擎應忽略（輸出不變）")
+	}
+}
+
+func TestLineDashStyle(t *testing.T) {
+	base := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[
+	 {"type":"line","id":"ln","x":40,"y":40,"width":400,"height":0,"strokeColor":"#000","strokeWidth":1%s},
+	 {"type":"rect","id":"rc","x":40,"y":80,"width":200,"height":60,"strokeColor":"#000","strokeWidth":1,"fillColor":null%s}]}`
+	e := NewEngine("../../fonts", nil)
+	var solid TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, "", "")), &solid); err != nil {
+		t.Fatal(err)
+	}
+	var dashed TemplateDoc
+	if err := json.Unmarshal([]byte(fmt.Sprintf(base, `,"lineStyle":"dashed"`, `,"lineStyle":"dotted"`)), &dashed); err != nil {
+		t.Fatal(err)
+	}
+	outSolid, _, err := e.Render(&solid, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDashed, _, err := e.Render(&dashed, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(outSolid, outDashed) {
+		t.Error("虛線/點線應改變輸出")
+	}
+	// 決定性
+	outDashed2, _, err := e.Render(&dashed, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(outDashed, outDashed2) {
+		t.Error("虛線渲染應具決定性")
+	}
+}
+
 func TestBarcodeCell(t *testing.T) {
 	// 條碼儲存格：靜態值（value）＋重複列 key 綁定（相對 key，每列不同碼）
 	doc := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
