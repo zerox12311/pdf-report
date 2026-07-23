@@ -11,6 +11,31 @@ export interface TemplateDoc {
    * $page/$pages 全文件連續。舊格式（elements/cover/backPage）由 normalize 遷移。
    */
   sections: DocSection[];
+
+  /** 輸入資料驗證（選填）：enabled 時，正式渲染（renderByID）前先驗證宿主 POST 的 data */
+  validation?: ValidationSpec;
+}
+
+/** 輸入驗證的欄位型別 */
+export type ValidationFieldType = 'any' | 'string' | 'number' | 'boolean' | 'array' | 'object';
+
+/**
+ * 單一欄位驗證規則。path 語法（與後端 internal/validate 對應）：
+ * 巢狀用點（school.name）；陣列逐元素用 []（items[].amount，對每個元素檢查）；
+ * 只寫陣列名（items）則檢查陣列本身。
+ */
+export interface ValidationField {
+  path: string;
+  required: boolean;
+  type: ValidationFieldType;
+  /** 純前端：偵測來的 vs 手動加的（合併偵測時保留手動列） */
+  source?: 'detected' | 'manual';
+}
+
+/** 一份樣板的輸入驗證設定 */
+export interface ValidationSpec {
+  enabled: boolean;
+  fields: ValidationField[];
 }
 
 /** 一節：flow = 有頁首/頁尾 band、內容自動分頁；single = 獨立一頁（無 band） */
@@ -413,6 +438,24 @@ export function normalizeTemplate(doc: TemplateInput | null | undefined): Templa
     updatedAt: doc.updatedAt,
     page: normPage,
     sections: normalizeSections(doc, normPage),
+    validation: normalizeValidation(doc.validation),
+  };
+}
+
+/** 驗證設定正規化：舊樣板無此欄位 → 關閉、空規則（等同不驗證） */
+function normalizeValidation(v: Partial<ValidationSpec> | null | undefined): ValidationSpec {
+  const types: ValidationFieldType[] = ['any', 'string', 'number', 'boolean', 'array', 'object'];
+  const fields = Array.isArray(v?.fields) ? v!.fields : [];
+  return {
+    enabled: !!v?.enabled,
+    fields: fields
+      .filter(f => f && typeof f.path === 'string')
+      .map(f => ({
+        path: f.path,
+        required: !!f.required,
+        type: types.includes(f.type as ValidationFieldType) ? (f.type as ValidationFieldType) : 'any',
+        source: f.source === 'manual' ? 'manual' as const : 'detected' as const,
+      })),
   };
 }
 
@@ -525,6 +568,7 @@ export function emptyTemplate(): TemplateDoc {
       id: newId(), name: '內頁', kind: 'flow', page: null,
       headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null, elements: [],
     }],
+    validation: { enabled: false, fields: [] },
   };
 }
 

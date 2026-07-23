@@ -12,6 +12,7 @@ import { EditorStateService } from './editor-state.service';
 import { IntegrationDialogComponent } from './integration-dialog.component';
 import { PaletteAction, canDropIntoCell, createElements } from './element-factory';
 import { PreviewPanelComponent } from './preview-panel.component';
+import { ValidationPanelComponent } from './validation-panel.component';
 import { PropertiesPanelComponent } from './properties-panel.component';
 
 interface PaletteItem {
@@ -23,7 +24,7 @@ interface PaletteItem {
 @Component({
   selector: 'app-editor-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, EditorCanvasComponent, PropertiesPanelComponent, PreviewPanelComponent, IntegrationDialogComponent, DataPanelComponent, ContextMenuComponent],
+  imports: [FormsModule, RouterLink, EditorCanvasComponent, PropertiesPanelComponent, PreviewPanelComponent, ValidationPanelComponent, IntegrationDialogComponent, DataPanelComponent, ContextMenuComponent],
   providers: [EditorStateService],
   template: `
     <div class="editor">
@@ -101,6 +102,7 @@ interface PaletteItem {
             <button [class.on]="tab() === 'design'" (click)="switchTab('design')">設計</button>
             <button [class.on]="tab() === 'json'" (click)="switchTab('json')">JSON</button>
             <button [class.on]="tab() === 'preview'" (click)="switchTab('preview')">預覽</button>
+            <button [class.on]="tab() === 'validation'" (click)="switchTab('validation')">驗證</button>
             <span class="spacer"></span>
             @if (tab() === 'design') {
               <div class="surface-switch">
@@ -143,7 +145,7 @@ interface PaletteItem {
             }
           </div>
           @switch (tab()) {
-            @case ('design') { <app-editor-canvas /> }
+            @case ('design') { <app-editor-canvas (elementPicked)="rightTab.set('props')" /> }
             @case ('json') {
               <div class="json-tab">
                 <textarea [ngModel]="jsonText()" (ngModelChange)="jsonText.set($event)" spellcheck="false"></textarea>
@@ -154,6 +156,7 @@ interface PaletteItem {
               </div>
             }
             @case ('preview') { <app-preview-panel #preview /> }
+            @case ('validation') { <app-validation-panel /> }
           }
         </main>
 
@@ -267,7 +270,7 @@ export class EditorPageComponent {
   saving = signal(false);
   showIntegration = signal(false);
   rightTab = signal<'props' | 'data'>('props');
-  tab = signal<'design' | 'json' | 'preview'>('design');
+  tab = signal<'design' | 'json' | 'preview' | 'validation'>('design');
   jsonText = signal('');
   jsonError = signal<string | null>(null);
 
@@ -379,7 +382,7 @@ export class EditorPageComponent {
     this.bridge.notify('editor-ready', id === 'new' ? null : id);
   }
 
-  switchTab(tab: 'design' | 'json' | 'preview') {
+  switchTab(tab: 'design' | 'json' | 'preview' | 'validation') {
     this.tab.set(tab);
     if (tab === 'json') {
       this.jsonText.set(JSON.stringify(this.state.template(), null, 2));

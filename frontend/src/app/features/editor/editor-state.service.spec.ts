@@ -657,4 +657,146 @@ describe('EditorStateService', () => {
     state.removeSection(mainId);
     expect(state.template().sections.length).toBe(1);
   });
+
+  it('detectValidationFields：掃樣板導出欄位（含 items[].欄位、型別推斷、$ 排除、去重）', () => {
+    // 文字插值：total 有 comma → 推 number；$page 保留字排除
+    state.addElement(textEl({ content: '共 {{total|comma}} 元／第 {{$page}} 頁' }) as any);
+    state.select(null);
+    // 資料欄位
+    state.addElement({
+      type: 'placeholder', x: 0, y: 0, width: 100, height: 20,
+      content: '', key: 'school.name', sample: '', fontSize: 12, color: '#000',
+      align: 'left', lineHeight: 1.2, bold: false,
+    } as any);
+    state.select(null);
+    // 重複列表格：items 陣列 + items[].amount（cell format=comma → number）
+    state.addElement({
+      type: 'table', x: 0, y: 100, width: 180, height: 48,
+      columnWidths: [90, 90], rowHeights: [24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1 },
+      cells: [
+        [{ kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false },
+         { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false }],
+        [{ kind: 'placeholder', value: '', key: 'name', sample: '', align: 'left', bold: false },
+         { kind: 'placeholder', value: '', key: 'amount', sample: '', align: 'left', bold: false, format: 'comma' }],
+      ],
+    } as any);
+
+    const added = state.detectValidationFields();
+    expect(added).toBeGreaterThan(0);
+    const byPath = new Map(state.validation().fields.map(f => [f.path, f]));
+    expect(byPath.get('total')?.type).toBe('number');
+    expect(byPath.get('school.name')?.type).toBe('any');
+    expect(byPath.get('items')?.type).toBe('array');
+    expect(byPath.get('items[].amount')?.type).toBe('number');
+    expect(byPath.has('items[].name')).toBeTrue();
+    expect([...byPath.keys()].some(k => k.startsWith('$'))).toBeFalse();
+    expect(byPath.get('total')?.required).toBeTrue();
+    expect(byPath.get('total')?.source).toBe('detected');
+
+    // 再偵測一次：合併補新、不重複、保留手動微調
+    state.updateValidationField(0, { required: false });
+    const before = state.validation().fields.length;
+    const addedAgain = state.detectValidationFields();
+    expect(addedAgain).toBe(0);
+    expect(state.validation().fields.length).toBe(before);
+    expect(state.validation().fields[0].required).toBeFalse();
+  });
+
+  it('detectValidationFields：$sum/$count 導出被彙總的陣列與欄位、並把被加總欄位升級為數字', () => {
+    // 文字元素只用 $sum/$count 引用 orders（畫面沒有直接欄位）
+    state.addElement(textEl({ content: '共 {{$count(orders)}} 筆、合計 {{$sum(orders.total)|comma}}' }) as any);
+    state.select(null);
+    // 重複表格：amount 欄位無 format（本身推不出數字），但被下方 $sum 加總
+    state.addElement({
+      type: 'table', x: 0, y: 100, width: 180, height: 72,
+      columnWidths: [90, 90], rowHeights: [24, 24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1 },
+      cells: [
+        [{ kind: 'text', value: '品名', key: '', sample: '', align: 'left', bold: false },
+         { kind: 'text', value: '金額', key: '', sample: '', align: 'left', bold: false }],
+        [{ kind: 'placeholder', value: '', key: 'name', sample: '', align: 'left', bold: false },
+         { kind: 'placeholder', value: '', key: 'amount', sample: '', align: 'left', bold: false }],
+        [{ kind: 'text', value: '合計', key: '', sample: '', align: 'left', bold: false },
+         { kind: 'text', value: '{{$sum(items.amount)|comma}}', key: '', sample: '', align: 'left', bold: false }],
+      ],
+    } as any);
+
+    state.detectValidationFields();
+    const byPath = new Map(state.validation().fields.map(f => [f.path, f]));
+    // 只在 $sum/$count 內出現的 orders 也被偵測
+    expect(byPath.get('orders')?.type).toBe('array');
+    expect(byPath.get('orders[].total')?.type).toBe('number');
+    // items.amount 本身無 format，但被 $sum 加總 → 升級為數字（順序無關）
+    expect(byPath.get('items')?.type).toBe('array');
+    expect(byPath.get('items[].amount')?.type).toBe('number');
+    // $ 保留字本身不會變成欄位
+    expect([...byPath.keys()].some(k => k.startsWith('$'))).toBeFalse();
+  });
+
+  it('resizeTable：縮列到重複列以下 → 關閉 repeat、夾住越界 colSpan（防靜默掉單）', () => {
+    state.addElement({
+      type: 'table', x: 0, y: 0, width: 180, height: 96,
+      columnWidths: [90, 90], rowHeights: [24, 24, 24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1, groupHeaderRowIndex: 0, groupFooterRowIndex: 3 },
+      cells: [
+        [{ kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false, colSpan: 2 },
+         { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false }],
+        [{ kind: 'placeholder', value: '', key: 'name', sample: '', align: 'left', bold: false },
+         { kind: 'placeholder', value: '', key: 'amt', sample: '', align: 'left', bold: false }],
+        [{ kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false },
+         { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false }],
+        [{ kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false },
+         { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false }],
+      ],
+    } as any);
+    const id = state.selectedId()!;
+    // 縮到只剩 1 列（rowIndex=1、groupFooterRowIndex=3 全越界）
+    state.resizeTable(id, 1, 1);
+    const t = state.findElement(id) as TableElement;
+    expect(t.rowHeights.length).toBe(1);
+    expect(t.columnWidths.length).toBe(1);
+    expect(t.repeat!.enabled).toBeFalse();          // 重複列消失 → 關閉，不留越界殘值
+    expect(t.repeat!.rowIndex).toBe(0);
+    expect(t.repeat!.groupFooterRowIndex).toBeNull();
+    expect(t.cells[0][0].colSpan).toBe(1);          // colSpan 2 夾回 1 欄
+  });
+
+  it('mergeSelectionError：跨重複列邊界擋下、同列內可合併', () => {
+    state.addElement({
+      type: 'table', x: 0, y: 0, width: 180, height: 72,
+      columnWidths: [90, 90], rowHeights: [24, 24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1 },
+      cells: [0, 1, 2].map(() => [
+        { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false },
+        { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false },
+      ]),
+    } as any);
+    const id = state.selectedId()!;
+    // 範圍跨列 0（表頭）~ 列 1（重複列）→ 越過重複列邊界 → 擋下
+    state.selectedCellRange.set({ r1: 0, c1: 0, r2: 1, c2: 0 });
+    expect(state.mergeSelectionError(id)).toContain('重複列');
+    // 重複列內左右合併（同一列 c0~c1）→ 可合併
+    state.selectedCellRange.set({ r1: 1, c1: 0, r2: 1, c2: 1 });
+    expect(state.mergeSelectionError(id)).toBeNull();
+    // 單格 → 擋下（無可合併）
+    state.selectedCellRange.set({ r1: 0, c1: 0, r2: 0, c2: 0 });
+    expect(state.mergeSelectionError(id)).toContain('一格');
+  });
+
+  it('手動新增/刪除驗證欄位、開關', () => {
+    state.setValidationEnabled(true);
+    expect(state.validation().enabled).toBeTrue();
+    state.addValidationField();
+    expect(state.validation().fields.length).toBe(1);
+    expect(state.validation().fields[0].source).toBe('manual');
+    state.updateValidationField(0, { path: 'foo', type: 'number' });
+    expect(state.validation().fields[0].path).toBe('foo');
+    state.removeValidationField(0);
+    expect(state.validation().fields.length).toBe(0);
+  });
 });

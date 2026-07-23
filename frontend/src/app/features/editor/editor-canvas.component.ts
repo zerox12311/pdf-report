@@ -1,5 +1,5 @@
 import { DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, output, signal } from '@angular/core';
 import { ContainerElement, CornerRadii, TemplateElement, cornerRadiiOf } from '../../core/models/template.model';
 import { STRIP, modelToVisualY, visualToModelY } from './band-geometry';
 import { CanvasElementComponent } from './canvas-element.component';
@@ -249,6 +249,9 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
 export class EditorCanvasComponent {
   state = inject(EditorStateService);
   z = this.state.zoom;
+
+  /** 使用者在畫布上點選元素時發出（供父層切回「屬性」分頁；拖 key 建元件走 addElement 不觸發） */
+  elementPicked = output<void>();
 
   /** 目前節的有效頁面（節可覆寫紙張；single 節無 band） */
   page = computed(() => this.state.activePage());
@@ -732,6 +735,7 @@ export class EditorCanvasComponent {
     if (el.locked) return;
     e.stopPropagation();
     e.preventDefault();
+    this.elementPicked.emit(); // 使用者實際點選畫布元素 → 父層切回「屬性」分頁
     // Shift+點選（頂層元素、非縮放）：加入/移除多選，不進入拖曳
     if (e.shiftKey && !parent && mode === 'move') {
       this.state.toggleSelect(el.id);

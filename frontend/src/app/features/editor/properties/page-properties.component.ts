@@ -36,15 +36,18 @@ import { WatermarkFormComponent } from './watermark-form.component';
     </label>
     @if (sec().kind === 'flow') {
       <div class="grid2">
-        <label>頁首高度（pt）
-          <input type="number" min="0" [ngModel]="sec().headerHeight"
-            (ngModelChange)="state.patchSection(sec().id, { headerHeight: num($event) })" />
+        <label>頁首高度（{{ state.rulerUnit() }}）
+          <input type="number" min="0" [ngModel]="state.ptToDisp(sec().headerHeight)"
+            (ngModelChange)="state.patchSection(sec().id, { headerHeight: ptMin($event, 0) })" />
         </label>
-        <label>頁尾高度（pt）
-          <input type="number" min="0" [ngModel]="sec().footerHeight"
-            (ngModelChange)="state.patchSection(sec().id, { footerHeight: num($event) })" />
+        <label>頁尾高度（{{ state.rulerUnit() }}）
+          <input type="number" min="0" [ngModel]="state.ptToDisp(sec().footerHeight)"
+            (ngModelChange)="state.patchSection(sec().id, { footerHeight: ptMin($event, 0) })" />
         </label>
       </div>
+      @if (sec().headerHeight === 0 && sec().footerHeight === 0) {
+        <div class="band-hint">頁首/頁尾高度為 0，此節沒有可放頁碼/表頭的重複區——把高度調大才會出現 band 空間。</div>
+      }
     }
     <label class="full">此節的浮水印
       <select [ngModel]="sec().watermarkMode" (ngModelChange)="setSectionWmMode($event)">
@@ -65,16 +68,17 @@ import { WatermarkFormComponent } from './watermark-form.component';
     </div>
     <div class="hint">文件由多個「節」依序輸出：每節有自己的紙張與方向（可混 A4/B4、直式/橫式）；內容節有頁首/頁尾 band 並自動分頁，獨立頁固定單獨一頁。節之間必換頁；$page/$pages 全文件連續。用畫布上方的節列切換、＋新增。</div>
 
+    <div class="doc-divider">📄 文件層級（套用到所有節）</div>
     <div class="sub">頁面邊界（設計輔助線）</div>
     <div class="grid2">
-      <label>上（pt）<input type="number" min="0" [ngModel]="state.template().page.marginTop ?? 0"
-        (ngModelChange)="state.patchPage({ marginTop: num($event) })" /></label>
-      <label>下（pt）<input type="number" min="0" [ngModel]="state.template().page.marginBottom ?? 0"
-        (ngModelChange)="state.patchPage({ marginBottom: num($event) })" /></label>
-      <label>左（pt）<input type="number" min="0" [ngModel]="state.template().page.marginLeft ?? 0"
-        (ngModelChange)="state.patchPage({ marginLeft: num($event) })" /></label>
-      <label>右（pt）<input type="number" min="0" [ngModel]="state.template().page.marginRight ?? 0"
-        (ngModelChange)="state.patchPage({ marginRight: num($event) })" /></label>
+      <label>上（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginTop ?? 0)"
+        (ngModelChange)="state.patchPage({ marginTop: ptMin($event, 0) })" /></label>
+      <label>下（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginBottom ?? 0)"
+        (ngModelChange)="state.patchPage({ marginBottom: ptMin($event, 0) })" /></label>
+      <label>左（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginLeft ?? 0)"
+        (ngModelChange)="state.patchPage({ marginLeft: ptMin($event, 0) })" /></label>
+      <label>右（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginRight ?? 0)"
+        (ngModelChange)="state.patchPage({ marginRight: ptMin($event, 0) })" /></label>
     </div>
     <div class="hint">邊界以藍色虛線顯示在畫布上並可吸附對齊，不影響輸出（元素仍可放在邊界外）。</div>
 
@@ -106,6 +110,9 @@ import { WatermarkFormComponent } from './watermark-form.component';
     .full { width: 100%; }
     .sub { font-weight: 600; color: #555; margin-top: 4px; }
     .hint { color: #999; font-size: 12px; }
+    .band-hint { color: #b45309; font-size: 12px; margin-top: 2px; }
+    .doc-divider { margin: 14px 0 6px; padding-top: 10px; border-top: 2px solid #e2e6ee;
+      font-size: 13px; font-weight: 700; color: #1f2937; }
     .sec-kind { font-size: 11px; font-weight: 400; color: #0369a1; background: #e0f2fe; border-radius: 8px;
       padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
     .sec-actions { display: flex; gap: 6px; }
@@ -125,6 +132,11 @@ export class PagePropertiesComponent {
   num(v: unknown): number {
     const n = typeof v === 'number' ? v : parseFloat(String(v));
     return isNaN(n) ? 0 : n;
+  }
+
+  /** 依尺規單位把輸入值換回 pt 並夾到 min 以上（欄位顯示單位、模型存 pt） */
+  ptMin(v: unknown, min: number): number {
+    return Math.max(min, this.state.dispToPt(this.num(v)));
   }
 
   mm(pt: number): number {

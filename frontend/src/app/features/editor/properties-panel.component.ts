@@ -22,16 +22,16 @@ import { ScrubDirective } from './scrub.directive';
 
         <!-- 標籤可左右拖曳調整數值（Figma 式 scrub；指標鎖定可無限拖） -->
         <div class="grid4">
-          <label [appScrub]="el.x" (scrubChange)="patch(el, { x: $event })">X
-            <input type="number" [ngModel]="el.x" (ngModelChange)="patch(el, { x: num($event) })" /></label>
-          <label [appScrub]="el.y" (scrubChange)="patch(el, { y: $event })">Y
-            <input type="number" [ngModel]="el.y" (ngModelChange)="patch(el, { y: num($event) })" /></label>
-          <label [appScrub]="el.width" [scrubMin]="1" (scrubChange)="scrubSize(el, { width: $event })">寬
-            <input type="number" [ngModel]="el.width" [disabled]="el.type === 'table'"
-              (ngModelChange)="patch(el, { width: num($event) })" /></label>
-          <label [appScrub]="el.height" [scrubMin]="0" (scrubChange)="scrubSize(el, { height: $event })">高
-            <input type="number" [ngModel]="el.height" [disabled]="el.type === 'table'"
-              (ngModelChange)="patch(el, { height: num($event) })" /></label>
+          <label [appScrub]="el.x" (scrubChange)="patch(el, { x: $event })">X（{{ state.rulerUnit() }}）
+            <input type="number" [ngModel]="state.ptToDisp(el.x)" (ngModelChange)="patch(el, { x: state.dispToPt(num($event)) })" /></label>
+          <label [appScrub]="el.y" (scrubChange)="patch(el, { y: $event })">Y（{{ state.rulerUnit() }}）
+            <input type="number" [ngModel]="state.ptToDisp(el.y)" (ngModelChange)="patch(el, { y: state.dispToPt(num($event)) })" /></label>
+          <label [appScrub]="el.width" [scrubMin]="1" (scrubChange)="scrubSize(el, { width: $event })">寬（{{ state.rulerUnit() }}）
+            <input type="number" [ngModel]="state.ptToDisp(el.width)" [disabled]="el.type === 'table'"
+              (ngModelChange)="patch(el, { width: numMin(state.dispToPt(num($event)), 1) })" /></label>
+          <label [appScrub]="el.height" [scrubMin]="0" (scrubChange)="scrubSize(el, { height: $event })">高（{{ state.rulerUnit() }}）
+            <input type="number" [ngModel]="state.ptToDisp(el.height)" [disabled]="el.type === 'table'"
+              (ngModelChange)="patch(el, { height: numMin(state.dispToPt(num($event)), 0) })" /></label>
         </div>
 
         @switch (el.type) {
@@ -139,9 +139,10 @@ import { ScrubDirective } from './scrub.directive';
               </label>
               @if ((el.shape ?? 'rect') === 'rect') {
                 <label [appScrub]="radiusOf(el, 0)" [scrubMin]="0"
-                  (scrubChange)="setUniformRadius(el, $event + '')">圓角
+                  (scrubChange)="setUniformRadius(el, $event)">圓角
                   <span class="radius-row">
-                    <input type="text" [ngModel]="uniformRadiusText(el)" [placeholder]="'0'"
+                    <input type="number" min="0" step="1" [ngModel]="uniformRadiusValue(el)"
+                      [placeholder]="uniformRadiusValue(el) === null ? '混合' : '0'"
                       (ngModelChange)="setUniformRadius(el, $event)" />
                     <button class="radius-toggle" [class.on]="perCorner()" title="分別設定四角"
                       (click)="perCorner.set(!perCorner())">⛶</button>
@@ -209,7 +210,7 @@ import { ScrubDirective } from './scrub.directive';
                 (ngModelChange)="state.resizeTable(el.id, el.rowHeights.length, num($event))" /></label>
               <label>框線寬 <input type="number" step="0.5" [ngModel]="el.borderWidth" (ngModelChange)="patch(el, { borderWidth: num($event) })" /></label>
               <label>框線色 <input type="color" [ngModel]="el.borderColor" (ngModelChange)="patch(el, { borderColor: $event })" /></label>
-              <label>字級 <input type="number" [ngModel]="el.fontSize" (ngModelChange)="patch(el, { fontSize: num($event) })" /></label>
+              <label>字級 <input type="number" min="1" [ngModel]="el.fontSize" (ngModelChange)="patch(el, { fontSize: numMin($event, 1) })" /></label>
               <label>內距 <input type="number" [ngModel]="el.cellPadding" (ngModelChange)="patch(el, { cellPadding: num($event) })" /></label>
             </div>
             <label class="row">
@@ -413,7 +414,10 @@ import { ScrubDirective } from './scrub.directive';
                 }
                 <div class="sub">合併儲存格</div>
                 @if (state.selectedCellRange()) {
-                  <button class="merge" (click)="mergeCells(el)">合併選取範圍</button>
+                  <button class="merge" (click)="mergeCells(el)"
+                    [disabled]="!!mergeBlocked(el)"
+                    [title]="mergeBlocked(el) ?? '合併選取範圍'">合併選取範圍</button>
+                  @if (mergeBlocked(el); as reason) { <div class="hint merge-blocked">⚠ {{ reason }}</div> }
                 }
                 @if ((cell.colSpan ?? 1) > 1 || (cell.rowSpan ?? 1) > 1) {
                   <button class="merge" (click)="unmergeCell(el)">取消合併（目前 {{ cell.colSpan ?? 1 }}×{{ cell.rowSpan ?? 1 }}）</button>
@@ -506,7 +510,9 @@ import { ScrubDirective } from './scrub.directive';
     .clearcolor:hover { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
     .merge { font: inherit; padding: 5px 10px; border: 1px solid #93b4f8; background: #eff6ff;
       color: #1d4ed8; border-radius: 5px; cursor: pointer; }
-    .merge:hover { background: #dbeafe; }
+    .merge:hover:not(:disabled) { background: #dbeafe; }
+    .merge:disabled { opacity: .5; cursor: not-allowed; border-color: #d1d5db; color: #9ca3af; background: #f3f4f6; }
+    .merge-blocked { color: #b45309; }
     .sub { font-weight: 600; color: #555; margin-top: 4px; }
     .chips { display: flex; flex-wrap: wrap; gap: 4px; }
     .chip { width: 56px !important; }
@@ -546,6 +552,11 @@ export class PropertiesPanelComponent {
     return isNaN(n) ? 0 : n;
   }
 
+  /** 尺寸類欄位：解析並夾到 min 以上（負值/非法幾何無意義；x/y 可為負故仍用 num） */
+  numMin(v: unknown, min = 0): number {
+    return Math.max(min, this.num(v));
+  }
+
   patch(el: TemplateElement, patch: ElementPatch) {
     this.state.patchElement(el.id, patch);
   }
@@ -575,17 +586,16 @@ export class PropertiesPanelComponent {
     return cornerRadiiOf(el)[i];
   }
 
-  /** 統一輸入框的顯示值：四角相同 → 數字；不同 → 「混合」（同 Figma 的 Mixed） */
-  uniformRadiusText(el: RectElement): string {
+  /** 統一輸入框的值：四角相同 → 該數字；不同 → null（欄位留空、顯示「混合」placeholder，同 Figma 的 Mixed） */
+  uniformRadiusValue(el: RectElement): number | null {
     const [tl, tr, br, bl] = cornerRadiiOf(el);
-    return tl === tr && tr === br && br === bl ? String(tl) : '混合';
+    return tl === tr && tr === br && br === bl ? tl : null;
   }
 
-  /** 統一輸入：設定四角相同（清掉個別半徑）；非數字（如「混合」）忽略 */
-  setUniformRadius(el: RectElement, text: string) {
-    const v = parseFloat(text);
-    if (isNaN(v)) return;
-    const r = Math.max(0, v);
+  /** 統一輸入：設定四角相同（清掉個別半徑）。number 輸入已擋掉非數字；清空（null）則不動、保留原值 */
+  setUniformRadius(el: RectElement, v: unknown) {
+    if (v === null || v === undefined || v === '') return;
+    const r = Math.max(0, this.num(v));
     this.patch(el, { cornerRadius: r || undefined, cornerRadii: undefined });
   }
 
@@ -599,6 +609,11 @@ export class PropertiesPanelComponent {
       return;
     }
     this.patch(el, { cornerRadii: next, cornerRadius: undefined });
+  }
+
+  /** 合併阻擋原因（null = 可合併）；供按鈕 disabled/title 與 inline 提示 */
+  mergeBlocked(el: TableElement): string | null {
+    return this.state.mergeSelectionError(el.id);
   }
 
   mergeCells(el: TableElement) {

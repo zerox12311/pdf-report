@@ -1,7 +1,13 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { TemplateDoc, TemplateSummary } from '../models/template.model';
+import { TemplateDoc, TemplateSummary, ValidationSpec } from '../models/template.model';
+
+/** POST /api/validate 的回應：ok=通過；errors 帶出錯位置與規則 */
+export interface ValidationResult {
+  ok: boolean;
+  errors: { path: string; rule: 'required' | 'type'; message: string }[];
+}
 
 /**
  * 樣板/圖片 API。所有方法失敗時 reject 一個訊息已正規化的 Error：
@@ -35,6 +41,13 @@ export class TemplateApiService {
   renderAdhoc(template: TemplateDoc, data: unknown): Promise<Blob> {
     return this.run(firstValueFrom(
       this.http.post('/api/templates/render', { template, data }, { responseType: 'blob' }),
+    ));
+  }
+
+  /** 測試 schema：拿當前（可能未存）規則 + data 驗證，不渲染（與 render 守門同一權威）。 */
+  validate(validation: ValidationSpec, data: unknown): Promise<ValidationResult> {
+    return this.run(firstValueFrom(
+      this.http.post<ValidationResult>('/api/validate', { validation, data }),
     ));
   }
 

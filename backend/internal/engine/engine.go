@@ -312,7 +312,8 @@ func (l *layout) applyGrowth(meas *drawCtx) {
 		}
 		text := meas.interpolate(el.Content)
 		if el.Type == "placeholder" {
-			text = formatValue(meas.resolveKey(el.Key, el.Sample), el.Format)
+			// 缺 key 留空（不用設計期 sample 冒充真資料）；與 869 繪製處必須一致，否則 autoGrow 量測高度對不上
+			text = formatValue(meas.resolveKey(el.Key, ""), el.Format)
 		}
 		if err := meas.setFont(el.FontFamily, el.FontSize, el.Bold); err != nil {
 			return 0
@@ -811,7 +812,8 @@ func (c *drawCtx) resolveKey(key, sample string) string {
 		return v
 	}
 	if c.warn != nil && key != "" {
-		c.warn("找不到資料 key：" + key + "（已用範例值代替）")
+		// 訊息不宣稱特定替代方式：placeholder/插值留空、圖片/條碼退回 sample，由各呼叫端決定
+		c.warn("找不到資料 key：" + key)
 	}
 	return sample
 }
@@ -866,7 +868,8 @@ func (c *drawCtx) drawElement(el *Element, y float64) error {
 	case "text":
 		return c.drawTextBlock(el, c.interpolate(el.Content), y)
 	case "placeholder":
-		return c.drawTextBlock(el, formatValue(c.resolveKey(el.Key, el.Sample), el.Format), y)
+		// 缺 key 留空（不用設計期 sample 冒充真資料）；與 315 量測處一致
+		return c.drawTextBlock(el, formatValue(c.resolveKey(el.Key, ""), el.Format), y)
 	case "rect":
 		return c.drawRect(el, y)
 	case "line":

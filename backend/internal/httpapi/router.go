@@ -28,6 +28,7 @@ func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.
 	rh := &renderHandler{store: templates, eng: eng}
 	ah := &assetHandler{store: assets}
 	fh := &fontHandler{store: fonts}
+	vh := &validateHandler{}
 
 	// 路由總表（新增 endpoint 請按資源歸入對應 handler 檔）
 	r.GET("/api/templates", th.list)
@@ -46,6 +47,9 @@ func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.
 	r.POST("/api/fonts", fh.upload)
 	r.GET("/api/fonts", fh.list)
 	r.GET("/api/fonts/:id", fh.get)
+
+	// 編輯器「測試 schema」：拿當前規則 + data 直接驗證（不渲染），與 render 守門同一權威
+	r.POST("/api/validate", vh.check)
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")

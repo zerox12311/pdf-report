@@ -34,7 +34,14 @@ import { EditorStateService } from './editor-state.service';
     .data-col textarea { flex: 1; font-family: monospace; font-size: 12px; border: 1px solid #ccc; border-radius: 6px; padding: 8px; resize: none; }
     .pdf-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     .col-head { font-size: 13px; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center; }
-    .col-head button { font-size: 12px; padding: 2px 8px; cursor: pointer; }
+    .col-head button {
+      font-size: 12px; padding: 4px 10px; cursor: pointer;
+      color: #2563eb; background: #fff; border: 1px solid #c7d2e8;
+      border-radius: 6px; font-weight: 500; line-height: 1.4;
+      transition: background .12s, border-color .12s;
+    }
+    .col-head button:hover { background: #eef2fb; border-color: #2563eb; }
+    .col-head button:active { background: #dfe7fa; }
     iframe { flex: 1; border: 1px solid #ccc; border-radius: 6px; width: 100%; background: #fff; }
     .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #999; background: #f5f5f5; border-radius: 6px; }
     .primary { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 10px; cursor: pointer; font-size: 14px; }

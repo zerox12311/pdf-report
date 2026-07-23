@@ -17,6 +17,25 @@ type TemplateDoc struct {
 	// Sections 節清單（有序）：每節有自己的紙張/方向與內容，依序輸出、節間必換頁。
 	// 有值時取代 Elements/Cover/BackPage 的舊版渲染路徑。
 	Sections []DocSection `json:"sections,omitempty"`
+
+	// Validation 輸入資料驗證（選填）：Enabled 時，正式渲染（renderByID）前先驗證宿主 POST 的 data，
+	// 不過直接 422、不渲染。引擎本身不讀此欄位（驗證是渲染前的守門，見 internal/validate）。
+	Validation *ValidationSpec `json:"validation,omitempty"`
+}
+
+// ValidationSpec 一份樣板的輸入驗證規則。
+type ValidationSpec struct {
+	Enabled bool              `json:"enabled"`
+	Fields  []ValidationField `json:"fields"`
+}
+
+// ValidationField 單一欄位規則。
+// Path 資料路徑：巢狀用點（school.name）；陣列逐元素用 []（items[].amount，對每個元素檢查）；
+// 只寫陣列名（items）則檢查陣列本身。Type：string|number|boolean|array|object|any。
+type ValidationField struct {
+	Path     string `json:"path"`
+	Required bool   `json:"required"`
+	Type     string `json:"type"`
 }
 
 // DocSection 一節：flow = 有頁首/頁尾 band、內容自動分頁；single = 獨立一頁（無 band）。

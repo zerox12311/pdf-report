@@ -11,6 +11,7 @@ import (
 
 	"pdftemplate/internal/engine"
 	"pdftemplate/internal/store"
+	"pdftemplate/internal/validate"
 )
 
 // renderHandler 渲染：正式（樣板 id + 資料）與 adhoc（編輯器預覽）。
@@ -34,6 +35,15 @@ func (h *renderHandler) renderByID(c *gin.Context) {
 	data, err := readRenderData(c)
 	if err != nil {
 		httpError(c, 400, err)
+		return
+	}
+	// 輸入驗證守門：樣板開啟驗證時，資料不過直接 422、不進渲染（財務單據的硬要求）。
+	// Validate 內部會判 Enabled；未開啟/無規則時回 nil，等同跳過。
+	if errs := validate.Validate(data, doc.Validation); len(errs) > 0 {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":            "輸入資料驗證未通過",
+			"validationErrors": errs,
+		})
 		return
 	}
 	h.renderPDF(c, &doc, data)

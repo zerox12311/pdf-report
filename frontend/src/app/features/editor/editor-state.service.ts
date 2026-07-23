@@ -1,7 +1,8 @@
 import { Injectable, computed, signal } from '@angular/core';
 import {
   CellBorders, ContainerElement, DocSection, ElementPatch, NewTemplateElement, PageSettings,
-  TableCell, TableElement, TableRepeat, TemplateDoc, TemplateElement, cloneWithNewIds, emptyCell,
+  TableCell, TableElement, TableRepeat, TemplateDoc, TemplateElement, ValidationField,
+  ValidationFieldType, ValidationSpec, cloneWithNewIds, emptyCell,
   emptyTemplate, newId, normalizeTemplate, sectionPage,
 } from '../../core/models/template.model';
 import { setPath } from '../../core/utils/set-path';
@@ -110,6 +111,21 @@ export class EditorStateService {
     const order: ('pt' | 'mm' | 'in')[] = ['pt', 'mm', 'in'];
     this.rulerUnit.set(order[(order.indexOf(this.rulerUnit()) + 1) % order.length]);
   }
+
+  // ---- 單位換算（模型永遠是 pt；輸入欄位依尺規單位顯示/輸入）----
+  // 1 in = 72 pt = 25.4 mm。顯示捨入：mm 1 位、in 2 位、pt 原值；反算 pt 捨到 2 位避免長浮點。
+  ptToDisp(pt: number): number {
+    const u = this.rulerUnit();
+    if (u === 'mm') return Math.round((pt / 72) * 25.4 * 10) / 10;
+    if (u === 'in') return Math.round((pt / 72) * 100) / 100;
+    return pt;
+  }
+  dispToPt(v: number): number {
+    const u = this.rulerUnit();
+    if (u === 'mm') return Math.round((v / 25.4) * 72 * 100) / 100;
+    if (u === 'in') return Math.round(v * 72 * 100) / 100;
+    return v;
+  }
   /** 目前編輯的節 id（load 後預設第一節） */
   readonly activeSectionId = signal<string>('');
 
@@ -144,7 +160,10 @@ export class EditorStateService {
       name: kind === 'single' ? '獨立頁' : '內容節',
       kind,
       page: { size: base.size, orientation: base.orientation, width: base.width, height: base.height },
-      headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null, elements: [],
+      // flow 節預設給可用的頁首/頁尾 band 高度（否則 band 顯示卻無空間，是新手陷阱）；single 節無 band
+      headerHeight: kind === 'flow' ? 60 : 0,
+      footerHeight: kind === 'flow' ? 40 : 0,
+      watermarkMode: 'inherit', watermark: null, elements: [],
     };
     this.template.update(t => ({ ...t, sections: [...t.sections, sec] }));
     this.setActiveSection(sec.id);
@@ -367,24 +386,40 @@ export class EditorStateService {
     this.dirty.set(true);
   }
 
-  /** 合併選取範圍的儲存格；回傳錯誤訊息（null = 成功）。範圍不可跨到重複/群組列邊界 */
-  mergeSelectedCells(tableId: string): string | null {
+  /**
+   * 目前選取範圍能不能合併：回傳阻擋原因（null = 可合併）。純判斷、不變更狀態，
+   * 供合併按鈕 [disabled]/[title] 與 mergeSelectedCells 共用。
+   */
+  mergeSelectionError(tableId: string): string | null {
     const el = this.findElement(tableId);
     const range = this.selectedCellRange();
-    if (!el || el.type !== 'table' || !range) return '先點選一格，再 Shift+點選另一格框出範圍';
+    if (!el || el.type !== 'table' || !range) return '先框出範圍（點一格再 Shift+點另一格）';
     const r1 = Math.min(range.r1, range.r2);
     const r2 = Math.max(range.r1, range.r2);
     const c1 = Math.min(range.c1, range.c2);
     const c2 = Math.max(range.c1, range.c2);
-    if (r1 === r2 && c1 === c2) return null;
+    if (r1 === r2 && c1 === c2) return '範圍只有一格，無可合併';
     const rep = el.repeat;
     if (rep?.enabled && r1 !== r2) {
       const special = [rep.rowIndex, rep.groupHeaderRowIndex, rep.groupFooterRowIndex]
         .filter((v): v is number => v != null);
       if (special.some(sr => sr >= r1 && sr <= r2)) {
-        return '合併範圍不可跨到重複列/群組列（重複列內只能左右合併）';
+        return '不可跨重複列/群組列（重複列內只能左右合併）';
       }
     }
+    return null;
+  }
+
+  /** 合併選取範圍的儲存格；回傳錯誤訊息（null = 成功）。範圍不可跨到重複/群組列邊界 */
+  mergeSelectedCells(tableId: string): string | null {
+    const err = this.mergeSelectionError(tableId);
+    if (err) return err;
+    const el = this.findElement(tableId) as TableElement;
+    const range = this.selectedCellRange()!;
+    const r1 = Math.min(range.r1, range.r2);
+    const r2 = Math.max(range.r1, range.r2);
+    const c1 = Math.min(range.c1, range.c2);
+    const c2 = Math.max(range.c1, range.c2);
     const cells = el.cells.map((row, r) => row.map((cell, c) => {
       if (r < r1 || r > r2 || c < c1 || c > c2) return cell;
       if (r === r1 && c === c1) return { ...cell, colSpan: c2 - c1 + 1, rowSpan: r2 - r1 + 1 };
@@ -688,10 +723,28 @@ export class EditorStateService {
     const t = el as TableElement;
     const rowHeights = Array.from({ length: rows }, (_, i) => t.rowHeights[i] ?? 24);
     const columnWidths = Array.from({ length: cols }, (_, i) => t.columnWidths[i] ?? 90);
+    // 縮減時把跨到新邊界外的合併跨度夾回，避免殘留越界 colSpan/rowSpan
     const cells = Array.from({ length: rows }, (_, r) =>
-      Array.from({ length: cols }, (_, c) => t.cells[r]?.[c] ?? emptyCell()));
+      Array.from({ length: cols }, (_, c) => {
+        const cell = t.cells[r]?.[c] ?? emptyCell();
+        const colSpan = cell.colSpan && cell.colSpan > 1 ? Math.min(cell.colSpan, cols - c) : cell.colSpan;
+        const rowSpan = cell.rowSpan && cell.rowSpan > 1 ? Math.min(cell.rowSpan, rows - r) : cell.rowSpan;
+        return colSpan !== cell.colSpan || rowSpan !== cell.rowSpan ? { ...cell, colSpan, rowSpan } : cell;
+      }));
+    // 重複列/群組列索引若被縮到範圍外 → 關閉/清掉，避免產生「明細靜默消失」的樣板
+    let repeat = t.repeat;
+    if (repeat) {
+      const inRange = (v: number | null | undefined): v is number => v != null && v >= 0 && v < rows;
+      repeat = {
+        ...repeat,
+        enabled: repeat.enabled && inRange(repeat.rowIndex),
+        rowIndex: inRange(repeat.rowIndex) ? repeat.rowIndex : 0,
+        groupHeaderRowIndex: inRange(repeat.groupHeaderRowIndex) ? repeat.groupHeaderRowIndex : null,
+        groupFooterRowIndex: inRange(repeat.groupFooterRowIndex) ? repeat.groupFooterRowIndex : null,
+      };
+    }
     this.patchElement(id, {
-      rowHeights, columnWidths, cells,
+      rowHeights, columnWidths, cells, repeat,
       width: columnWidths.reduce((a, b) => a + b, 0),
       height: rowHeights.reduce((a, b) => a + b, 0),
     } as Partial<TableElement>);
@@ -1063,5 +1116,140 @@ export class EditorStateService {
       }
     }
     return data;
+  }
+
+  // ---------- 輸入驗證 ----------
+
+  /** 目前樣板的驗證設定（normalize 保證存在） */
+  readonly validation = computed<ValidationSpec>(() =>
+    this.template().validation ?? { enabled: false, fields: [] });
+
+  private patchValidation(patch: Partial<ValidationSpec>) {
+    this.record();
+    this.template.update(t => ({
+      ...t,
+      validation: { ...(t.validation ?? { enabled: false, fields: [] }), ...patch },
+    }));
+    this.dirty.set(true);
+  }
+
+  setValidationEnabled(enabled: boolean) {
+    this.patchValidation({ enabled });
+  }
+
+  addValidationField() {
+    const fields: ValidationField[] = [
+      ...this.validation().fields,
+      { path: '', required: true, type: 'any', source: 'manual' },
+    ];
+    this.patchValidation({ fields });
+  }
+
+  updateValidationField(index: number, patch: Partial<ValidationField>) {
+    const fields = this.validation().fields.map((f, i) => (i === index ? { ...f, ...patch } : f));
+    this.patchValidation({ fields });
+  }
+
+  removeValidationField(index: number) {
+    const fields = this.validation().fields.filter((_, i) => i !== index);
+    this.patchValidation({ fields });
+  }
+
+  /**
+   * 從樣板自動偵測欄位並「合併補新」：只把樣板用到、表中還沒有的 path 補進去
+   * （required 預設開、型別依綁定推斷、source=detected）；已存在的欄位（含手動微調）原樣保留。
+   * 回傳新增的欄位數，供 UI 提示。
+   */
+  detectValidationFields(): number {
+    const existing = new Set(this.validation().fields.map(f => f.path));
+    const added: ValidationField[] = [];
+    for (const cand of this.deriveFieldCandidates()) {
+      if (existing.has(cand.path)) continue;
+      existing.add(cand.path);
+      added.push({ path: cand.path, required: true, type: cand.type, source: 'detected' });
+    }
+    if (added.length) {
+      this.patchValidation({ fields: [...this.validation().fields, ...added] });
+    }
+    return added.length;
+  }
+
+  /**
+   * 掃描樣板所有資料綁定，導出候選欄位 {path, type}（依首次出現排序、去重）。
+   * 與 buildSampleData 走同一組結構：placeholder / 文字插值 / 條碼 / 動態圖片 / 表格（含重複列 key[].欄位）。
+   * 排除 $ 開頭的引擎保留 key（$page/$sum(...) 等）。
+   */
+  private deriveFieldCandidates(): { path: string; type: ValidationFieldType }[] {
+    const out: { path: string; type: ValidationFieldType }[] = [];
+    // add：去重；已存在但型別為 any 時可被更具體的型別升級（順序無關）
+    const add = (path: string, type: ValidationFieldType) => {
+      const p = path.trim();
+      if (!p || p.startsWith('$')) return;
+      const hit = out.find(o => o.path === p);
+      if (hit) {
+        if (hit.type === 'any' && type !== 'any') hit.type = type;
+        return;
+      }
+      out.push({ path: p, type });
+    };
+    const typeForFormat = (fmt?: string): ValidationFieldType =>
+      fmt === 'comma' || fmt === 'twUpper' ? 'number'
+        : fmt?.startsWith('rocDate') ? 'string' : 'any';
+    // addKey：一般 key 直接 add；全域彙總 $sum/$avg/$count(路徑) → 導出被引用的陣列與欄位
+    // （sum/avg 代表該欄位是數字，補上型別；只在彙總內出現、畫面沒直接顯示的 key 也能被偵測）
+    const aggRe = /^\$(sum|avg|count)\((.+)\)$/;
+    const addKey = (key: string, type: ValidationFieldType) => {
+      const m = key.match(aggRe);
+      if (!m) { add(key, type); return; }
+      const numeric = m[1] !== 'count';
+      const path = m[2].trim();
+      const dot = path.lastIndexOf('.');
+      if (dot < 0) {
+        add(path, 'array'); // $count(items) / $sum(scalar 陣列)
+      } else {
+        add(path.slice(0, dot), 'array');
+        add(`${path.slice(0, dot)}[].${path.slice(dot + 1)}`, numeric ? 'number' : 'any');
+      }
+    };
+    const scanText = (s: string) => {
+      if (!s || !s.includes('{{')) return;
+      for (const m of s.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g)) {
+        addKey(m[1], typeForFormat(m[2]));
+      }
+    };
+
+    const all = this.allLists(this.template()).flat().flatMap(e =>
+      e.type === 'container' ? [e as TemplateElement, ...e.children] : [e]);
+    for (const el of all) {
+      if (el.type === 'placeholder' && el.key) addKey(el.key, typeForFormat(el.format));
+      if (el.type === 'text') scanText(el.content);
+      if (el.type === 'barcode' && el.key) addKey(el.key, 'string');
+      if (el.type === 'image' && el.key) addKey(el.key, 'string');
+      if (el.type === 'table') {
+        const rep = el.repeat;
+        for (let r = 0; r < el.cells.length; r++) {
+          const isRepeatRow = !!(rep?.enabled && rep.key && r === rep.rowIndex);
+          const isGroupRow = !!(rep?.enabled && rep.key &&
+            (r === rep.groupHeaderRowIndex || r === rep.groupFooterRowIndex));
+          for (const cell of el.cells[r]) {
+            if (cell.kind === 'text') { scanText(cell.value); continue; } // 文字格：掃插值（含 $sum）
+            if (cell.kind !== 'placeholder' && cell.kind !== 'barcode' && cell.kind !== 'image') continue;
+            if (!cell.key) continue;
+            const t: ValidationFieldType = cell.kind === 'placeholder' ? typeForFormat(cell.format) : 'string';
+            if (isRepeatRow || isGroupRow) {
+              add(rep!.key, 'array');
+              add(`${rep!.key}[].${cell.key}`, t);
+            } else {
+              addKey(cell.key, t);
+            }
+          }
+        }
+        if (rep?.enabled && rep.key && rep.groupBy) {
+          add(rep.key, 'array');
+          add(`${rep.key}[].${rep.groupBy}`, 'any');
+        }
+      }
+    }
+    return out;
   }
 }

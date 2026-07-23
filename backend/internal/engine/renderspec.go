@@ -398,6 +398,15 @@ func ExpandTableWarn(t *Element, data any, warn WarnFunc) []ExpandedRow {
 	rows := []ExpandedRow{}
 	rep := t.Repeat
 	repeatOn := rep != nil && rep.Enabled && rep.Key != ""
+	// 重複列索引越界（例如列數被縮減到小於 rowIndex）：不可靜默吞掉明細。
+	// 發警告並退化成普通表格（照現有列數逐列畫），符合「渲染錯誤不靜默」硬要求。
+	if repeatOn && (rep.RowIndex < 0 || rep.RowIndex >= len(t.RowHeights)) {
+		if warn != nil {
+			warn("表格重複列設定越界（rowIndex=" + strconv.Itoa(rep.RowIndex) +
+				"，表格僅 " + strconv.Itoa(len(t.RowHeights)) + " 列）：明細未展開，已改畫普通表格")
+		}
+		repeatOn = false
+	}
 	gh, gf := -1, -1
 	if repeatOn {
 		gh, gf = groupRowIdx(t, rep.GroupHeaderRow), groupRowIdx(t, rep.GroupFooterRow)

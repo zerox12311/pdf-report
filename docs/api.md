@@ -27,7 +27,18 @@ body 上限 10MB；非 JSON 物件 → 400「樣板 JSON 解析失敗（body 需
 - `data` 必須是 JSON 物件或省略；其他型別 → 400。
 - **警告機制**：資料缺 key 等問題不擋渲染，回 header `X-Render-Warnings-Count` ＋ `X-Render-Warnings`（percent-encoded JSON 陣列，同訊息去重）。
 - **strict 模式**：`?strict=1` 時有任何警告 → 422 `{"error", "warnings"}`（財務單據建議串接時開啟）。
+- **輸入驗證守門**：樣板若開啟驗證（`validation.enabled`），正式渲染在渲染前先驗 `data`，不過 → 422 `{"error", "validationErrors":[{path, rule, message}]}`、**不產生 PDF**。`rule` 為 `required`｜`type`；陣列逐元素錯誤帶索引（`items[2].amount`）。關閉或無規則則跳過。adhoc 渲染不套此守門。
 - `Content-Disposition: inline; filename*=UTF-8''<樣板名>.pdf`。
+
+## 輸入驗證
+
+| Method | Path | 說明 |
+|---|---|---|
+| POST | `/api/validate` | 測試 schema：body `{"validation": {...}, "data": {...}}` → `{"ok": bool, "errors":[{path, rule, message}]}` |
+
+- 與正式渲染守門共用同一個驗證器（`internal/validate`，唯一權威）——「測試說過」= 「render 會過」。
+- **忽略** `validation.enabled`（測試就是要跑這組規則）；`validation` 為 null（無規則）→ `ok:true`。
+- `data` 必須是 JSON 物件或省略；其他型別 → 400。編輯器「驗證」分頁的測試區呼叫此端點。
 
 ## 圖片資產
 

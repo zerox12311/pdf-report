@@ -1,5 +1,5 @@
 import {
-  ContainerElement, TextElement, cloneWithNewIds, emptyTemplate, fontCss,
+  ContainerElement, TextElement, cloneWithNewIds, emptyTemplate, fontCss, normalizeTemplate,
 } from './template.model';
 
 describe('template.model', () => {
@@ -11,6 +11,28 @@ describe('template.model', () => {
     expect(t.sections.length).toBe(1);
     expect(t.sections[0].kind).toBe('flow');
     expect(t.sections[0].elements).toEqual([]);
+  });
+
+  it('normalizeTemplate：舊樣板無 validation → 關閉、空規則；髒欄位被清理', () => {
+    // 舊樣板完全沒 validation
+    const old = normalizeTemplate({ name: 'x', sections: [] } as any);
+    expect(old.validation).toEqual({ enabled: false, fields: [] });
+    // 有 validation：非法 type 退回 any、非字串 path 被濾掉、source 正規化
+    const v = normalizeTemplate({
+      name: 'y', sections: [],
+      validation: {
+        enabled: true,
+        fields: [
+          { path: 'a', required: true, type: 'weird' },
+          { path: 'b', required: false, type: 'number', source: 'manual' },
+          { path: 123, required: true, type: 'string' },
+        ],
+      },
+    } as any);
+    expect(v.validation!.enabled).toBeTrue();
+    expect(v.validation!.fields.length).toBe(2); // 非字串 path 濾掉
+    expect(v.validation!.fields[0]).toEqual({ path: 'a', required: true, type: 'any', source: 'detected' });
+    expect(v.validation!.fields[1].source).toBe('manual');
   });
 
   it('fontCss 對未知/未設家族回黑體', () => {

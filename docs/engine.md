@@ -38,11 +38,11 @@
 ## 表格
 
 - 欄寬/列高逐一指定（pt）；框線色寬（寬 0 = 不畫格線）；表格層級字型/字級/內距。
-- **重複列**：`repeat.key` 陣列展開 `repeat.rowIndex` 那一列，儲存格 key 用相對路徑；陣列不存在 → 警告＋以範例值畫一列；空陣列 → 該列省略。
+- **重複列**：`repeat.key` 陣列展開 `repeat.rowIndex` 那一列，儲存格 key 用相對路徑；陣列不存在 → 警告＋以範例值畫一列；空陣列 → 該列省略。`rowIndex` 越界（例：列數被縮減到小於 rowIndex）→ **警告＋退化成普通表格**（不可靜默吞掉明細）。
 - **群組**：`groupBy`（相鄰相同值分組，資料需先排序）＋群組首列/尾列（每組各插一次；相對 key 以該組第一筆解析）。
 - **跨頁分片**：每片重畫表頭列（= 重複列之前、扣掉群組首尾列的列）。
 - **儲存格能力**：
-  - 類型：text（含插值）／placeholder（key＋sample＋format）／image（contain 縮進內距矩形）／barcode（symbology＋showText；內容 = key 綁定或 value 靜態值，與條碼元素同一套繪製）
+  - 類型：text（含插值）／placeholder（key＋sample＋format；**sample 僅供設計期畫布預覽，正式渲染缺 key → 留空並警告，不以 sample 冒充真資料**；與插值行為一致）／image（contain 縮進內距矩形）／barcode（symbology＋showText；內容 = key 綁定或 value 靜態值，與條碼元素同一套繪製）
   - 合併：colSpan/rowSpan（被蓋住的格不畫）
   - 樣式：逐格字級/文字色/**背景色 fillColor**（底色先畫、框線內容蓋上）/粗體
   - 對齊：align 左/中/右 × vAlign 上/中/下（未設 = 置中）
