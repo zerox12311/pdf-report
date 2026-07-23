@@ -143,6 +143,14 @@ type tableFragment struct {
 	rows []ExpandedRow
 }
 
+// listPlacement 重複區塊展開後的一個 block 落在某頁的位置（分頁以 block 為單位）。
+type listPlacement struct {
+	el  *Element
+	blk listBlock
+	pg  int
+	y   float64 // 頁內 y（block 頂端）
+}
+
 // cloneElements 深拷貝元素（含容器子元素與可變指標欄位）。
 // Render 過程會就地調整高度/位移，拷貝確保呼叫者的 doc 不被修改（可安全重用/快取）。
 // ⚠ schema 新增「指標/slice」欄位時必須在此補手動深拷貝（scalar 欄位由 copy 帶過，不用）。
@@ -222,6 +230,8 @@ type layout struct {
 	meas *drawCtx
 	// expanded 展開列快取（含換行列高）：同一次渲染中位移/分頁/繪製吃同一份高度
 	expanded map[string][]ExpandedRow
+	// expandedLists 重複區塊展開快取：位移/分頁吃同一份 block 序列
+	expandedLists map[string][]listBlock
 
 	pageW, pageH  float64
 	contentTop    float64 // 內容區上緣（= 頁首高）
@@ -233,10 +243,11 @@ type layout struct {
 	warn WarnFunc // 渲染警告回報
 
 	// offsets：repeat 展開與 autoGrow 造成的位移（elementID → Δy，設計座標系）
-	offsets    map[string]float64
-	placements []placement
-	fragments  []tableFragment
-	pageCount  int
+	offsets        map[string]float64
+	placements     []placement
+	fragments      []tableFragment
+	listPlacements []listPlacement
+	pageCount      int
 }
 
 // newLayout 計算頁面幾何並依設計位置把元素分進三個 band。
@@ -269,6 +280,9 @@ func newLayout(doc *TemplateDoc, data any) (*layout, error) {
 	sort.SliceStable(l.bodyEls, func(i, j int) bool { return l.bodyEls[i].Y < l.bodyEls[j].Y })
 
 	l.offsets = ComputeRepeatOffsets(doc, data)
+	for id, d := range l.computeListOffsets() {
+		l.offsets[id] += d
+	}
 	return l, nil
 }
 
@@ -287,6 +301,50 @@ func (l *layout) expandTable(el *Element) []ExpandedRow {
 	}
 	l.expanded[el.ID] = rows
 	return rows
+}
+
+// expandList 展開重複區塊（快取；頂層上下文 = 整份資料）。
+func (l *layout) expandList(el *Element) []listBlock {
+	if blocks, ok := l.expandedLists[el.ID]; ok {
+		return blocks
+	}
+	blocks := ExpandList(el, l.data, l.data, l.data, 1, l.warn)
+	if l.expandedLists == nil {
+		l.expandedLists = map[string][]listBlock{}
+	}
+	l.expandedLists[el.ID] = blocks
+	return blocks
+}
+
+// computeListOffsets 計算重複區塊展開造成的位移：展開總高（sumBlockHeights）與設計
+// footprint（el.Height，一筆高度）的差，把設計位置在其下緣以下的元素往下（上）推。
+// 與 ComputeRepeatOffsets 同構、位置皆用設計座標，可與表格位移相加。
+//
+// 用 nil warn 直接展開（不進快取）——比照 ComputeRepeatOffsets：真正的展開警告
+// 由 paginate 的 l.expandList（帶 warn、寫快取）發出一次，避免這裡先寫入快取吞掉警告。
+func (l *layout) computeListOffsets() map[string]float64 {
+	offsets := map[string]float64{}
+	lists := []*Element{}
+	for i := range l.doc.Elements {
+		if isListElement(&l.doc.Elements[i]) {
+			lists = append(lists, &l.doc.Elements[i])
+		}
+	}
+	sort.Slice(lists, func(i, j int) bool { return lists[i].Y < lists[j].Y })
+	for _, t := range lists {
+		blocks := ExpandList(t, l.data, l.data, l.data, 1, nil)
+		delta := sumBlockHeights(blocks) - t.Height
+		if math.Abs(delta) < epsilonGrow {
+			continue
+		}
+		for i := range l.doc.Elements {
+			el := &l.doc.Elements[i]
+			if el.ID != t.ID && el.Y >= t.Y+t.Height-epsilonPt {
+				offsets[el.ID] += delta
+			}
+		}
+	}
+	return offsets
 }
 
 // textBlockHeight 文字塊所需高度（行數 × 行高 + 上下內距）；與 drawTextBlock 的行高幾何一致。
@@ -434,6 +492,10 @@ func (l *layout) measuredRepeatOffsets() map[string]float64 {
 			}
 		}
 	}
+	// 重複區塊位移與換行表格量測無關（block 高為靜態），直接併入。
+	for id, d := range l.computeListOffsets() {
+		offsets[id] += d
+	}
 	return offsets
 }
 
@@ -498,6 +560,33 @@ func (l *layout) paginate() {
 			endLocal := curY + sumHeights(curRows)
 			actualEndC := l.pageStartC(curPage) + (endLocal - l.contentTop)
 			shift += actualEndC - (c + expandedH)
+		} else if isListElement(el) {
+			// 重複區塊：每個 block 為不可分割的葉原子，只在 block 之間斷頁。
+			blocks := l.expandList(el)
+			expandedH := sumBlockHeights(blocks)
+			cursorC := c
+			for _, blk := range blocks {
+				p, local := l.locate(cursorC)
+				if local+blk.Height > l.contentBottom+epsilonPt {
+					if blk.Height <= l.contentH {
+						// 放不下但單塊裝得下一頁 → 移到下一頁頂端（keep-together）
+						newC := l.pageStartC(p + 1)
+						shift += newC - cursorC
+						cursorC = newC
+						p, local = l.locate(cursorC)
+					} else if l.warn != nil {
+						// 單一項目比整頁還高：不靜默——警告（內容會被頁面裁切）
+						l.warn("重複區塊單一項目高度 " + strconv.FormatFloat(blk.Height, 'f', 0, 64) +
+							"pt 超過內容區 " + strconv.FormatFloat(l.contentH, 'f', 0, 64) +
+							"pt，無法完整分頁（內容可能被裁切）")
+					}
+				}
+				l.listPlacements = append(l.listPlacements, listPlacement{el, blk, p, local})
+				l.pageCount = max(l.pageCount, p+1)
+				cursorC += blk.Height
+			}
+			// 分頁造成的實際結束位移，後續元素跟著位移（同重複列表格）
+			shift += cursorC - (c + expandedH)
 		} else {
 			p, local := l.locate(c)
 			if local+el.Height > l.contentBottom+epsilonPt && el.Height <= l.contentH {
@@ -522,7 +611,7 @@ func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, to
 		} else {
 			pdf.AddPageWithOption(gopdf.PageOption{PageSize: &gopdf.Rect{W: l.pageW, H: l.pageH}})
 		}
-		ctx := &drawCtx{pdf: pdf, data: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache}
+		ctx := &drawCtx{pdf: pdf, data: l.data, root: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache}
 		wm := l.doc.Page.Watermark
 		// 本頁內容（keep：依 AboveWatermark 過濾——上層浮水印時分兩批畫，
 		// 讓勾了「置於浮水印之上」的元素不被浮水印蓋住）
@@ -556,6 +645,21 @@ func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, to
 					if err := ctx.withRotation(fr.el.Rotation,
 						fr.el.X+sumFloats(fr.el.ColumnWidths)/2, fr.y+sumHeights(fr.rows)/2,
 						func() error { return ctx.drawTableFragment(fr.el, fr.y, fr.rows) }); err != nil {
+						return err
+					}
+				}
+			}
+			// 重複區塊（list）：每個 block 的子元素在自己的資料上下文下繪製；
+			// 子元素跟隨 list 的 AboveWatermark（比照容器）。
+			for _, lp := range l.listPlacements {
+				if lp.pg != p || !keep(lp.el) || !ctx.isVisible(lp.el) {
+					continue
+				}
+				for _, child := range lp.blk.Children {
+					childCtx := *ctx
+					childCtx.data = child.Data
+					childCtx.parentData = child.Parent
+					if err := childCtx.drawElement(child.El, lp.y+child.El.Y); err != nil {
 						return err
 					}
 				}
@@ -754,13 +858,18 @@ func sectionDocFrom(doc *TemplateDoc, s *DocSection) *TemplateDoc {
 
 type drawCtx struct {
 	pdf    *gopdf.GoPdf
-	data   any
+	data   any // 目前資料上下文：頂層 = 整份資料；重複區塊子元素 = 當筆陣列元素
 	pageNo int
 	pages  int
 	assets AssetSource
 	warn   WarnFunc // 渲染警告回報；nil = 不收集
 	// 動態圖片 URL 下載快取（同一次渲染共用；nil 值 = 抓過但失敗，不重試）
 	imgCache map[string][]byte
+
+	// 重複區塊（list）子元素的上下文：root = 整份資料（$sum 等全域彙總）；
+	// parentData = 外層當筆（$parent. 解析）。頂層繪製時皆 nil（root 退回 data）。
+	root       any
+	parentData any
 }
 
 func parseColor(hex string) (uint8, uint8, uint8) {
@@ -815,11 +924,22 @@ func (c *drawCtx) resolveKey(key, sample string) string {
 	case "$pages":
 		return strconv.Itoa(c.pages)
 	}
-	if v, ok := ResolveAggregate(c.data, key); ok {
-		return v
-	}
-	if v, ok := ResolvePath(c.data, key); ok {
-		return v
+	// $parent. 只在重複區塊子元素上下文有意義（c.parentData 有值）；其餘退回一般解析。
+	if rest, ok := strings.CutPrefix(key, "$parent."); ok {
+		if v, ok := ResolvePath(c.parentData, rest); ok {
+			return v
+		}
+	} else {
+		root := c.root // 全域彙總永遠對整份資料計算；頂層 root 為 nil 時退回 data（等同舊行為）
+		if root == nil {
+			root = c.data
+		}
+		if v, ok := ResolveAggregate(root, key); ok {
+			return v
+		}
+		if v, ok := ResolvePath(c.data, key); ok {
+			return v
+		}
 	}
 	if c.warn != nil && key != "" {
 		// 訊息不宣稱特定替代方式：placeholder/插值留空、圖片/條碼退回 sample，由各呼叫端決定

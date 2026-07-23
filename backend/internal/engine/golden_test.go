@@ -80,6 +80,36 @@ var goldenCases = []struct {
 			]}`,
 		data: `{"data":{"day":"2026-07-20","amount":"98765.5","paid":"true"}}`,
 	},
+	{
+		// 重複區塊（list）兩層巢狀：orders → lines，含 gap、$parent.orderNo 插值、跨頁
+		name: "list-nested-multipage",
+		template: `{"name":"nl","page":{"width":595.28,"height":841.89,"headerHeight":40,"footerHeight":30},
+			"elements":[
+				{"type":"text","id":"h","x":40,"y":10,"width":300,"height":20,"content":"訂單明細","fontSize":15,"color":"#000000","align":"left","lineHeight":1.2,"bold":true},
+				{"type":"placeholder","id":"pg","x":455,"y":820,"width":90,"height":14,"key":"$page","sample":"1","fontSize":9,"color":"#666666","align":"right","lineHeight":1.2,"bold":false},
+				{"type":"list","id":"L","x":40,"y":50,"width":515,"height":28,"key":"orders","gap":6,
+					"children":[
+						{"type":"placeholder","id":"o1","x":0,"y":4,"width":120,"height":18,"key":"orderNo","sample":"?","fontSize":12,"color":"#000000","align":"left","lineHeight":1.2,"bold":true},
+						{"type":"placeholder","id":"o2","x":140,"y":4,"width":200,"height":18,"key":"buyer","sample":"?","fontSize":12,"color":"#333333","align":"left","lineHeight":1.2,"bold":false},
+						{"type":"list","id":"LL","x":20,"y":28,"width":495,"height":18,"key":"lines",
+							"children":[
+								{"type":"placeholder","id":"n","x":0,"y":0,"width":260,"height":16,"key":"name","sample":"?","fontSize":11,"color":"#000000","align":"left","lineHeight":1.2,"bold":false},
+								{"type":"placeholder","id":"q","x":300,"y":0,"width":60,"height":16,"key":"qty","sample":"?","fontSize":11,"color":"#000000","align":"right","lineHeight":1.2,"bold":false},
+								{"type":"text","id":"pp","x":380,"y":0,"width":130,"height":16,"content":"單號 {{$parent.orderNo}}","fontSize":9,"color":"#999999","align":"left","lineHeight":1.2,"bold":false}
+							]}
+					]}
+			]}`,
+		data: `{"data":{"orders":[
+			{"orderNo":"A001","buyer":"王小明","lines":[{"name":"螺絲","qty":2},{"name":"螺帽","qty":5},{"name":"墊圈","qty":10},{"name":"扳手","qty":1}]},
+			{"orderNo":"A002","buyer":"李大華","lines":[{"name":"油漆","qty":3},{"name":"刷子","qty":2},{"name":"滾筒","qty":1},{"name":"溶劑","qty":4}]},
+			{"orderNo":"A003","buyer":"陳美玲","lines":[{"name":"電線","qty":20},{"name":"插座","qty":8},{"name":"開關","qty":6},{"name":"燈具","qty":3}]},
+			{"orderNo":"A004","buyer":"林志豪","lines":[{"name":"水管","qty":15},{"name":"彎頭","qty":12},{"name":"閥門","qty":4},{"name":"膠帶","qty":9}]},
+			{"orderNo":"A005","buyer":"黃淑芬","lines":[{"name":"磁磚","qty":50},{"name":"水泥","qty":8},{"name":"砂","qty":10},{"name":"填縫劑","qty":5}]},
+			{"orderNo":"A006","buyer":"吳建國","lines":[{"name":"門把","qty":4},{"name":"鉸鏈","qty":8},{"name":"門鎖","qty":2},{"name":"螺絲","qty":30},{"name":"螺帽","qty":30},{"name":"墊圈","qty":40},{"name":"合頁","qty":6},{"name":"把手","qty":12},{"name":"滑軌","qty":8},{"name":"角碼","qty":16},{"name":"膨脹螺栓","qty":20},{"name":"矽利康","qty":5},{"name":"補土","qty":3},{"name":"砂紙","qty":25}]},
+			{"orderNo":"A007","buyer":"劉雅婷","lines":[{"name":"窗簾","qty":6},{"name":"軌道","qty":3},{"name":"掛勾","qty":24},{"name":"布料","qty":2}]},
+			{"orderNo":"A008","buyer":"蔡文昌","lines":[{"name":"燈泡","qty":40},{"name":"燈座","qty":40},{"name":"電池","qty":100},{"name":"延長線","qty":5}]}
+		]}}`,
+	},
 }
 
 func TestGoldenPDF(t *testing.T) {

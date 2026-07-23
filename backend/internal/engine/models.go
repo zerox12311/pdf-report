@@ -151,7 +151,13 @@ type Element struct {
 
 	// container（Frame 容器）：子元素座標相對於容器左上角；跨頁 keep-together
 	Title    string    `json:"title"`    // 容器標題（左上角）
-	Children []Element `json:"children"` // 限一層（容器內不再放容器）
+	Children []Element `json:"children"` // 容器限一層；list 重複區塊可再巢狀一層 list
+
+	// list（重複區塊 / JasperReports List 式）：綁 Key 陣列，Children 為「一筆」的自由版面
+	// （座標相對 list 左上角，Width/Height = 一筆尺寸），每筆蓋一次往下堆。
+	// Children 的 key 相對「當筆元素」解析，$parent. 回外層當筆。展開後攤平成扁平原子分頁。
+	Gap         float64 `json:"gap"`         // 筆與筆之間的垂直間距（pt）
+	SampleCount int     `json:"sampleCount"` // 無資料時仍畫的範例筆數（0 = 1；純設計預覽用）
 
 	// image
 	// image 三種來源（優先序 Key > URL > AssetID）：

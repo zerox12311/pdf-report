@@ -380,6 +380,24 @@ export interface ContainerElement extends ElementBase {
   children: TemplateElement[];
 }
 
+/**
+ * 重複區塊 / 列表（JasperReports List 式）：綁一個陣列 key，children 描述「一筆」的自由版面
+ * （座標相對 list 左上角，width/height = 一筆的尺寸）；每筆資料蓋一次、往下堆。
+ * children 的 key 相對「當筆元素」解析，`$parent.xxx` 回外層當筆。限兩層巢狀（list 內可再放一個 list）。
+ * 展開時攤平成扁平原子分頁（外層區塊不 keep-together），單一原子超過整頁 → 渲染警告。
+ */
+export interface ListElement extends ElementBase {
+  type: 'list';
+  /** 資料陣列路徑；頂層相對整份資料，巢狀時相對外層當筆元素（可用 $parent.） */
+  key: string;
+  /** 無資料時仍畫一筆的範例筆數（未設 = 1）；純設計預覽用，不影響實際渲染 */
+  sampleCount?: number;
+  /** 筆與筆之間的垂直間距（pt，未設 = 0） */
+  gap?: number;
+  /** 一筆的版面：自由擺放，座標相對 list 左上角 */
+  children: TemplateElement[];
+}
+
 export type TemplateElement =
   | TextElement
   | PlaceholderElement
@@ -388,7 +406,16 @@ export type TemplateElement =
   | LineElement
   | TableElement
   | BarcodeElement
-  | ContainerElement;
+  | ContainerElement
+  | ListElement;
+
+/** 帶 children 的容器型元素（Frame 容器與重複區塊）；子元素座標相對其左上角 */
+export type ChildHostElement = ContainerElement | ListElement;
+
+/** 是否為帶 children 的容器型元素（container / list）——child 操作共用此判斷 */
+export function isChildHost(el: TemplateElement): el is ChildHostElement {
+  return el.type === 'container' || el.type === 'list';
+}
 
 /** 對 union 分配的 Omit（一般 Omit 會把 union 塌縮成共同欄位） */
 type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
@@ -412,6 +439,7 @@ export const ELEMENT_META: Record<ElementType, { icon: string; label: string }> 
   table: { icon: '▦', label: '表格' },
   barcode: { icon: '𝄃𝄂', label: '條碼' },
   container: { icon: '▣', label: '容器' },
+  list: { icon: '⧉', label: '重複區塊' },
 };
 
 /**
@@ -463,6 +491,18 @@ function normalizeValidation(v: Partial<ValidationSpec> | null | undefined): Val
   };
 }
 
+/** 確保 container/list 元素帶 children 陣列（手改樣板 JSON 缺欄位時防呆；遞迴巢狀 list）。
+ *  只補缺的 children、其餘欄位原樣保留（維持 raw passthrough）。 */
+function ensureChildren(els: unknown): TemplateElement[] {
+  if (!Array.isArray(els)) return [];
+  return els.map(e => {
+    if (e && typeof e === 'object' && ((e as TemplateElement).type === 'container' || (e as TemplateElement).type === 'list')) {
+      return { ...e, children: ensureChildren((e as { children?: unknown }).children) };
+    }
+    return e;
+  }) as TemplateElement[];
+}
+
 /** 節清單正規化；無 sections 時把舊格式（cover/elements/backPage）遷移成節 */
 function normalizeSections(doc: TemplateInput, page: PageSettings): DocSection[] {
   if (Array.isArray(doc.sections) && doc.sections.length) {
@@ -480,7 +520,7 @@ function normalizeSections(doc: TemplateInput, page: PageSettings): DocSection[]
       footerHeight: s.footerHeight ?? 0,
       watermarkMode: s.watermarkMode === 'none' || s.watermarkMode === 'custom' ? s.watermarkMode : 'inherit',
       watermark: normalizeWatermark(s.watermark),
-      elements: Array.isArray(s.elements) ? s.elements : [],
+      elements: ensureChildren(s.elements),
     }));
   }
   // 舊格式遷移：封面（獨立頁）→ 內頁（flow，band 高度來自 page）→ 封底
@@ -489,20 +529,20 @@ function normalizeSections(doc: TemplateInput, page: PageSettings): DocSection[]
     out.push({
       id: newId(), name: '封面', kind: 'single', page: null,
       headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null,
-      elements: Array.isArray(doc.cover.elements) ? doc.cover.elements : [],
+      elements: ensureChildren(doc.cover.elements),
     });
   }
   out.push({
     id: newId(), name: '內頁', kind: 'flow', page: null,
     headerHeight: page.headerHeight, footerHeight: page.footerHeight,
     watermarkMode: 'inherit', watermark: null,
-    elements: Array.isArray(doc.elements) ? doc.elements : [],
+    elements: ensureChildren(doc.elements),
   });
   if (doc.backPage?.enabled) {
     out.push({
       id: newId(), name: '封底', kind: 'single', page: null,
       headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null,
-      elements: Array.isArray(doc.backPage.elements) ? doc.backPage.elements : [],
+      elements: ensureChildren(doc.backPage.elements),
     });
   }
   return out;
@@ -525,13 +565,21 @@ function normalizeWatermark(wm: Partial<Watermark> | null | undefined): Watermar
 }
 
 
-/** 深拷貝元素並重新配 id（含容器子元素） */
+/** 子元素遞迴重配 id（容器與重複區塊都帶 children，重複區塊可再巢狀一層） */
+function reassignChildIds(el: TemplateElement): void {
+  if (el.type === 'container' || el.type === 'list') {
+    for (const child of el.children) {
+      child.id = newId();
+      reassignChildIds(child);
+    }
+  }
+}
+
+/** 深拷貝元素並重新配 id（含容器/重複區塊的巢狀子元素） */
 export function cloneWithNewIds(el: TemplateElement): TemplateElement {
   const copy = JSON.parse(JSON.stringify(el)) as TemplateElement;
   copy.id = newId();
-  if (copy.type === 'container') {
-    for (const child of copy.children) child.id = newId();
-  }
+  reassignChildIds(copy);
   return copy;
 }
 

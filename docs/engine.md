@@ -10,8 +10,8 @@
 `Render(doc, data)` → clone（呼叫者的 doc 不被修改）→ 逐節：
 
 1. **newLayout**：依 y 位置把元素分進頁首/內文/頁尾 band（y < headerHeight = 頁首、y ≥ height−footerHeight = 頁尾，每頁重複）。
-2. **applyGrowth**：autoGrow 文字、容器撐高、表格（重複列展開/儲存格換行）造成的高度變化，推移下方元素。
-3. **paginate**：連續座標＋shift 累積分頁；重複表格逐列分片，跨頁重畫表頭列。
+2. **applyGrowth**：autoGrow 文字、容器撐高、表格（重複列展開/儲存格換行）造成的高度變化，推移下方元素。重複區塊（list）展開總高與設計 footprint 的差同樣推移下方元素（`computeListOffsets`）。
+3. **paginate**：連續座標＋shift 累積分頁；重複表格逐列分片，跨頁重畫表頭列；重複區塊（list）以 block 為原子逐塊分頁（只在 block 間斷）。
 4. **draw**：逐頁繪製；浮水印分層（below→內容→（above 浮水印）→aboveWatermark 元素）。
 
 多節：每節可不同紙張/方向（AddPageWithOption 逐頁指定）；`$page`/`$pages` 全文件連續。舊格式（elements+cover/backPage）仍支援。
@@ -30,6 +30,7 @@
 | `$sum(path)` / `$count(path)` / `$avg(path)` | 全域彙總（對整份資料的陣列路徑） |
 | `$row` | 重複列內的列序號（1 起算） |
 | `$gsum(欄位)` / `$gcount` / `$gavg(欄位)` | 群組彙總（群組首/尾列內） |
+| `$parent.欄位` | 重複區塊（list）巢狀子明細內：取外層當筆元素的欄位 |
 
 ### 值格式化（format.go；前端鏡像 format-value.ts）
 
@@ -59,6 +60,7 @@
 - **圖片**：三種來源，優先序 **key（動態綁定）> url（固定連結）> assetId（已上傳）**。key 綁定時渲染資料中的值 = 圖片 URL（fallback sample）；url 為靜態連結，兩者都由引擎渲染時抓取嵌入。防護：僅 http/https、逾時 5 秒、上限 10MB、內容嗅探必須 PNG/JPEG；同一次渲染同 URL 只抓一次（快取含失敗）。抓取失敗發警告不擋渲染（strict 模式回 422）。表格圖片儲存格同樣支援三種來源（重複列相對 key 在展開時解析，每列可不同圖）。注意：URL 由渲染資料指定，引擎會向其發出請求——部署時信任邊界在呼叫方（宿主後端）。
 - **條碼**：code128/code39/ean13/qr（boombuler/barcode）；key 綁定 fallback sample，或 content 靜態值；1D 可加人讀文字。
 - **容器**：子元素相對座標、跨頁 keep-together（整組移到下一頁）、內部 repeat/autoGrow 推移後容器自動撐高。
+- **重複區塊（list，`list.go`）**：綁 `key` 陣列，`children` 為「一筆」的自由版面（座標相對區塊左上角、`height` = 一筆高）。`ExpandList` 每筆蓋一次、攤平成一串「葉原子（listBlock）」，分頁以 block 為單位、只在 block 間斷（外層那筆**不**整塊 keep-together，子明細可跨頁接續）。子元素 key 相對「當筆元素」解析，`$parent.欄位` 取外層當筆（`drawCtx.root`/`parentData` + `resolveKey` 支援），全域彙總 `$sum` 對整份資料。巢狀上限兩層（list 內至多再一個 list，更深層警告忽略）。固定欄位 block 高 = `max(nested.Y, 固定欄位延伸)`（欄位放到子明細下方時不與明細重疊）。缺陣列 key → 警告＋以 `sampleCount` 畫範例筆；空陣列 → 不畫；單一原子比整頁高 → 警告（不靜默裁切）。沒有 list 元素時完全不進此路徑（golden byte 不變）。
 - **條件顯示**：visibleKey＋Op（truthy/falsy/eq/ne）＋Val；隱藏保留版面空間。
 
 ## 浮水印

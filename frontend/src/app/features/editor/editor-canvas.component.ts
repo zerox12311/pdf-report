@@ -1,6 +1,6 @@
 import { DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, output, signal } from '@angular/core';
-import { ContainerElement, CornerRadii, TemplateElement, cornerRadiiOf } from '../../core/models/template.model';
+import { ChildHostElement, CornerRadii, TemplateElement, cornerRadiiOf, isChildHost } from '../../core/models/template.model';
 import { STRIP, modelToVisualY, visualToModelY } from './band-geometry';
 import { CanvasElementComponent } from './canvas-element.component';
 import { ContextMenuItem, EditorStateService } from './editor-state.service';
@@ -101,7 +101,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             [class.multi]="state.selectedIds().length > 1 && state.selectedIds().includes(el.id)"
             [class.el-hidden]="el.hidden"
             [class.el-locked]="el.locked"
-            [class.drop-hint]="el.type === 'container' && el.id === dropContainerId()"
+            [class.drop-hint]="(el.type === 'container' || el.type === 'list') && el.id === dropContainerId()"
             [style.zIndex]="el.aboveWatermark && wm()?.layer === 'above' ? 9 : null"
             [style.left.px]="el.x * z()"
             [style.top.px]="modelToVisualY(el.y)"
@@ -111,17 +111,24 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             (pointerdown)="onPointerDown($event, el, 'move')"
             (contextmenu)="onElementMenu($event, el, null)"
           >
-            @if (el.type === 'container') {
-              <div class="container-box"
-                [style.border]="el.borderWidth > 0 ? (el.borderWidth * z()) + 'px solid ' + el.borderColor : '1px dashed #94a3b8'"
-                [style.background]="el.fillColor ?? 'transparent'">
-                @if (el.title) { <div class="container-title">{{ el.title }}</div> }
-              </div>
-              @for (child of el.children; track child.id) {
+            @if (el.type === 'container' || el.type === 'list') {
+              @if (el.type === 'container') {
+                <div class="container-box"
+                  [style.border]="el.borderWidth > 0 ? (el.borderWidth * z()) + 'px solid ' + el.borderColor : '1px dashed #94a3b8'"
+                  [style.background]="el.fillColor ?? 'transparent'">
+                  @if (el.title) { <div class="container-title">{{ el.title }}</div> }
+                </div>
+              } @else {
+                <div class="list-box">
+                  <div class="list-tag" title="重複區塊：每筆資料蓋一次此版面（往下堆）">⧉ {{ el.key || '未綁定 key' }} · 每筆一列</div>
+                </div>
+              }
+              @for (child of el.children ?? []; track child.id) {
                 <div class="el child"
                   [attr.data-el-id]="child.id"
                   [class.cellsel]="child.type === 'table'"
                   [class.selected]="child.id === state.selectedId()"
+                  [class.drop-hint]="child.type === 'list' && child.id === dropContainerId()"
                   [class.el-hidden]="child.hidden"
                   [class.el-locked]="child.locked"
                   [style.left.px]="child.x * z()"
@@ -131,7 +138,36 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                   (pointerdown)="onPointerDown($event, child, 'move', el)"
                   (contextmenu)="onElementMenu($event, child, el)"
                 >
-                  <app-canvas-element [el]="child" />
+                  @if (child.type === 'list') {
+                    <!-- 巢狀明細（第二層）：子畫布內容自由擺放，孫元素相對此區塊 -->
+                    <div class="list-box nested">
+                      <div class="list-tag" title="巢狀明細：外層每筆底下，依此陣列每筆蓋一次">⧉ {{ child.key || '未綁定 key' }} · 子明細</div>
+                    </div>
+                    @for (gc of child.children ?? []; track gc.id) {
+                      <div class="el child"
+                        [attr.data-el-id]="gc.id"
+                        [class.selected]="gc.id === state.selectedId()"
+                        [class.el-hidden]="gc.hidden"
+                        [class.el-locked]="gc.locked"
+                        [style.left.px]="gc.x * z()"
+                        [style.top.px]="gc.y * z()"
+                        [style.width.px]="gc.width * z()"
+                        [style.height.px]="elHeight(gc) * z()"
+                        (pointerdown)="onPointerDown($event, gc, 'move', child)"
+                        (contextmenu)="onElementMenu($event, gc, child)"
+                      >
+                        <app-canvas-element [el]="gc" />
+                        @if (gc.locked) { <div class="lock-badge" title="已鎖定">🔒</div> }
+                        @if (gc.id === state.selectedId()) {
+                          <div class="resize-handle" (pointerdown)="onPointerDown($event, gc, 'resize', child, 'se')"></div>
+                          <div class="resize-e" (pointerdown)="onPointerDown($event, gc, 'resize', child, 'e')"></div>
+                          <div class="resize-s" (pointerdown)="onPointerDown($event, gc, 'resize', child, 's')"></div>
+                        }
+                      </div>
+                    }
+                  } @else {
+                    <app-canvas-element [el]="child" />
+                  }
                   @if (child.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
                   @if (child.id === state.selectedId()) {
                     <div class="resize-handle" (pointerdown)="onPointerDown($event, child, 'resize', el, 'se')"></div>
@@ -247,6 +283,15 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
     .container-title { position: absolute; top: 0; left: 0; font-size: 10px; font-weight: 700;
       color: #334155; background: rgba(241, 245, 249, .9); padding: 1px 8px; border-radius: 0 0 6px 0;
       pointer-events: none; }
+    /* 重複區塊：藍色虛線框 + 左上角 key 標籤（一筆的版面；渲染時每筆蓋一次往下堆） */
+    .list-box { position: absolute; inset: 0; box-sizing: border-box;
+      border: 1px dashed #6366f1; background: rgba(99, 102, 241, .05); }
+    .list-tag { position: absolute; top: 0; left: 0; font-size: 10px; font-weight: 700;
+      color: #4338ca; background: rgba(224, 231, 255, .95); padding: 1px 8px; border-radius: 0 0 6px 0;
+      white-space: nowrap; pointer-events: none; }
+    /* 巢狀明細（第二層）：換色以與外層區分 */
+    .list-box.nested { border-color: #0d9488; background: rgba(13, 148, 136, .06); }
+    .list-box.nested .list-tag { color: #0f766e; background: rgba(204, 251, 241, .95); }
     .resize-handle { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px;
       background: #2563eb; border: 2px solid #fff; border-radius: 50%; cursor: nwse-resize; z-index: 6; }
     /* 旋轉感應區：四角外側透明區，hover 才把游標換成旋轉箭頭（不顯示常駐按鈕；同 Figma）。
@@ -518,13 +563,22 @@ export class EditorCanvasComponent {
     this.state.elementDropCell.set(null);
   }
 
-  /** 找座標（model pt）下的容器 */
-  private containerAt(x: number, y: number, excludeId: string | null): ContainerElement | null {
-    for (const el of this.state.visibleElements()) {
-      if (el.type !== 'container' || el.id === excludeId) continue;
-      if (x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height) return el;
-    }
-    return null;
+  /** 找座標（model pt）下的容器型元素（container / 重複區塊 list）；遞迴進巢狀，回傳最深層命中
+   *  （用絕對座標判斷——巢狀 list 的座標相對外層）。 */
+  private containerAt(x: number, y: number, excludeId: string | null): ChildHostElement | null {
+    let best: ChildHostElement | null = null;
+    const walk = (els: TemplateElement[], ox: number, oy: number) => {
+      for (const el of els) {
+        if (!isChildHost(el)) continue;
+        const ax = ox + el.x, ay = oy + el.y;
+        if (el.id !== excludeId && x >= ax && x <= ax + el.width && y >= ay && y <= ay + el.height) {
+          best = el; // 更深層覆蓋外層（子明細優先於外層）
+        }
+        walk(el.children ?? [], ax, ay);
+      }
+    };
+    walk(this.state.visibleElements(), 0, 0);
+    return best;
   }
 
   /** DragEvent/MouseEvent → 頁面 model 座標（pt） */
@@ -574,7 +628,16 @@ export class EditorCanvasComponent {
     // 以 drop 點為整組元素的左上角（cvs3 套件保留內部相對位移）
     const minX = Math.min(...els.map(el => el.x));
     const minY = Math.min(...els.map(el => el.y));
-    const target = action === 'container' ? null : this.containerAt(pt.x, pt.y, null);
+    // container 一律落頂層；list 若落在「頂層的 list」上則巢狀成兩層，否則落頂層；其餘元素落在指標下的容器
+    let target: ChildHostElement | null = null;
+    if (action === 'container') {
+      target = null;
+    } else if (action === 'list') {
+      const host = this.containerAt(pt.x, pt.y, null);
+      target = host && host.type === 'list' && !this.state.parentOf(host.id) ? host : null;
+    } else {
+      target = this.containerAt(pt.x, pt.y, null);
+    }
     for (const el of els) {
       const x = pt.x + el.x - minX;
       const y = pt.y + el.y - minY;
@@ -679,7 +742,7 @@ export class EditorCanvasComponent {
   }
 
   /** 元素右鍵：動作類操作（樣式類留在屬性面板） */
-  onElementMenu(e: MouseEvent, el: TemplateElement, parent: ContainerElement | null) {
+  onElementMenu(e: MouseEvent, el: TemplateElement, parent: ChildHostElement | null) {
     e.preventDefault();
     e.stopPropagation();
     this.state.select(el.id);
@@ -818,13 +881,13 @@ export class EditorCanvasComponent {
     elType: TemplateElement['type'];
     /** 縮放方向：se 右下角（雙向）、e 右緣（只調寬）、s 下緣（只調高） */
     resizeDir: 'se' | 'e' | 's';
-    parent: ContainerElement | null;
+    parent: ChildHostElement | null;
     moved: boolean;
     /** 多選一起移動時，各選取頂層元素的起始座標（null = 單選/縮放） */
     multiOrigins: Map<string, { x: number; y: number }> | null;
   } | null = null;
 
-  onPointerDown(e: PointerEvent, el: TemplateElement, mode: 'move' | 'resize', parent: ContainerElement | null = null, dir: 'se' | 'e' | 's' = 'se') {
+  onPointerDown(e: PointerEvent, el: TemplateElement, mode: 'move' | 'resize', parent: ChildHostElement | null = null, dir: 'se' | 'e' | 's' = 'se') {
     // 鎖定元素：畫布上完全穿透（不選/不拖），只能從大綱管理；事件冒泡到畫布空白 → 取消選取
     if (el.locked) return;
     e.stopPropagation();
@@ -890,21 +953,19 @@ export class EditorCanvasComponent {
         }
       }
       if (d.parent) {
-        // 子元素被拖到容器邊界外（中心離開）→ 放開時提升為頂層；落在別的容器上則移進去
         const cur = this.state.findElement(d.id);
         const p = this.state.parentOf(d.id);
         if (!cur || !p) return;
-        const cx = cur.x + cur.width / 2;
-        const cy = cur.y + cur.height / 2;
-        if (cx < 0 || cx > p.width || cy < 0 || cy > p.height) {
+        // 落在「別的」容器上（含同一外層內更深層的子明細）→ 直接移進去，不必先繞到最外層
+        if (dropTarget && dropTarget !== p.id) {
+          this.state.moveIntoContainer(d.id, dropTarget);
+        } else if (cur.x + cur.width / 2 < 0 || cur.x + cur.width / 2 > p.width
+                   || cur.y + cur.height / 2 < 0 || cur.y + cur.height / 2 > p.height) {
+          // 中心離開容器、又沒落在別的容器上 → 提升為頂層
           this.state.moveOutOfContainer(d.id);
-          if (dropTarget && dropTarget !== p.id) {
-            this.state.moveIntoContainer(d.id, dropTarget);
-          } else {
-            const abs = this.state.findElement(d.id);
-            if (abs && (abs.x < 0 || abs.y < 0)) {
-              this.state.patchElement(d.id, { x: Math.max(0, abs.x), y: Math.max(0, abs.y) });
-            }
+          const abs = this.state.findElement(d.id);
+          if (abs && (abs.x < 0 || abs.y < 0)) {
+            this.state.patchElement(d.id, { x: Math.max(0, abs.x), y: Math.max(0, abs.y) });
           }
         } else {
           // 留在容器內 → 夾回範圍
@@ -1019,24 +1080,26 @@ export class EditorCanvasComponent {
       let ny = orig.y * z + dyPx;
       const w = orig.width * z;
       const h = orig.height * z;
+      // 巢狀容器（如 list 子明細）座標相對外層 → 用絕對原點畫輔助線/判定落點
+      const pAbs = this.state.absPosOf(parent.id) ?? { x: parent.x, y: parent.y };
       if (!noSnap) {
         const t = containerTargets(parent, z, this.drag.id);
         const sx = snapAxis([nx, nx + w / 2, nx + w], t.xs);
         const sy = snapAxis([ny, ny + h / 2, ny + h], t.ys);
-        const originX = parent.x * z;
-        const originY = this.modelToVisualY(parent.y);
+        const originX = pAbs.x * z;
+        const originY = this.modelToVisualY(pAbs.y);
         if (sx) { nx += sx.delta; this.guideV.set(originX + sx.guide); } else { this.guideV.set(null); }
         if (sy) { ny += sy.delta; this.guideH.set(originY + sy.guide); } else { this.guideH.set(null); }
       } else {
         this.guideV.set(null);
         this.guideH.set(null);
       }
-      // 中心已在容器外且落在別的容器上 → 亮該容器提示
+      // 中心落在別的容器上（可能是更深層的子明細，或拖出後的別處）→ 亮該容器提示
       const relCx = nx / z + orig.width / 2;
       const relCy = ny / z + orig.height / 2;
-      const outside = relCx < 0 || relCx > parent.width || relCy < 0 || relCy > parent.height;
-      const over = outside ? this.containerAt(parent.x + relCx, parent.y + relCy, this.drag.id) : null;
-      this.dropContainerId.set(over && over.id !== parent.id ? over.id : null);
+      const over = this.containerAt(pAbs.x + relCx, pAbs.y + relCy, this.drag.id);
+      const dragged = this.state.findElement(this.drag.id);
+      this.dropContainerId.set(over && over.id !== parent.id && dragged && this.state.canNestInto(dragged, over) ? over.id : null);
       this.state.patchElement(this.drag.id, { x: round(nx / z), y: round(ny / z) });
       return;
     }
@@ -1056,11 +1119,14 @@ export class EditorCanvasComponent {
       this.guideV.set(null);
       this.guideH.set(null);
     }
-    // 拖到容器上 → 亮容器提示（放開時會移入）；容器本身不能進容器
-    if (this.drag.elType !== 'container') {
+    // 拖到容器型元素上 → 亮提示（放開時移入）；能不能進由 canNestInto 決定
+    // （container 不巢狀；list 只能進頂層 list）
+    {
       const cx = newXpx / z + orig.width / 2;
       const cy = this.visualToModelY(newVisualY) + orig.height / 2;
-      this.dropContainerId.set(this.containerAt(cx, cy, this.drag.id)?.id ?? null);
+      const host = this.containerAt(cx, cy, this.drag.id);
+      const dragged = this.state.findElement(this.drag.id);
+      this.dropContainerId.set(host && dragged && this.state.canNestInto(dragged, host) ? host.id : null);
     }
     this.state.patchElement(this.drag.id, {
       x: round(Math.max(0, newXpx / z)),

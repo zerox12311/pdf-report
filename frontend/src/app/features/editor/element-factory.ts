@@ -1,8 +1,8 @@
-import { BarcodeSymbology, NewTemplateElement, TableCell, TemplateElement, emptyCell } from '../../core/models/template.model';
+import { BarcodeSymbology, NewTemplateElement, TableCell, TemplateElement, emptyCell, newId } from '../../core/models/template.model';
 
 /** 元件盤可新增的元素動作 */
 export type PaletteAction =
-  | 'text' | 'placeholder' | 'image' | 'table' | 'rect' | 'line' | 'barcode' | 'cvs3' | 'container';
+  | 'text' | 'placeholder' | 'image' | 'table' | 'rect' | 'line' | 'barcode' | 'cvs3' | 'container' | 'list';
 
 /** 元件盤「條碼」的預設值（新元素與拖進儲存格共用，避免兩處 drift） */
 const BARCODE_DEFAULTS = {
@@ -114,6 +114,15 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
       return [{
         type: 'container', x: 40, y: baseY, width: 240, height: 130,
         title: '區塊', borderWidth: 1, borderColor: '#94a3b8', fillColor: null, children: [],
+      }];
+    case 'list':
+      // 重複區塊：綁陣列 key，內含一筆的自由版面。預設放一個相對 key 的資料欄位起手。
+      return [{
+        type: 'list', x: 40, y: baseY, width: 320, height: 28, key: 'items', gap: 4,
+        children: [{
+          id: newId(), type: 'placeholder', x: 8, y: 5, width: 160, height: 18,
+          key: 'name', sample: '範例', fontSize: 12, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
+        }],
       }];
   }
 }

@@ -1,9 +1,9 @@
 import { Injectable, computed, signal } from '@angular/core';
 import {
-  CellBorders, ContainerElement, DocSection, ElementPatch, NewTemplateElement, PageSettings,
+  CellBorders, ChildHostElement, ContainerElement, DocSection, ElementPatch, NewTemplateElement, PageSettings,
   TableCell, TableElement, TableRepeat, TemplateDoc, TemplateElement, ValidationField,
   ValidationFieldType, ValidationSpec, cloneWithNewIds, emptyCell,
-  emptyTemplate, newId, normalizeTemplate, sectionPage,
+  emptyTemplate, isChildHost, newId, normalizeTemplate, sectionPage,
 } from '../../core/models/template.model';
 import { setPath } from '../../core/utils/set-path';
 
@@ -224,14 +224,26 @@ export class EditorStateService {
     return { ...t, sections: t.sections.map(s => ({ ...s, elements: fn(s.elements) })) };
   }
 
-  /** 元素（或其父容器）所在的節 id；找不到時回目前節 */
+  /** 元素（含任意深度子樹）所在的節 id；找不到時回目前節 */
   private listKeyOf(id: string): string {
-    const hit = (els: TemplateElement[]) => els.some(e =>
-      e.id === id || (e.type === 'container' && e.children.some(c => c.id === id)));
+    const hit = (els: TemplateElement[]): boolean => els.some(e =>
+      e.id === id || (isChildHost(e) && hit(e.children)));
     for (const s of this.template().sections) {
       if (hit(s.elements)) return s.id;
     }
     return this.activeSection().id;
+  }
+
+  /** 元素的絕對座標（累加父容器鏈；頂層元素 = 自身座標）；找不到回 null */
+  absPosOf(id: string): { x: number; y: number } | null {
+    const el = this.findElement(id);
+    if (!el) return null;
+    let x = el.x, y = el.y;
+    for (let p = this.parentOf(id); p; p = this.parentOf(p.id)) {
+      x += p.x;
+      y += p.y;
+    }
+    return { x, y };
   }
 
   /** 目前節的 id */
@@ -252,8 +264,8 @@ export class EditorStateService {
     for (const list of this.allLists(this.template())) {
       for (const el of list) {
         if (el.id === id) return el;
-        if (el.type === 'container') {
-          const child = el.children.find(c => c.id === id);
+        if (isChildHost(el)) {
+          const child = this.findInChildren(el, id);
           if (child) return child;
         }
       }
@@ -261,14 +273,47 @@ export class EditorStateService {
     return null;
   }
 
-  /** 元素所屬容器；頂層元素回 null */
-  parentOf(id: string): ContainerElement | null {
-    for (const list of this.allLists(this.template())) {
-      for (const el of list) {
-        if (el.type === 'container' && el.children.some(c => c.id === id)) return el;
+  /** 在容器/重複區塊的子樹遞迴尋找（支援 list 兩層巢狀） */
+  private findInChildren(host: ChildHostElement, id: string): TemplateElement | null {
+    for (const c of host.children) {
+      if (c.id === id) return c;
+      if (isChildHost(c)) {
+        const deep = this.findInChildren(c, id);
+        if (deep) return deep;
       }
     }
     return null;
+  }
+
+  /** 元素所屬容器/重複區塊；頂層元素回 null（支援 list 兩層巢狀） */
+  parentOf(id: string): ChildHostElement | null {
+    const scan = (els: TemplateElement[]): ChildHostElement | null => {
+      for (const el of els) {
+        if (isChildHost(el)) {
+          if (el.children.some(c => c.id === id)) return el;
+          const deep = scan(el.children);
+          if (deep) return deep;
+        }
+      }
+      return null;
+    };
+    for (const list of this.allLists(this.template())) {
+      const hit = scan(list);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /**
+   * 元素能否放進某容器型元素：
+   *   - 非容器型元素 → 可進任何 container/list。
+   *   - 重複區塊（list）→ 只能進「頂層的 list」形成兩層巢狀（上限）；不進 container、不進已巢狀 list。
+   *   - container → 不進任何容器（維持單層）。
+   */
+  canNestInto(child: TemplateElement, host: ChildHostElement): boolean {
+    if (!isChildHost(child)) return true;
+    if (child.type === 'list' && host.type === 'list') return !this.parentOf(host.id);
+    return false;
   }
 
   load(doc: TemplateDoc) {
@@ -473,9 +518,9 @@ export class EditorStateService {
     const withId = { ...el, id: newId() } as TemplateElement;
     const sel = this.selected();
     const target = sel
-      ? (sel.type === 'container' ? sel : this.parentOf(sel.id))
+      ? (isChildHost(sel) ? sel : this.parentOf(sel.id))
       : null;
-    if (target && withId.type !== 'container') {
+    if (target && this.canNestInto(withId, target)) {
       withId.x = 8;
       // 排在既有子元素下方，避免疊在一起
       withId.y = target.children.length
@@ -509,7 +554,7 @@ export class EditorStateService {
     this.record();
     const withId = { ...el, id: newId() } as TemplateElement;
     const container = containerId ? this.findElement(containerId) : null;
-    if (container?.type === 'container' && withId.type !== 'container') {
+    if (container && isChildHost(container) && this.canNestInto(withId, container)) {
       withId.x = Math.round(Math.max(0, Math.min(Math.max(0, container.width - withId.width), x)));
       withId.y = Math.round(Math.max(0, Math.min(Math.max(0, container.height - withId.height), y)));
       this.patchElement(container.id, {
@@ -528,7 +573,8 @@ export class EditorStateService {
     this.record();
     const mapEl = (e: TemplateElement): TemplateElement => {
       if (e.id === id) return { ...e, ...patch } as TemplateElement;
-      if (e.type === 'container' && e.children.some(c => c.id === id)) {
+      // 遞迴進 container/list 子樹（支援 list 兩層巢狀）；無匹配時 map 原樣回傳
+      if (isChildHost(e)) {
         return { ...e, children: e.children.map(mapEl) };
       }
       return e;
@@ -539,28 +585,29 @@ export class EditorStateService {
 
   removeElement(id: string) {
     this.record();
-    this.template.update(t => this.mapLists(t, els => els
+    // 遞迴移除（支援 container / list 巢狀子樹）
+    const strip = (els: TemplateElement[]): TemplateElement[] => els
       .filter(e => e.id !== id)
-      .map(e => (e.type === 'container'
-        ? { ...e, children: e.children.filter(c => c.id !== id) }
-        : e))));
+      .map(e => (isChildHost(e) ? { ...e, children: strip(e.children) } as TemplateElement : e));
+    this.template.update(t => this.mapLists(t, strip));
     if (this.selectedId() === id) this.select(null);
     this.dirty.set(true);
   }
 
-  /** 把容器子元素移到頂層（座標轉絕對；留在容器所在的那一頁） */
+  /** 把容器/list 子元素移到頂層（座標轉絕對；留在其所在的那一節）。支援任意深度巢狀。 */
   moveOutOfContainer(id: string) {
     const parent = this.parentOf(id);
     const el = this.findElement(id);
-    if (!parent || !el) return;
+    const abs = this.absPosOf(id);
+    if (!parent || !el || !abs) return;
     this.record();
-    const listKey = this.listKeyOf(parent.id);
-    const moved = { ...el, x: parent.x + el.x, y: parent.y + el.y } as TemplateElement;
-    this.template.update(t => this.pushTo(
-      this.mapLists(t, els => els.map(e => (e.id === parent.id
-        ? { ...e, children: (e as ContainerElement).children.filter(c => c.id !== id) } as TemplateElement
-        : e))),
-      listKey, moved));
+    const listKey = this.listKeyOf(id);
+    const moved = { ...el, x: abs.x, y: abs.y } as TemplateElement;
+    // 從任意深度子樹遞迴移除，再放到節頂層
+    const strip = (els: TemplateElement[]): TemplateElement[] => els
+      .filter(e => e.id !== id)
+      .map(e => (isChildHost(e) ? { ...e, children: strip(e.children) } as TemplateElement : e));
+    this.template.update(t => this.pushTo(this.mapLists(t, strip), listKey, moved));
     this.select(id);
     this.dirty.set(true);
   }
@@ -587,9 +634,9 @@ export class EditorStateService {
     const copy = cloneWithNewIds(this.clipboard);
     const sel = this.selected();
     const target = sel
-      ? (sel.type === 'container' ? sel : this.parentOf(sel.id))
+      ? (isChildHost(sel) ? sel : this.parentOf(sel.id))
       : null;
-    if (target && copy.type !== 'container') {
+    if (target && !isChildHost(copy)) {
       copy.x = Math.round(Math.max(0, Math.min(Math.max(0, target.width - copy.width), copy.x - target.x + 12)));
       copy.y = Math.round(Math.max(0, Math.min(Math.max(0, target.height - copy.height), copy.y - target.y + 12)));
       this.patchElement(target.id, {
@@ -681,29 +728,33 @@ export class EditorStateService {
     return index < 0 ? null : { index, count: list.length };
   }
 
-  /** 把元素移進容器（座標轉為容器相對並夾在範圍內）；容器不能移進容器 */
+  /** 把元素移進容器型元素（container / 重複區塊 list；座標轉為相對並夾在範圍內）。
+   *  是否允許由 canNestInto 決定（container 不巢狀；list 只進頂層 list 成兩層）。 */
   moveIntoContainer(id: string, containerId: string) {
     const el = this.findElement(id);
     const container = this.findElement(containerId);
-    if (!el || !container || container.type !== 'container' || el.type === 'container' || id === containerId) return;
-    const oldParent = this.parentOf(id);
-    if (oldParent?.id === containerId) return;
+    if (!el || !container || !isChildHost(container) || !this.canNestInto(el, container) || id === containerId) return;
+    if (this.parentOf(id)?.id === containerId) return;
+    const elAbs = this.absPosOf(id);
+    const hostAbs = this.absPosOf(containerId);
+    if (!elAbs || !hostAbs) return;
     this.record();
-    const absX = oldParent ? oldParent.x + el.x : el.x;
-    const absY = oldParent ? oldParent.y + el.y : el.y;
+    // 目標容器可能是巢狀 list（座標相對外層）→ 用絕對座標鏈換算相對位置
     const moved = {
       ...el,
-      x: Math.round(Math.max(0, Math.min(Math.max(0, container.width - el.width), absX - container.x))),
-      y: Math.round(Math.max(0, Math.min(Math.max(0, container.height - el.height), absY - container.y))),
+      x: Math.round(Math.max(0, Math.min(Math.max(0, container.width - el.width), elAbs.x - hostAbs.x))),
+      y: Math.round(Math.max(0, Math.min(Math.max(0, container.height - el.height), elAbs.y - hostAbs.y))),
     } as TemplateElement;
-    this.template.update(t => this.mapLists(t, els => els
+    // 從任意位置（頂層或某容器/list 的子樹）移除 id，並插入到 containerId 的 children
+    const relocate = (list: TemplateElement[]): TemplateElement[] => list
       .filter(e => e.id !== id)
       .map(e => {
-        if (e.type !== 'container') return e;
-        let children = e.children.filter(c => c.id !== id);
+        if (!isChildHost(e)) return e;
+        let children = relocate(e.children);
         if (e.id === containerId) children = [...children, moved];
         return { ...e, children } as TemplateElement;
-      })));
+      });
+    this.template.update(t => this.mapLists(t, relocate));
     this.select(id);
     this.dirty.set(true);
   }
@@ -1060,9 +1111,35 @@ export class EditorStateService {
     const data: Record<string, unknown> = {};
     // 全數字的範例值以數字型別輸出（宿主看到的範例才是正確示範；引擎兩者都吃）
     const coerce = (s: string): unknown => (/^-?\d+(\.\d+)?$/.test(s) ? Number(s) : s);
+    // 重複區塊（list）：產 2 筆範例，子元素相對 key 寫進 prefixkey[i]；巢狀 list 遞迴。
+    // $parent. 子元素跳過（指向外層當筆，已由外層產生）。
+    const listSample = (list: TemplateElement & { type: 'list' }, prefix: string) => {
+      for (let i = 0; i < 2; i++) {
+        const base = `${prefix}${list.key}[${i}]`;
+        for (const c of list.children ?? []) {
+          if (c.type === 'placeholder' && c.key && !c.key.startsWith('$')) {
+            setPath(data, `${base}.${c.key}`, coerce((c.sample || '範例') + (i + 1)));
+          } else if (c.type === 'text' && c.content.includes('{{')) {
+            for (const m of c.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g)) {
+              if (m[1].startsWith('$')) continue;
+              const fmt = m[2] ?? '';
+              const s = fmt === 'comma' || fmt === 'twUpper' ? '12345' : fmt.startsWith('rocDate') ? '2026-07-20' : '範例';
+              setPath(data, `${base}.${m[1]}`, coerce(s));
+            }
+          } else if (c.type === 'barcode' && c.key && !c.key.startsWith('$')) {
+            setPath(data, `${base}.${c.key}`, c.sample || '123456');
+          } else if (c.type === 'image' && c.key && !c.key.startsWith('$') && c.sample) {
+            setPath(data, `${base}.${c.key}`, c.sample);
+          } else if (c.type === 'list') {
+            listSample(c, `${base}.`);
+          }
+        }
+      }
+    };
     const all = this.allLists(this.template()).flat().flatMap(e =>
       e.type === 'container' ? [e as TemplateElement, ...e.children] : [e]);
     for (const el of all) {
+      if (el.type === 'list') { listSample(el, ''); continue; }
       // $ 開頭是引擎保留 key（$page/$pages），不放進範例資料
       if (el.type === 'placeholder' && el.key && !el.key.startsWith('$')) {
         setPath(data, el.key, coerce(el.sample || '範例'));
@@ -1231,9 +1308,25 @@ export class EditorStateService {
       }
     };
 
+    // 重複區塊（list）：綁的陣列 → array；子元素相對 key → key[].欄位；巢狀 list 遞迴。
+    const listFields = (list: TemplateElement & { type: 'list' }, prefix: string) => {
+      const base = `${prefix}${list.key}`;
+      add(base, 'array');
+      for (const c of list.children ?? []) {
+        if (c.type === 'placeholder' && c.key && !c.key.startsWith('$')) add(`${base}[].${c.key}`, typeForFormat(c.format));
+        else if (c.type === 'barcode' && c.key && !c.key.startsWith('$')) add(`${base}[].${c.key}`, 'string');
+        else if (c.type === 'image' && c.key && !c.key.startsWith('$')) add(`${base}[].${c.key}`, 'string');
+        else if (c.type === 'text') {
+          for (const m of c.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g)) {
+            if (!m[1].startsWith('$')) add(`${base}[].${m[1]}`, typeForFormat(m[2]));
+          }
+        } else if (c.type === 'list') listFields(c, `${base}[].`);
+      }
+    };
     const all = this.allLists(this.template()).flat().flatMap(e =>
       e.type === 'container' ? [e as TemplateElement, ...e.children] : [e]);
     for (const el of all) {
+      if (el.type === 'list') { listFields(el, ''); continue; }
       if (el.type === 'placeholder' && el.key) addKey(el.key, typeForFormat(el.format));
       if (el.type === 'text') scanText(el.content);
       if (el.type === 'barcode' && el.key) addKey(el.key, 'string');

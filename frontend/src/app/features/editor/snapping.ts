@@ -1,4 +1,4 @@
-import { ContainerElement, PageSettings, TemplateElement } from '../../core/models/template.model';
+import { ChildHostElement, PageSettings, TemplateElement } from '../../core/models/template.model';
 
 /** 對齊吸附距離（px） */
 export const SNAP_THRESHOLD = 5;
@@ -77,7 +77,7 @@ export function sizeTargets(
 
 /** 容器內的對齊目標（容器內 px 座標）：兄弟元素與容器邊界/中線。 */
 export function containerTargets(
-  parent: ContainerElement,
+  parent: ChildHostElement,
   zoom: number,
   excludeId: string,
 ): { xs: number[]; ys: number[] } {

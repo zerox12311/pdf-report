@@ -1,6 +1,6 @@
 import { EditorStateService } from './editor-state.service';
 import {
-  ContainerElement, TableElement, TextElement,
+  ContainerElement, ListElement, TableElement, TextElement,
 } from '../../core/models/template.model';
 
 function textEl(over: Partial<TextElement> = {}): Omit<TextElement, 'id'> {
@@ -16,6 +16,10 @@ function containerEl(): Omit<ContainerElement, 'id'> {
     type: 'container', x: 40, y: 40, width: 200, height: 120,
     title: '區塊', borderWidth: 1, borderColor: '#000', fillColor: null, children: [],
   };
+}
+
+function listEl(): Omit<ListElement, 'id'> {
+  return { type: 'list', x: 40, y: 40, width: 200, height: 30, key: 'items', children: [] };
 }
 
 describe('EditorStateService', () => {
@@ -261,6 +265,57 @@ describe('EditorStateService', () => {
     const cid2 = state.selectedId()!;
     state.moveIntoContainer(cid2, cid);
     expect((state.findElement(cid) as ContainerElement).children.length).toBe(1);
+  });
+
+  it('重複區塊(list)與容器一樣：元素可拉進、也可拉出（來回）', () => {
+    state.addElement(listEl() as any);
+    const lid = state.selectedId()!;
+    state.select(null);
+    state.addElement(textEl() as any);
+    const tid = state.selectedId()!;
+    state.patchElement(tid, { x: 60, y: 70 });
+    // 拉進 list
+    state.moveIntoContainer(tid, lid);
+    const list = state.findElement(lid) as ListElement;
+    expect(list.children.length).toBe(1);
+    expect(list.children[0].x).toBe(20); // 60 - 40（轉相對）
+    expect(state.visibleElements().length).toBe(1); // 頂層只剩 list
+    expect(state.parentOf(tid)?.id).toBe(lid);
+    // 再拉出 → 回頂層（座標轉絕對）
+    state.moveOutOfContainer(tid);
+    expect((state.findElement(lid) as ListElement).children.length).toBe(0);
+    expect(state.parentOf(tid)).toBeNull();
+    expect(state.visibleElements().length).toBe(2);
+  });
+
+  it('巢狀 list（子明細）的元素也能拉出→再拉回（絕對座標鏈換算）', () => {
+    state.addElement(listEl() as any);            // 外層 list @ (40,40)
+    const outerId = state.selectedId()!;
+    state.addElement(listEl() as any);            // 外層被選著 → 巢狀一個 list 進去
+    const nestedId = state.selectedId()!;
+    expect(state.parentOf(nestedId)?.id).toBe(outerId);
+    state.patchElement(nestedId, { x: 10, y: 20 }); // nested 絕對 = (50,60)
+    // 放一個 text 到頂層（絕對 55,65），移進 nested → 相對 (5,5)
+    state.select(null);
+    state.addElement(textEl() as any);
+    const tid = state.selectedId()!;
+    state.patchElement(tid, { x: 55, y: 65 });
+    state.moveIntoContainer(tid, nestedId);
+    expect(state.parentOf(tid)?.id).toBe(nestedId);
+    let nested = state.findElement(nestedId) as ListElement;
+    expect(nested.children[0].x).toBe(5);
+    expect(nested.children[0].y).toBe(5);
+    // 拉出 → 回頂層、座標還原成絕對 (55,65)
+    state.moveOutOfContainer(tid);
+    expect(state.parentOf(tid)).toBeNull();
+    expect(state.findElement(tid)!.x).toBe(55);
+    expect(state.findElement(tid)!.y).toBe(65);
+    // 再拉回 nested → 又變回相對 (5,5)
+    state.moveIntoContainer(tid, nestedId);
+    expect(state.parentOf(tid)?.id).toBe(nestedId);
+    nested = state.findElement(nestedId) as ListElement;
+    expect(nested.children.length).toBe(1);
+    expect(nested.children[0].x).toBe(5);
   });
 
   it('load 補齊舊樣板缺欄位，並把舊格式遷移成節', () => {

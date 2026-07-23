@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, HostListener, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { ELEMENT_META, TemplateElement, emptyTemplate } from '../../core/models/template.model';
+import { ELEMENT_META, TemplateElement, emptyTemplate, isChildHost } from '../../core/models/template.model';
 import { FontService } from '../../core/services/font.service';
 import { HostBridgeService } from '../../core/services/host-bridge.service';
 import { TemplateApiService } from '../../core/services/template-api.service';
@@ -393,6 +393,7 @@ export class EditorPageComponent {
       items: [
         { icon: '▦', label: '表格', action: 'table' },
         { icon: '▣', label: '容器', action: 'container' },
+        { icon: '⧉', label: '重複區塊', action: 'list' },
       ],
     },
     {
@@ -431,16 +432,16 @@ export class EditorPageComponent {
     }
     for (const g of groups) {
       g.items.sort((a, b) => a.el.y - b.el.y);
-      // 容器子元素巢狀插入
+      // 容器/重複區塊的子元素巢狀插入（list 可再巢狀一層）
       const withChildren: Item[] = [];
-      for (const item of g.items) {
+      const pushWithKids = (item: Item) => {
         withChildren.push(item);
-        if (item.el.type === 'container') {
-          const kids = [...item.el.children].sort((a, b) => a.y - b.y)
-            .map(c => ({ el: c, icon: this.iconOf(c), label: this.labelOf(c), depth: 1 }));
-          withChildren.push(...kids);
+        if (isChildHost(item.el)) {
+          [...item.el.children].sort((a, b) => a.y - b.y)
+            .forEach(c => pushWithKids({ el: c, icon: this.iconOf(c), label: this.labelOf(c), depth: item.depth + 1 }));
         }
-      }
+      };
+      for (const item of g.items) pushWithKids(item);
       g.items = withChildren;
     }
     return groups;
@@ -463,6 +464,7 @@ export class EditorPageComponent {
       case 'line': return '線條';
       case 'barcode': return `條碼 ${el.symbology}${el.key ? ' {{' + el.key + '}}' : ''}`;
       case 'container': return `容器 ${el.title || ''}（${el.children.length}）`;
+      case 'list': return `重複區塊 ↻${el.key || '?'}（${el.children.length}）`;
     }
   }
 

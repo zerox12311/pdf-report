@@ -228,6 +228,56 @@ func TestCellInterpolationAndTruncate(t *testing.T) {
 	}
 }
 
+func TestListOverTallBlockWarning(t *testing.T) {
+	// 重複區塊單一 block 比整頁還高：不靜默——應警告（內容會被裁切）。
+	tpl := `{"name":"t","page":{"width":400,"height":200,"headerHeight":0,"footerHeight":0},
+	"elements":[{"type":"list","id":"L","x":20,"y":20,"width":300,"height":300,"key":"rows",
+		"children":[{"type":"text","id":"c","x":0,"y":0,"width":200,"height":20,"content":"x","fontSize":12,"color":"#000000","align":"left","lineHeight":1.2,"bold":false}]}]}`
+	var doc TemplateDoc
+	if err := json.Unmarshal([]byte(tpl), &doc); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	_, warnings, err := e.Render(&doc, map[string]any{"rows": []any{map[string]any{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "超過內容區") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("超高 block 應警告（不可靜默裁切），got %v", warnings)
+	}
+}
+
+func TestListMissingArrayWarning(t *testing.T) {
+	// 重複區塊綁的陣列 key 不存在：不靜默——應警告。
+	tpl := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[{"type":"list","id":"L","x":20,"y":20,"width":300,"height":24,"key":"orders",
+		"children":[{"type":"placeholder","id":"c","x":0,"y":0,"width":200,"height":18,"key":"name","sample":"?","fontSize":12,"color":"#000000","align":"left","lineHeight":1.2,"bold":false}]}]}`
+	var doc TemplateDoc
+	if err := json.Unmarshal([]byte(tpl), &doc); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	_, warnings, err := e.Render(&doc, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "orders") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("重複區塊缺陣列 key 應警告，got %v", warnings)
+	}
+}
+
 func TestTruncateToWidth(t *testing.T) {
 	// 每字元寬 1，maxWidth 3 → 保留能容納 …（也算 1）的前綴
 	m := func(s string) float64 { return float64(len([]rune(s))) }

@@ -107,6 +107,23 @@ import { ScrubDirective } from './scrub.directive';
             }
             <div class="hint">選取容器時從元件盤新增元素，會直接加進容器；子元素座標相對於容器。跨頁時容器整組不拆分。</div>
           }
+          @case ('list') {
+            <label class="full">資料陣列 key（渲染時對此陣列每筆蓋一次）
+              <input [ngModel]="el.key" (ngModelChange)="patch(el, { key: $event })" placeholder="例：orders（巢狀時用 lines）" />
+            </label>
+            <div class="grid2">
+              <label [appScrub]="el.gap ?? 0" [scrubMin]="0" (scrubChange)="patch(el, { gap: $event })">筆間距（pt）
+                <input type="number" step="1" min="0" [ngModel]="el.gap ?? 0" (ngModelChange)="patch(el, { gap: numMin(num($event), 0) })" /></label>
+              <label>無資料範例筆數
+                <input type="number" step="1" min="1" [ngModel]="el.sampleCount ?? 1" (ngModelChange)="patch(el, { sampleCount: numMin(num($event), 1) })" /></label>
+            </div>
+            <div class="hint">
+              選取重複區塊時從元件盤新增元素，會直接加進「一筆」的版面；子元素座標相對於區塊左上角，
+              <b>「高」＝一筆的高度</b>。子元素的 key <b>相對當筆陣列元素</b>（例：<b>name</b>、<b>qty</b>），
+              要取外層當筆用 <b>$parent.欄位</b>；全域彙總 <b>$sum(路徑)</b> 仍對整份資料。
+              巢狀明細：把另一個「重複區塊」放進來（在畫布內拖入），綁子陣列 key（例 lines）。上限兩層。
+            </div>
+          }
           @case ('image') {
             <div class="sub">圖片來源（三選一；優先序：動態 key > 固定連結 > 上傳）</div>
             <button class="merge" (click)="pickElementImage(el)">{{ el.assetId ? '更換上傳圖片…' : '上傳圖片…' }}</button>
