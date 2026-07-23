@@ -142,6 +142,8 @@ export interface ElementBase {
   y: number;
   width: number;
   height: number;
+  /** 繞元素中心旋轉角度（度，順時針）；純視覺，版面仍用未旋轉的框 */
+  rotation?: number;
   /** 條件顯示：visibleKey 空 = 永遠顯示；隱藏時保留版面空間 */
   visibleKey?: string;
   visibleOp?: 'truthy' | 'falsy' | 'eq' | 'ne';
@@ -178,6 +180,8 @@ export interface TextStyle {
   align: 'left' | 'center' | 'right';
   lineHeight: number;  // 倍數
   bold: boolean;
+  /** 底線（text/placeholder；引擎原生渲染） */
+  underline?: boolean;
   /** 外框與底色（選填） */
   borderWidth?: number;
   borderColor?: string;
@@ -563,7 +567,11 @@ export function emptyTemplate(): TemplateDoc {
     id: '',
     name: '未命名樣板',
     version: 1,
-    page: { size: 'A4', orientation: 'portrait', ...A4, headerHeight: 0, footerHeight: 0 },
+    page: {
+      size: 'A4', orientation: 'portrait', ...A4, headerHeight: 0, footerHeight: 0,
+      // 新樣板預設給 Word「標準」邊界（72pt = 2.54cm），讓印刷邊界一開始就看得到、可調
+      marginTop: 72, marginRight: 72, marginBottom: 72, marginLeft: 72,
+    },
     sections: [{
       id: newId(), name: '內頁', kind: 'flow', page: null,
       headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null, elements: [],

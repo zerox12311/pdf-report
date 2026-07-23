@@ -195,7 +195,7 @@ func (c *drawCtx) applyWrapHeights(t *Element, rows []ExpandedRow) {
 			if cell.FontSize > 0 {
 				fs = cell.FontSize
 			}
-			if err := c.setFont(t.FontFamily, fs, cell.Bold); err != nil {
+			if err := c.setFont(t.FontFamily, fs, cell.Bold, false); err != nil {
 				continue
 			}
 			cs := max(1, cell.ColSpan)
@@ -315,7 +315,7 @@ func (l *layout) applyGrowth(meas *drawCtx) {
 			// 缺 key 留空（不用設計期 sample 冒充真資料）；與 869 繪製處必須一致，否則 autoGrow 量測高度對不上
 			text = formatValue(meas.resolveKey(el.Key, ""), el.Format)
 		}
-		if err := meas.setFont(el.FontFamily, el.FontSize, el.Bold); err != nil {
+		if err := meas.setFont(el.FontFamily, el.FontSize, el.Bold, el.Underline); err != nil {
 			return 0
 		}
 		lines := WrapText(text, el.Width-2*el.Padding, meas.measure)
@@ -550,7 +550,12 @@ func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, to
 			}
 			for _, fr := range l.fragments {
 				if fr.pg == p && keep(fr.el) && ctx.isVisible(fr.el) {
-					if err := ctx.drawTableFragment(fr.el, fr.y, fr.rows); err != nil {
+					// 重複列表格走 fragment 路徑（非 drawElement），旋轉需在此比照套用，
+					// 繞該分片的框中心（版面仍以未旋轉框計算）
+					fr := fr
+					if err := ctx.withRotation(fr.el.Rotation,
+						fr.el.X+sumFloats(fr.el.ColumnWidths)/2, fr.y+sumHeights(fr.rows)/2,
+						func() error { return ctx.drawTableFragment(fr.el, fr.y, fr.rows) }); err != nil {
 						return err
 					}
 				}
@@ -772,16 +777,21 @@ func parseColor(hex string) (uint8, uint8, uint8) {
 	return uint8(r), uint8(g), uint8(b)
 }
 
-func (c *drawCtx) setFont(family string, size float64, bold bool) error {
+func (c *drawCtx) setFont(family string, size float64, bold, underline bool) error {
+	// gopdf 樣式字串：底線（U）為原生裝飾，套在 regular/bold 字型上；粗體另走 -bold 字型檔
+	style := ""
+	if underline {
+		style = "U"
+	}
 	if _, ok := fontFiles[family]; ok {
 		if bold {
 			family += "-bold"
 		}
-		return c.pdf.SetFont(family, "", size)
+		return c.pdf.SetFont(family, style, size)
 	}
 	// 使用者匯入字型（以字型 id 為家族名；無粗體變體，粗體沿用同檔）
 	if family != "" {
-		if err := c.pdf.SetFont(family, "", size); err == nil {
+		if err := c.pdf.SetFont(family, style, size); err == nil {
 			return nil
 		}
 	}
@@ -789,7 +799,7 @@ func (c *drawCtx) setFont(family string, size float64, bold bool) error {
 	if bold {
 		f += "-bold"
 	}
-	return c.pdf.SetFont(f, "", size)
+	return c.pdf.SetFont(f, style, size)
 }
 
 func (c *drawCtx) measure(s string) float64 {
@@ -860,9 +870,24 @@ func (c *drawCtx) isVisible(el *Element) bool {
 	}
 }
 
+// withRotation 若 rot != 0，繞 (cx,cy) 旋轉座標系執行 fn（gopdf q/Q，可正確巢狀）。
+// 角度取負：rotation 定義為順時針（與前端畫布 CSS rotate 一致），gopdf Rotate 正角為逆時針。
+func (c *drawCtx) withRotation(rot, cx, cy float64, fn func() error) error {
+	if rot != 0 {
+		c.pdf.Rotate(-rot, cx, cy)
+		defer c.pdf.RotateReset()
+	}
+	return fn()
+}
+
 func (c *drawCtx) drawElement(el *Element, y float64) error {
 	if !c.isVisible(el) {
 		return nil
+	}
+	// 繞元素中心旋轉；版面仍以未旋轉框計算
+	if el.Rotation != 0 {
+		c.pdf.Rotate(-el.Rotation, el.X+el.Width/2, y+el.Height/2)
+		defer c.pdf.RotateReset()
 	}
 	switch el.Type {
 	case "text":
@@ -918,7 +943,7 @@ func (c *drawCtx) drawContainer(el *Element, y float64) error {
 		c.pdf.RectFromUpperLeftWithStyle(el.X, y, el.Width, el.Height, style)
 	}
 	if el.Title != "" {
-		if err := c.setFont("sans", 9, true); err != nil {
+		if err := c.setFont("sans", 9, true, false); err != nil {
 			return err
 		}
 		c.pdf.SetTextColor(51, 65, 85)
@@ -955,7 +980,7 @@ func (c *drawCtx) drawTextBlock(el *Element, text string, y float64) error {
 		c.pdf.RectFromUpperLeftWithStyle(el.X, y, el.Width, el.Height, style)
 	}
 
-	if err := c.setFont(el.FontFamily, el.FontSize, el.Bold); err != nil {
+	if err := c.setFont(el.FontFamily, el.FontSize, el.Bold, el.Underline); err != nil {
 		return err
 	}
 	r, g, b := parseColor(el.Color)
@@ -1230,7 +1255,7 @@ func (c *drawCtx) drawWatermark(wm *Watermark, pageW, pageH float64) error {
 	if color == "" {
 		color = "#e5e7eb"
 	}
-	if err := c.setFont("sans", size, true); err != nil {
+	if err := c.setFont("sans", size, true, false); err != nil {
 		return err
 	}
 	r, g, b := parseColor(color)
@@ -1411,7 +1436,7 @@ func (c *drawCtx) drawTableCells(t *Element, y float64, rows []ExpandedRow) erro
 				if cell.FontSize > 0 {
 					fs = cell.FontSize
 				}
-				if err := c.setFont(t.FontFamily, fs, cell.Bold); err != nil {
+				if err := c.setFont(t.FontFamily, fs, cell.Bold, false); err != nil {
 					return err
 				}
 				if cell.Color != "" {
@@ -1526,7 +1551,7 @@ func (c *drawCtx) drawBarcodeRect(symbology, val string, wantText bool, x, y, w,
 		c.pdf.SetStrokeColor(220, 38, 38)
 		c.pdf.SetLineWidth(1)
 		c.pdf.RectFromUpperLeftWithStyle(x, y, w, h, "D")
-		_ = c.setFont("sans", 8, false)
+		_ = c.setFont("sans", 8, false, false)
 		c.pdf.SetTextColor(220, 38, 38)
 		c.pdf.SetXY(x+3, y+12)
 		return c.pdf.Text("條碼編碼失敗: " + err.Error())
@@ -1554,7 +1579,7 @@ func (c *drawCtx) drawBarcodeRect(symbology, val string, wantText bool, x, y, w,
 		return err
 	}
 	if showText {
-		if err := c.setFont("mono", 9, false); err != nil {
+		if err := c.setFont("mono", 9, false, false); err != nil {
 			return err
 		}
 		c.pdf.SetTextColor(0, 0, 0)
@@ -1619,7 +1644,7 @@ func (c *drawCtx) drawTableFragment(t *Element, y float64, rows []ExpandedRow) e
 				text = row.Texts[ci]
 			}
 			if cell != nil && text != "" {
-				if err := c.setFont(t.FontFamily, t.FontSize, cell.Bold); err != nil {
+				if err := c.setFont(t.FontFamily, t.FontSize, cell.Bold, false); err != nil {
 					return err
 				}
 				c.pdf.SetTextColor(0, 0, 0)

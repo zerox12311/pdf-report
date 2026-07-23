@@ -43,6 +43,8 @@
 - **跨頁分片**：每片重畫表頭列（= 重複列之前、扣掉群組首尾列的列）。
 - **儲存格能力**：
   - 類型：text（含插值）／placeholder（key＋sample＋format；**sample 僅供設計期畫布預覽，正式渲染缺 key → 留空並警告，不以 sample 冒充真資料**；與插值行為一致）／image（contain 縮進內距矩形）／barcode（symbology＋showText；內容 = key 綁定或 value 靜態值，與條碼元素同一套繪製）
+  - text/placeholder 支援 underline（gopdf 原生底線，套在 regular/bold 字型上，style 字串 "U"）；粗體走 -bold 字型檔。無 italic 字型檔故不支援斜體。
+  - **旋轉**：`rotation`（度，順時針）繞元素中心旋轉，以 gopdf `Rotate`/`RotateReset`（q/Q，可巢狀）包住繪製（共用 `withRotation`）；引擎傳 `-rotation`（gopdf 正角為逆時針，取負以對齊前端畫布 CSS 的順時針）。一般元素走 drawElement、**重複列表格走 fragment 路徑，兩條都套旋轉**（繞各分片框中心）。版面仍以未旋轉框計算。
   - 合併：colSpan/rowSpan（被蓋住的格不畫）
   - 樣式：逐格字級/文字色/**背景色 fillColor**（底色先畫、框線內容蓋上）/粗體
   - 對齊：align 左/中/右 × vAlign 上/中/下（未設 = 置中）

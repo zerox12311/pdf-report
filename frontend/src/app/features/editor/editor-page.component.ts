@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ViewChild, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ELEMENT_META, TemplateElement, emptyTemplate } from '../../core/models/template.model';
@@ -96,26 +96,54 @@ interface PaletteItem {
           </div>
         </aside>
 
+        <!-- 頁面導覽（HackMD 式）：平常縮成細 bar；未釘選展開為浮層（點外面收回）、釘選則常駐佔版面 -->
+        <div class="navwrap" [class.pinned]="navPinned()" [class.peek]="navOpen() && !navPinned()">
+          <button class="navstrip" (click)="navOpen.set(true)" title="頁面導覽（節／獨立頁）">
+            <span class="navstrip-glyph">▤</span>
+            <span class="navstrip-count">{{ state.template().sections.length }}</span>
+          </button>
+          <div class="navpanel">
+            <div class="navpanel-head">
+              <span class="navpanel-title">頁面</span>
+              <button class="navbtn" [class.on]="navPinned()" (click)="toggleNavPin()"
+                [title]="navPinned() ? '取消釘選' : '釘選（常駐展開）'">📌</button>
+              <button class="navbtn" (click)="collapseNav()" title="收合">‹</button>
+            </div>
+            <div class="navlist">
+              @for (s of state.template().sections; track s.id; let i = $index) {
+                <div class="navitem" [class.active]="state.activeSection().id === s.id"
+                  [class.drop-before]="sectionDropIndex() === i"
+                  draggable="true"
+                  (dragstart)="onSectionDragStart($event, s.id)"
+                  (dragover)="onSectionDragOver($event, i)"
+                  (dragleave)="sectionDropIndex.set(null)"
+                  (drop)="onSectionDrop($event, i)"
+                  (dragend)="clearSectionDrag()"
+                  (click)="switchSection(s.id)"
+                  [title]="s.kind === 'flow' ? '內容節（有頁首/頁尾、自動分頁）' : '獨立頁（單獨一頁）'">
+                  <span class="navnum">{{ i + 1 }}</span>
+                  <span class="navkind">{{ s.kind === 'flow' ? '▤' : '◽' }}</span>
+                  <span class="navname">{{ s.name }}</span>
+                  @if (state.template().sections.length > 1) {
+                    <button class="navdel" title="刪除此節" (click)="removeSectionFromNav($event, s.id, s.name)">✕</button>
+                  }
+                </div>
+              }
+            </div>
+            <div class="navadd">
+              <button (click)="state.addSection('flow')" title="新增內容節（有頁首/頁尾 band、自動分頁）">＋節</button>
+              <button (click)="state.addSection('single')" title="新增獨立頁（如封面/封底）">＋獨立頁</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 中間：分頁（設計 / JSON / 預覽） -->
         <main class="center">
           <div class="tabbar">
             <button [class.on]="tab() === 'design'" (click)="switchTab('design')">設計</button>
-            <button [class.on]="tab() === 'json'" (click)="switchTab('json')">JSON</button>
+            <button [class.on]="tab() === 'json'" (click)="switchTab('json')">樣板JSON</button>
             <button [class.on]="tab() === 'preview'" (click)="switchTab('preview')">預覽</button>
-            <button [class.on]="tab() === 'validation'" (click)="switchTab('validation')">驗證</button>
             <span class="spacer"></span>
-            @if (tab() === 'design') {
-              <div class="surface-switch">
-                @for (s of state.template().sections; track s.id) {
-                  <button [class.on]="state.activeSection().id === s.id" (click)="state.setActiveSection(s.id)"
-                    [title]="s.kind === 'flow' ? '內容節（有頁首/頁尾、自動分頁）' : '獨立頁'">
-                    {{ s.name }}{{ s.kind === 'single' ? ' ◽' : '' }}
-                  </button>
-                }
-                <button class="add" (click)="state.addSection('flow')" title="新增內容節（有頁首/頁尾 band、內容自動分頁）">＋節</button>
-                <button class="add" (click)="state.addSection('single')" title="新增獨立頁（如封面/封底，單獨一頁）">＋獨立頁</button>
-              </div>
-            }
             @if (tab() === 'design' && state.selectedIds().length > 1) {
               <div class="zoom align-group" title="對齊/分佈選取的元素">
                 <button class="zbtn" (click)="state.alignSelected('left')" title="左對齊">⇤</button>
@@ -143,6 +171,8 @@ interface PaletteItem {
                 <button class="zbtn" (click)="zoomBy(0.1)">＋</button>
               </div>
             }
+            <button class="tab-right" [class.on]="tab() === 'validation'" (click)="switchTab('validation')"
+              title="輸入資料驗證（schema）">✓ 驗證</button>
           </div>
           @switch (tab()) {
             @case ('design') { <app-editor-canvas (elementPicked)="rightTab.set('props')" /> }
@@ -220,6 +250,45 @@ interface PaletteItem {
     .node.drop-target { outline: 1.5px dashed #2563eb; outline-offset: -1.5px; }
     .band-name.drop-target { outline: 1.5px dashed #2563eb; outline-offset: -1.5px; border-radius: 4px; }
 
+    /* 頁面導覽（HackMD 式：細 bar 收合／展開／釘選） */
+    .navwrap { position: relative; flex-shrink: 0; display: flex; width: 26px;
+      background: #eef1f5; border-right: 1px solid #cfd6df; }
+    .navwrap.pinned { width: 190px; }
+    .navstrip { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 26px;
+      padding: 8px 0; border: none; background: none; cursor: pointer; color: #64748b; }
+    .navwrap.pinned .navstrip { display: none; }
+    .navstrip:hover { background: #e0e7f1; }
+    .navstrip-glyph { font-size: 14px; }
+    .navstrip-count { font-size: 11px; font-weight: 700; }
+    .navpanel { display: none; flex-direction: column; min-width: 0; }
+    .navwrap.pinned .navpanel { display: flex; width: 100%; }
+    /* 未釘選展開＝浮層蓋在畫布上，不推版面；點外面收回 */
+    .navwrap.peek .navpanel { display: flex; position: absolute; left: 26px; top: 0; bottom: 0; width: 190px;
+      background: #eef1f5; border-right: 1px solid #cfd6df; z-index: 40; box-shadow: 3px 0 10px rgba(0,0,0,.18); }
+    .navpanel-head { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid #d7dde6; }
+    .navpanel-title { flex: 1; font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: .06em; text-transform: uppercase; }
+    .navbtn { border: none; background: none; cursor: pointer; font-size: 12px; padding: 2px 5px; border-radius: 4px; opacity: .55; }
+    .navbtn:hover { background: #dce3ec; opacity: 1; }
+    .navbtn.on { opacity: 1; background: #dbeafe; }
+    .navlist { flex: 1; overflow-y: auto; padding: 4px; }
+    .navitem { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px; cursor: pointer;
+      font-size: 12px; color: #334155; border-top: 2px solid transparent; }
+    .navitem:hover { background: #e3e9f1; }
+    .navitem.active { background: #2563eb; color: #fff; }
+    .navitem.drop-before { border-top-color: #2563eb; }
+    .navnum { width: 15px; text-align: center; font-weight: 700; opacity: .7; flex-shrink: 0; }
+    .navkind { flex-shrink: 0; }
+    .navname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .navdel { visibility: hidden; border: none; background: none; cursor: pointer; color: inherit;
+      font-size: 11px; padding: 0 2px; flex-shrink: 0; border-radius: 4px; }
+    .navitem:hover .navdel { visibility: visible; }
+    .navdel:hover { background: rgba(220,38,38,.15); color: #dc2626; }
+    .navitem.active .navdel:hover { background: rgba(255,255,255,.25); color: #fff; }
+    .navadd { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-top: 1px solid #d7dde6; }
+    .navadd button { font-size: 12px; padding: 5px; border: 1px solid #c7d2e8; background: #fff; border-radius: 6px;
+      cursor: pointer; color: #2563eb; }
+    .navadd button:hover { background: #eef2fb; }
+
     /* 中間 */
     .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     .tabbar { display: flex; align-items: center; background: #e8ecf1; border-bottom: 1px solid #cfd6df; padding: 0 8px; }
@@ -227,6 +296,8 @@ interface PaletteItem {
       color: #475569; border-bottom: 2px solid transparent; }
     .tabbar button.on { color: #1d4ed8; border-bottom-color: #1d4ed8; background: #f8fafc; font-weight: 600; }
     .tabbar .spacer { flex: 1; }
+    /* 驗證分頁放右側（與檢視分頁區隔）；有一條左分隔線 */
+    .tabbar .tab-right { margin-left: 10px; border-left: 1px solid #cfd6df; }
     .tabbar .zoom { font-size: 12px; color: #475569; display: flex; align-items: center; gap: 4px; padding-right: 4px; }
     .tabbar select { padding: 3px; border-radius: 5px; }
     .zbtn { border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 5px; width: 22px; height: 22px;
@@ -238,12 +309,6 @@ interface PaletteItem {
     .align-group .sep { width: 1px; height: 16px; background: #c3cad4; margin: 0 3px; display: inline-block; }
     .zval { min-width: 42px; text-align: center; cursor: pointer; font-variant-numeric: tabular-nums; }
     .zval:hover { color: #1d4ed8; }
-    .surface-switch { display: flex; gap: 2px; margin-right: 12px; background: #dbe2ea; border-radius: 7px; padding: 2px; }
-    .surface-switch button { border: none; background: none; padding: 3px 12px; font-size: 12px; cursor: pointer;
-      color: #475569; border-radius: 5px; }
-    .surface-switch button.on { background: #fff; color: #1d4ed8; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-    .surface-switch button.add { color: #64748b; font-weight: 600; }
-    .surface-switch button.add:hover { color: #1d4ed8; }
 
     .json-tab { flex: 1; display: flex; flex-direction: column; padding: 10px; gap: 8px; min-height: 0; background: #eef1f5; }
     .json-tab textarea { flex: 1; font-family: monospace; font-size: 12px; border: 1px solid #ccc;
@@ -271,6 +336,46 @@ export class EditorPageComponent {
   showIntegration = signal(false);
   rightTab = signal<'props' | 'data'>('props');
   tab = signal<'design' | 'json' | 'preview' | 'validation'>('design');
+
+  // ---- 頁面導覽（節/獨立頁）：HackMD 式收合/釘選 ----
+  navPinned = signal(false);
+  navOpen = signal(false);
+  sectionDropIndex = signal<number | null>(null);
+  private dragSectionId: string | null = null;
+
+  toggleNavPin() { this.navPinned.set(!this.navPinned()); }
+  collapseNav() { this.navOpen.set(false); this.navPinned.set(false); }
+  /** 切換編輯的節；未釘選時切完自動收回（peek 模式） */
+  switchSection(id: string) {
+    this.state.setActiveSection(id);
+    if (!this.navPinned()) this.navOpen.set(false);
+  }
+  onSectionDragStart(e: DragEvent, id: string) {
+    this.dragSectionId = id;
+    e.dataTransfer?.setData('text/plain', id);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  }
+  onSectionDragOver(e: DragEvent, index: number) {
+    if (!this.dragSectionId) return;
+    e.preventDefault();
+    this.sectionDropIndex.set(index);
+  }
+  onSectionDrop(e: DragEvent, index: number) {
+    e.preventDefault();
+    if (this.dragSectionId) this.state.reorderSection(this.dragSectionId, index);
+    this.clearSectionDrag();
+  }
+  clearSectionDrag() {
+    this.dragSectionId = null;
+    this.sectionDropIndex.set(null);
+  }
+  /** 從導覽面板刪除節（確認後；元素一併刪除）；不觸發切換 */
+  removeSectionFromNav(e: Event, id: string, name: string) {
+    e.stopPropagation();
+    if (confirm(`刪除節「${name}」？此節上的元素會一併刪除。`)) {
+      this.state.removeSection(id);
+    }
+  }
   jsonText = signal('');
   jsonError = signal<string | null>(null);
 
@@ -380,6 +485,15 @@ export class EditorPageComponent {
       }).catch(() => this.state.load(emptyTemplate()));
     }
     this.bridge.notify('editor-ready', id === 'new' ? null : id);
+  }
+
+  /** 頁面導覽未釘選展開（peek）時，點面板外面就收回（HostListener 跑在 zone 內，會觸發變更偵測） */
+  @HostListener('document:pointerdown', ['$event'])
+  onDocPointerDown(e: Event) {
+    if (this.navOpen() && !this.navPinned()
+      && !(e.target as Element)?.closest?.('.navwrap')) {
+      this.navOpen.set(false);
+    }
   }
 
   switchTab(tab: 'design' | 'json' | 'preview' | 'validation') {

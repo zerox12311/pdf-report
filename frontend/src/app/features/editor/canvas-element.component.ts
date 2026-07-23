@@ -17,6 +17,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
               [style.fontSize.px]="el.fontSize * z()" [style.lineHeight]="el.lineHeight"
               [style.color]="el.color" [style.fontFamily]="fontCssOf(el.fontFamily)"
               [style.textAlign]="el.align" [style.fontWeight]="el.bold ? 700 : 400"
+              [style.textDecoration]="el.underline ? 'underline' : null"
               (pointerdown)="$event.stopPropagation()" (dblclick)="$event.stopPropagation()"
               (keydown)="onSelfEditKey($event, true)"
               (blur)="commitSelfEdit($any($event.target).value)"></textarea>
@@ -25,6 +26,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
               [style.lineHeight]="el.lineHeight" [style.color]="el.color"
               [style.fontFamily]="fontCssOf(el.fontFamily)"
               [style.textAlign]="el.align" [style.fontWeight]="el.bold ? 700 : 400"
+              [style.textDecoration]="el.underline ? 'underline' : null"
               [style.border]="boxBorder(el)" [style.background]="el.fillColor ?? 'transparent'"
               [style.padding.px]="(el.padding ?? 0) * z()"
               (dblclick)="startSelfEdit($event)"
@@ -46,6 +48,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
               [style.lineHeight]="el.lineHeight" [style.color]="el.color"
               [style.fontFamily]="fontCssOf(el.fontFamily)"
               [style.textAlign]="el.align" [style.fontWeight]="el.bold ? 700 : 400"
+              [style.textDecoration]="el.underline ? 'underline' : null"
               [style.border]="boxBorder(el)"
               [style.padding.px]="(el.padding ?? 0) * z()"
               [title]="phLabel(el.key) + '——雙擊編輯變數綁定'"

@@ -201,6 +201,19 @@ export class EditorStateService {
     this.dirty.set(true);
   }
 
+  /** 節排序：把 id 移到 toIndex 位置（拖曳重排用） */
+  reorderSection(id: string, toIndex: number) {
+    const secs = [...this.template().sections];
+    const from = secs.findIndex(s => s.id === id);
+    const to = Math.max(0, Math.min(toIndex, secs.length - 1));
+    if (from < 0 || from === to) return;
+    this.record();
+    const [moved] = secs.splice(from, 1);
+    secs.splice(to, 0, moved);
+    this.template.update(t => ({ ...t, sections: secs }));
+    this.dirty.set(true);
+  }
+
   /** 所有節的頂層清單 */
   private allLists(t: TemplateDoc): TemplateElement[][] {
     return t.sections.map(s => s.elements);

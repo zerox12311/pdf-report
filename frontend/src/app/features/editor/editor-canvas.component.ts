@@ -64,6 +64,11 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
           @if (m.right > 0) { <div class="mguide mg-v" [style.left.px]="(pageW() - m.right) * z()"></div> }
           @if (m.top > 0) { <div class="mguide mg-h" [style.top.px]="modelToVisualY(m.top)"></div> }
           @if (m.bottom > 0) { <div class="mguide mg-h" [style.top.px]="modelToVisualY(pageH() - m.bottom)"></div> }
+          <!-- 尺規上的邊界標記（Word 式，可拖曳；一律顯示以利發現） -->
+          <div class="mmark mmark-h" [style.left.px]="m.left * z()" title="拖曳調整左邊界" (pointerdown)="onMarginDown($event, 'left')"></div>
+          <div class="mmark mmark-h" [style.left.px]="(pageW() - m.right) * z()" title="拖曳調整右邊界" (pointerdown)="onMarginDown($event, 'right')"></div>
+          <div class="mmark mmark-v" [style.top.px]="modelToVisualY(m.top)" title="拖曳調整上邊界" (pointerdown)="onMarginDown($event, 'top')"></div>
+          <div class="mmark mmark-v" [style.top.px]="modelToVisualY(pageH() - m.bottom)" title="拖曳調整下邊界" (pointerdown)="onMarginDown($event, 'bottom')"></div>
         }
 
         <!-- 對齊輔助線 -->
@@ -102,6 +107,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             [style.top.px]="modelToVisualY(el.y)"
             [style.width.px]="el.width * z()"
             [style.height.px]="elHeight(el) * z()"
+            [style.transform]="el.rotation ? 'rotate(' + el.rotation + 'deg)' : null"
             (pointerdown)="onPointerDown($event, el, 'move')"
             (contextmenu)="onElementMenu($event, el, null)"
           >
@@ -152,6 +158,11 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
               }
             }
             @if (el.id === state.selectedId() && state.selectedIds().length <= 1) {
+              <!-- 旋轉感應區（Figma 式）：四角外側的透明區，hover 顯示旋轉游標、拖曳繞中心旋轉（Shift 吸附 15°）；不顯示常駐按鈕 -->
+              <div class="rot-zone rz-tl" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
+              <div class="rot-zone rz-tr" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
+              <div class="rot-zone rz-bl" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
+              <div class="rot-zone rz-br" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
               <div class="resize-handle" (pointerdown)="onPointerDown($event, el, 'resize', null, 'se')"></div>
               <div class="resize-e" (pointerdown)="onPointerDown($event, el, 'resize', null, 'e')"></div>
               <div class="resize-s" (pointerdown)="onPointerDown($event, el, 'resize', null, 's')"></div>
@@ -203,6 +214,13 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
     .mguide { position: absolute; z-index: 1; pointer-events: none; }
     .mg-v { top: 0; bottom: 0; width: 0; border-left: 1px dashed #7dd3fc; }
     .mg-h { left: 0; right: 0; height: 0; border-top: 1px dashed #7dd3fc; }
+    /* 尺規上的邊界拖曳標記（Word 式）：藍色小三角，指向邊界線 */
+    .mmark { position: absolute; z-index: 17; width: 0; height: 0; }
+    .mmark-h { top: -18px; margin-left: -5px; border-left: 5px solid transparent; border-right: 5px solid transparent;
+      border-top: 7px solid #2563eb; cursor: ew-resize; }
+    .mmark-v { left: -18px; margin-top: -5px; border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+      border-left: 7px solid #2563eb; cursor: ns-resize; }
+    .mmark:hover { filter: brightness(1.2); }
     .guide { position: absolute; z-index: 20; pointer-events: none; }
     .guide-v { top: 0; bottom: 0; width: 0; border-left: 1px dashed #f43f5e; }
     .guide-h { left: 0; right: 0; height: 0; border-top: 1px dashed #f43f5e; }
@@ -231,6 +249,13 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
       pointer-events: none; }
     .resize-handle { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px;
       background: #2563eb; border: 2px solid #fff; border-radius: 50%; cursor: nwse-resize; z-index: 6; }
+    /* 旋轉感應區：四角外側透明區，hover 才把游標換成旋轉箭頭（不顯示常駐按鈕；同 Figma）。
+       雙箭頭弧線環繞各自角落、弧口朝外——四角各一個旋轉角度：bl 0°、tl 90°、tr 180°、br 270°。 */
+    .rot-zone { position: absolute; width: 18px; height: 18px; z-index: 5; }
+    .rz-bl { left: -17px; bottom: -17px; cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 32 32'><g transform='rotate(0 16 16)' fill='none' stroke-linecap='round' stroke-linejoin='round'><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='white' stroke-width='4.4'/><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='black' stroke-width='2.4'/></g></svg>") 13 13, grab; }
+    .rz-tl { left: -17px; top: -17px; cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 32 32'><g transform='rotate(90 16 16)' fill='none' stroke-linecap='round' stroke-linejoin='round'><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='white' stroke-width='4.4'/><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='black' stroke-width='2.4'/></g></svg>") 13 13, grab; }
+    .rz-tr { right: -17px; top: -17px; cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 32 32'><g transform='rotate(180 16 16)' fill='none' stroke-linecap='round' stroke-linejoin='round'><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='white' stroke-width='4.4'/><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='black' stroke-width='2.4'/></g></svg>") 13 13, grab; }
+    .rz-br { right: -17px; bottom: -17px; cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 32 32'><g transform='rotate(270 16 16)' fill='none' stroke-linecap='round' stroke-linejoin='round'><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='white' stroke-width='4.4'/><path d='M9 9 A 11.5 11.5 0 0 0 23 23' stroke='black' stroke-width='2.4'/></g></svg>") 13 13, grab; }
     .resize-e { position: absolute; right: -5px; top: 50%; margin-top: -8px; width: 7px; height: 16px;
       background: #2563eb; border: 2px solid #fff; border-radius: 4px; cursor: ew-resize; z-index: 6; }
     .resize-s { position: absolute; bottom: -5px; left: 50%; margin-left: -8px; width: 16px; height: 7px;
@@ -613,6 +638,40 @@ export class EditorCanvasComponent {
     this.activeDragCleanup = onUp;
   }
 
+  /** 旋轉把手拖曳：以元素螢幕中心為軸，角度隨指標。Shift 吸附 15°；順時針。 */
+  onRotateDown(e: PointerEvent, el: TemplateElement) {
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.button !== 0) return;
+    this.state.select(el.id);
+    const page = document.querySelector('.page');
+    if (!page) return;
+    const rect = page.getBoundingClientRect();
+    const z = this.z();
+    // 元素中心（CSS 繞中心旋轉，故中心在螢幕上不隨旋轉移動）
+    const cx = rect.left + el.x * z + (el.width * z) / 2;
+    const cy = rect.top + this.modelToVisualY(el.y) + (this.elHeight(el) * z) / 2;
+    const ang = (ev: { clientX: number; clientY: number }) =>
+      (Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180) / Math.PI;
+    const startAng = ang(e);
+    const startRot = el.rotation ?? 0;
+    const onMove = (ev: PointerEvent) => {
+      let rot = startRot + (ang(ev) - startAng);
+      if (ev.shiftKey) rot = Math.round(rot / 15) * 15;
+      else rot = Math.round(rot);
+      rot = ((rot % 360) + 360) % 360; // 正規化 0..359
+      this.state.patchElement(el.id, { rotation: rot || undefined });
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      this.activeDragCleanup = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    this.activeDragCleanup = onUp;
+  }
+
   // ---- 右鍵情境選單 ----
   private readonly isMac = /Mac|iP/.test(navigator.platform);
   private key(k: string): string {
@@ -651,6 +710,41 @@ export class EditorCanvasComponent {
       { label: '刪除', shortcut: 'Del', danger: true, run: () => this.state.removeElement(el.id) },
     ];
     this.state.openContextMenu(e.clientX, e.clientY, items);
+  }
+
+  /** 尺規上的邊界標記拖曳（Word 式）：拖水平尺規調左/右、垂直尺規調上/下邊界 */
+  onMarginDown(e: PointerEvent, side: 'left' | 'right' | 'top' | 'bottom') {
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.button !== 0) return;
+    const page = document.querySelector('.page');
+    if (!page) return;
+    const rect = page.getBoundingClientRect();
+    const onMove = (ev: PointerEvent) => {
+      const p = this.state.template().page;
+      const clamp = (v: number, max: number) => Math.round(Math.max(0, Math.min(v, max)));
+      if (side === 'left') {
+        const v = (ev.clientX - rect.left) / this.z();
+        this.state.patchPage({ marginLeft: clamp(v, p.width - (p.marginRight ?? 0) - 10) });
+      } else if (side === 'right') {
+        const v = p.width - (ev.clientX - rect.left) / this.z();
+        this.state.patchPage({ marginRight: clamp(v, p.width - (p.marginLeft ?? 0) - 10) });
+      } else if (side === 'top') {
+        const v = this.visualToModelY(ev.clientY - rect.top);
+        this.state.patchPage({ marginTop: clamp(v, p.height - (p.marginBottom ?? 0) - 10) });
+      } else {
+        const v = p.height - this.visualToModelY(ev.clientY - rect.top);
+        this.state.patchPage({ marginBottom: clamp(v, p.height - (p.marginTop ?? 0) - 10) });
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      this.activeDragCleanup = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    this.activeDragCleanup = onUp;
   }
 
   // ---- 框選（marquee）：畫布空白處拖曳選取多個頂層元素 ----

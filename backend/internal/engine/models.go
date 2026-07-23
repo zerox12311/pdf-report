@@ -115,6 +115,8 @@ type Element struct {
 	Y      float64 `json:"y"`
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
+	// Rotation 繞元素中心旋轉的角度（度，順時針）；純視覺，版面仍用未旋轉的框
+	Rotation float64 `json:"rotation"`
 
 	// 條件顯示（所有元素通用）：VisibleKey 空 = 永遠顯示；隱藏時保留版面空間
 	VisibleKey string `json:"visibleKey"`
@@ -140,7 +142,8 @@ type Element struct {
 	Align      string  `json:"align"` // left | center | right
 	LineHeight float64 `json:"lineHeight"`
 	Bold       bool    `json:"bold"`
-	Format     string  `json:"format"` // placeholder 格式化：comma | twUpper | 空 = 原樣
+	Underline  bool    `json:"underline"` // text/placeholder 底線（gopdf 原生渲染）
+	Format     string  `json:"format"`    // placeholder 格式化：comma | twUpper | 空 = 原樣
 
 	// barcode（內容取 Key 綁定資料，否則用 Content 靜態值；Sample 為範例）
 	Symbology string `json:"symbology"` // code128 | code39 | ean13 | qr

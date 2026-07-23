@@ -33,6 +33,9 @@ import { ScrubDirective } from './scrub.directive';
             <input type="number" [ngModel]="state.ptToDisp(el.height)" [disabled]="el.type === 'table'"
               (ngModelChange)="patch(el, { height: numMin(state.dispToPt(num($event)), 0) })" /></label>
         </div>
+        <label class="rot" [appScrub]="el.rotation ?? 0" [scrubStep]="1" (scrubChange)="patch(el, { rotation: $event })">旋轉（°）
+          <input type="number" step="1" [ngModel]="el.rotation ?? 0" (ngModelChange)="patch(el, { rotation: num($event) })" />
+        </label>
 
         @switch (el.type) {
           @case ('text') {

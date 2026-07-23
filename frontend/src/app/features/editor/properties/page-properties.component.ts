@@ -70,6 +70,11 @@ import { WatermarkFormComponent } from './watermark-form.component';
 
     <div class="doc-divider">📄 文件層級（套用到所有節）</div>
     <div class="sub">頁面邊界（設計輔助線）</div>
+    <label class="full">預設（同 Word）
+      <select [ngModel]="currentMarginPreset()" (ngModelChange)="applyMarginPreset($event)">
+        @for (p of marginPresets; track p.key) { <option [value]="p.key">{{ p.label }}{{ p.key === 'custom' ? '' : '（' + presetDesc(p) + '）' }}</option> }
+      </select>
+    </label>
     <div class="grid2">
       <label>上（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginTop ?? 0)"
         (ngModelChange)="state.patchPage({ marginTop: ptMin($event, 0) })" /></label>
@@ -80,7 +85,7 @@ import { WatermarkFormComponent } from './watermark-form.component';
       <label>右（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginRight ?? 0)"
         (ngModelChange)="state.patchPage({ marginRight: ptMin($event, 0) })" /></label>
     </div>
-    <div class="hint">邊界以藍色虛線顯示在畫布上並可吸附對齊，不影響輸出（元素仍可放在邊界外）。</div>
+    <div class="hint">邊界以藍色虛線顯示在畫布上、可吸附對齊，也可**直接拖曳尺規上的藍色三角**調整；不影響輸出（元素仍可放在邊界外）。</div>
 
     <div class="sub">文件浮水印（各節預設）</div>
     <label class="row">
@@ -124,6 +129,37 @@ import { WatermarkFormComponent } from './watermark-form.component';
 export class PagePropertiesComponent {
   state = inject(EditorStateService);
   papers = PAPER_PRESETS;
+
+  /** Word 式邊界預設（pt）；custom 代表目前值不符任何預設 */
+  marginPresets = [
+    { key: 'normal', label: '標準', top: 72, bottom: 72, left: 72, right: 72 },
+    { key: 'narrow', label: '窄', top: 36, bottom: 36, left: 36, right: 36 },
+    { key: 'moderate', label: '中等', top: 72, bottom: 72, left: 54, right: 54 },
+    { key: 'wide', label: '寬', top: 72, bottom: 72, left: 144, right: 144 },
+    { key: 'none', label: '無邊界', top: 0, bottom: 0, left: 0, right: 0 },
+    { key: 'custom', label: '自訂', top: -1, bottom: -1, left: -1, right: -1 },
+  ];
+
+  /** 預設在下拉顯示的尺寸描述（依目前尺規單位） */
+  presetDesc(p: { top: number; left: number }): string {
+    const u = this.state.rulerUnit();
+    return `${this.state.ptToDisp(p.top)}×${this.state.ptToDisp(p.left)} ${u}`;
+  }
+
+  /** 目前邊界對應的預設 key（都相同才算某預設，否則 custom） */
+  currentMarginPreset(): string {
+    const pg = this.state.template().page;
+    const m = { top: pg.marginTop ?? 0, bottom: pg.marginBottom ?? 0, left: pg.marginLeft ?? 0, right: pg.marginRight ?? 0 };
+    const hit = this.marginPresets.find(p => p.key !== 'custom'
+      && p.top === m.top && p.bottom === m.bottom && p.left === m.left && p.right === m.right);
+    return hit ? hit.key : 'custom';
+  }
+
+  applyMarginPreset(key: string) {
+    const p = this.marginPresets.find(x => x.key === key);
+    if (!p || key === 'custom') return;
+    this.state.patchPage({ marginTop: p.top, marginBottom: p.bottom, marginLeft: p.left, marginRight: p.right });
+  }
 
   sec() {
     return this.state.activeSection();

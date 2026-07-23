@@ -80,6 +80,94 @@ func TestPlaceholderMissingKeyBlankNotSample(t *testing.T) {
 	}
 }
 
+func TestUnderlineRenders(t *testing.T) {
+	// 底線應實際影響輸出（gopdf 原生渲染）：同樣板開/關底線 → byte 不同。
+	mk := func(underline bool) TemplateDoc {
+		tpl := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+		"elements":[{"type":"text","id":"t1","x":10,"y":10,"width":200,"height":20,
+			"content":"收款單","fontSize":14,"color":"#000000","align":"left","lineHeight":1.2,"bold":false,
+			"underline":` + map[bool]string{true: "true", false: "false"}[underline] + `}]}`
+		var doc TemplateDoc
+		if err := json.Unmarshal([]byte(tpl), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	e := NewEngine("../../fonts", nil)
+	on := mk(true)
+	off := mk(false)
+	outOn, _, err := e.Render(&on, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outOff, _, err := e.Render(&off, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(outOn, outOff) {
+		t.Error("底線應改變輸出（未渲染底線）")
+	}
+}
+
+func TestRotationRenders(t *testing.T) {
+	// 旋轉應實際影響輸出：同樣板旋轉 0 vs 30 → byte 不同。
+	mk := func(rot float64) TemplateDoc {
+		tpl := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+		"elements":[{"type":"text","id":"t1","x":100,"y":100,"width":200,"height":24,"rotation":` +
+			map[bool]string{true: "30", false: "0"}[rot != 0] +
+			`,"content":"收款單","fontSize":14,"color":"#000000","align":"left","lineHeight":1.2,"bold":false}]}`
+		var doc TemplateDoc
+		if err := json.Unmarshal([]byte(tpl), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	e := NewEngine("../../fonts", nil)
+	rot, _, err := e.Render(mkPtr(mk(30)), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	noRot, _, err := e.Render(mkPtr(mk(0)), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(rot, noRot) {
+		t.Error("旋轉應改變輸出（未套用旋轉）")
+	}
+}
+
+func mkPtr(d TemplateDoc) *TemplateDoc { return &d }
+
+func TestRepeatTableRotationRenders(t *testing.T) {
+	// 重複列表格走 fragment 路徑（非 drawElement）：旋轉也須套用 → 開/關旋轉 byte 不同。
+	mk := func(rot string) *TemplateDoc {
+		tpl := `{"name":"rt","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+		"elements":[{"type":"table","id":"tb","x":100,"y":100,"width":180,"height":72,"rotation":` + rot + `,
+			"columnWidths":[90,90],"rowHeights":[24,24],"borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+			"repeat":{"enabled":true,"key":"items","rowIndex":1},
+			"cells":[[{"kind":"text","value":"h1"},{"kind":"text","value":"h2"}],
+			         [{"kind":"placeholder","key":"name","sample":"x"},{"kind":"placeholder","key":"qty","sample":"1"}]]}]}`
+		var doc TemplateDoc
+		if err := json.Unmarshal([]byte(tpl), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return &doc
+	}
+	e := NewEngine("../../fonts", nil)
+	data := map[string]any{"items": []any{map[string]any{"name": "A", "qty": 1}}}
+	rot, _, err := e.Render(mk("25"), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noRot, _, err := e.Render(mk("0"), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(rot, noRot) {
+		t.Error("重複列表格旋轉應改變輸出（fragment 路徑未套旋轉）")
+	}
+}
+
 func TestRepeatRowOutOfRangeWarning(t *testing.T) {
 	// 重複列 rowIndex=1 但表格只有 1 列（列數被縮減後的越界狀態）：
 	// 不可靜默吞掉明細，必須警告並退化成普通表格。
