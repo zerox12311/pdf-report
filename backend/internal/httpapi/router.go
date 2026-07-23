@@ -18,7 +18,8 @@ import (
 const maxUpload = 10 << 20 // 10MB
 
 // New 組出完整的 HTTP handler（middleware + 路由總表）；main 與測試共用。
-func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, eng *engine.Engine) http.Handler {
+// webRoot 非空時額外 serve 前端靜態檔（單容器部署）；空 = 純 API 模式。
+func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, eng *engine.Engine, webRoot string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(slogLogger(), recoverJSON(), cors(), withTenant())
@@ -49,6 +50,11 @@ func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.
 	r.GET("/healthz", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
+
+	// 單容器部署：Go 自己 serve 前端靜態檔＋SPA fallback（webRoot 空 = 純 API）
+	if webRoot != "" {
+		r.NoRoute(spaHandler(webRoot))
+	}
 
 	return r
 }

@@ -1,6 +1,6 @@
-# PDF 樣板編輯器 demo
+# PDF 樣板編輯器 demo（單一 app image：前端＋後端合一，後端 serve 前端靜態檔）
 # 啟動：docker compose up --build
-# 入口：http://localhost:8090（前端），http://localhost:8091（後端 API）
+# 入口：http://localhost:8090（前端與 /api 同源）
 # 本機開發：docker compose up -d db 後，後端連 postgres://pdftpl:pdftpl@localhost:5442/pdftpl?sslmode=disable
 name: pdf-template-demo # compose project name，與其他專案隔離
 
@@ -21,10 +21,10 @@ services:
       timeout: 3s
       retries: 10
 
-  backend:
-    build: ./backend
+  app:
+    build: . # 根目錄 Dockerfile：前端＋後端合一
     ports:
-      - "8091:8080"
+      - "8090:8080" # 單一入口（前端與 /api 同源）
     environment:
       DATABASE_URL: postgres://pdftpl:pdftpl@db:5432/pdftpl?sslmode=disable
     volumes:
@@ -32,13 +32,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "8090:80"
-    depends_on:
-      - backend
 
 volumes:
   pdf-storage:

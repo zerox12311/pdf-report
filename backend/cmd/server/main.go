@@ -53,7 +53,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.New(templates, assets, fonts, eng),
+		Handler:           httpapi.New(templates, assets, fonts, eng, os.Getenv("WEB_ROOT")),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second, // 大樣板渲染留餘裕

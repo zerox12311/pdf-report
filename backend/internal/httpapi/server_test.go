@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,7 +41,7 @@ func newTestServer(t *testing.T) (http.Handler, *store.TemplateStore, *store.Ass
 	}
 	eng := engine.NewEngine("../../fonts", assets.EngineSource()) // 使用 repo 內的字型檔
 	eng.SetUserFontsDir(fonts.Dir())
-	return New(templates, assets, fonts, eng), templates, assets, g
+	return New(templates, assets, fonts, eng, ""), templates, assets, g
 }
 
 func doJSON(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -544,5 +545,55 @@ func TestRecoverPanic(t *testing.T) {
 func TestExtractDataJunk(t *testing.T) {
 	if extractData([]byte("junk")) != nil {
 		t.Error("junk body should extract nil")
+	}
+}
+
+// TestSPAStaticServing：webRoot 非空時 serve 前端靜態檔＋SPA fallback。
+func TestSPAStaticServing(t *testing.T) {
+	web := t.TempDir()
+	if err := os.WriteFile(filepath.Join(web, "index.html"), []byte("<html>app</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(web, "main.js"), []byte("console.log(1)"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(web, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 只需要一個掛了 NoRoute 的 handler；store 用真 DB 但不觸及
+	g := testdb.Open(t)
+	root := t.TempDir()
+	templates := store.NewTemplateStore(g)
+	assets, _ := store.NewAssetStore(g, root)
+	fonts, _ := store.NewFontStore(g, root)
+	eng := engine.NewEngine("../../fonts", assets.EngineSource())
+	srv := New(templates, assets, fonts, eng, web)
+
+	do := func(path string) (int, string) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+
+	// 靜態檔命中
+	if code, body := do("/main.js"); code != 200 || !strings.Contains(body, "console.log") {
+		t.Errorf("main.js：want 200+內容，got %d %q", code, body)
+	}
+	// 前端路由（無實體檔）→ SPA fallback index.html
+	if code, body := do("/editor/abc"); code != 200 || !strings.Contains(body, "app") {
+		t.Errorf("SPA fallback：want 200+index，got %d %q", code, body)
+	}
+	// 根路徑 → index
+	if code, body := do("/"); code != 200 || !strings.Contains(body, "app") {
+		t.Errorf("root：want index，got %d %q", code, body)
+	}
+	// 目錄（非檔案）→ fallback index（不列目錄）
+	if code, body := do("/assets"); code != 200 || !strings.Contains(body, "app") {
+		t.Errorf("dir：want fallback index，got %d %q", code, body)
+	}
+	// /api 未匹配 → 404 JSON（不 fallback 到 HTML）
+	if code, body := do("/api/nope"); code != 404 || !strings.Contains(body, "error") {
+		t.Errorf("api 404：want 404 JSON，got %d %q", code, body)
 	}
 }

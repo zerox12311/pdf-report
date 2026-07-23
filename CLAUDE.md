@@ -14,14 +14,14 @@
   - `features/editor/properties-panel.component.ts` — 屬性面板
   - **「新增一種元件」的檔案鏈**：template.model.ts → engine/models.go →（引擎 drawElement case）→ element-factory.ts → canvas-element.component.ts → properties-panel.component.ts，最後更新 docs/editor.md＋engine.md
 - `backend/` — Go（**Gin**）＋ gopdf ＋ boombuler/barcode ＋ **PostgreSQL/GORM**。
-  - `cmd/server/` 進入點（env：`PORT`、`STORAGE_ROOT`、`FONTS_DIR`、`DATABASE_URL`（必填，Postgres-only））
+  - `cmd/server/` 進入點（env：`PORT`、`STORAGE_ROOT`、`FONTS_DIR`、`DATABASE_URL`（必填，Postgres-only）、`WEB_ROOT`（前端靜態檔目錄，空 = 純 API 模式；Docker 單容器部署時設，見 `httpapi/spa.go`））
   - `internal/db/` GORM models（多租戶：tenants/api_keys/templates JSONB/assets/fonts）＋ Open/migrate
   - `internal/store/` 資料存取：結構化資料走 DB、圖片/字型二進位留檔案系統；方法都帶 tenantID；ImportLegacy 一次性匯入舊檔案資料
   - `internal/engine/` 報表引擎（本專案核心）
-  - `internal/httpapi/` Gin：`router.go`（New + 路由總表）、`middleware.go`、按資源拆的 `template/render/asset/font_handler.go`（handler struct + 方法）、`respond.go`（共用回應 helpers）。新 endpoint 按資源歸檔。
+  - `internal/httpapi/` Gin：`router.go`（New + 路由總表）、`middleware.go`、按資源拆的 `template/render/asset/font_handler.go`（handler struct + 方法）、`respond.go`（共用回應 helpers）、`spa.go`（`WEB_ROOT` 非空時 serve 前端靜態檔＋SPA fallback，單容器部署用）。新 endpoint 按資源歸檔。
     **Gin 契約**：樣板 payload 一律 raw bytes（readBody/c.Data），**禁用 ShouldBindJSON**——會破壞 raw JSON passthrough 與 json.Number 數字字面；middleware 用自寫的 slogLogger/recoverJSON/cors（不用 gin.Default）；New 回傳 http.Handler，httptest 直接打。
   - `internal/testdb/` 測試用 per-test database 工具
-- `docker-compose.yml` — project `pdf-template-demo`：frontend :8090（nginx 反代 /api）、backend :8091、postgres db :5442（本機開發/測試共用）、volumes `pdf-storage`（二進位檔）+ `pg-data`。
+- `Dockerfile`（根目錄，單一 image：前端 Angular build → Go build → runtime，**後端直接 serve 前端靜態檔、無 nginx**）＋ `docker-compose.yml` — project `pdf-template-demo`：**app :8090**（前端與 /api 同源）、postgres db :5442（本機開發/測試共用）、volumes `pdf-storage`（二進位檔）+ `pg-data`。
 - `docs/` — **功能現況文件**（README 索引＋editor/engine/api/embed）。embed.md 是宿主整合指南（編輯器內建「🔗 連接」對話框有同樣內容可複製）。
 
 ## 常用指令
@@ -40,7 +40,7 @@ cd frontend && npm start                                      # ng serve :4300�
 npx ng build --configuration production
 CHROME_BIN="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run test:ci
 
-docker compose up -d --build                                  # 完整 demo :8090/:8091
+docker compose up -d --build                                  # 完整 demo（單一 app 容器）→ http://localhost:8090
 ```
 
 ## 不可破壞的規範

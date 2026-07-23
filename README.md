@@ -14,10 +14,9 @@
 docker compose up -d --build
 ```
 
-- 編輯器：http://localhost:8090
-- 後端 API：http://localhost:8091（`/healthz` 健康檢查）
+- 編輯器與 API：http://localhost:8090（單一 app 容器，前端與 `/api` 同源；`/healthz` 健康檢查）
 - 嵌入示範頁：瀏覽器直接開 [docs/embed-example.html](docs/embed-example.html)
-- compose project `pdf-template-demo`；Postgres :5442（`pg-data` volume）、圖片/字型二進位檔在 `pdf-storage` volume。
+- compose project `pdf-template-demo`（app + db 兩個服務）；Postgres :5442（`pg-data` volume）、圖片/字型二進位檔在 `pdf-storage` volume。
 
 本機開發（前端 :4300 proxy → 後端 :5043、測試、建置指令）見 [CLAUDE.md](CLAUDE.md) 的「常用指令」。
 
