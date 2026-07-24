@@ -16,7 +16,7 @@ const validatedTemplate = `{"name":"v","page":{"width":595.28,"height":841.89,"h
 
 func TestRenderByIDValidationGuard(t *testing.T) {
 	h, templates, _, _ := newTestServer(t)
-	id, _, err := templates.Save(db.DefaultTenantID, []byte(validatedTemplate), "")
+	id, _, err := templates.Save(db.DefaultTenantID, "", []byte(validatedTemplate), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestRenderByIDValidationGuard(t *testing.T) {
 
 	// disabled → 跳過驗證，空 data 也 200（只是渲染警告）
 	disabled := strings.Replace(validatedTemplate, `"enabled":true`, `"enabled":false`, 1)
-	id2, _, err := templates.Save(db.DefaultTenantID, []byte(disabled), "")
+	id2, _, err := templates.Save(db.DefaultTenantID, "", []byte(disabled), "")
 	if err != nil {
 		t.Fatal(err)
 	}

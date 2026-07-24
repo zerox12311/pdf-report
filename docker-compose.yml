@@ -27,6 +27,10 @@ services:
       - "8090:8080" # 單一入口（前端與 /api 同源）
     environment:
       DATABASE_URL: postgres://pdftpl:pdftpl@db:5432/pdftpl?sslmode=disable
+      # 控制台初始管理員（僅首次、user 表為空時種）＋ session 簽章金鑰。正式部署請改掉。
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin
+      SESSION_SECRET: change-me-in-production
     volumes:
       - pdf-storage:/app/storage # 上傳圖片/匯入字型的二進位檔持久化（結構化資料在 Postgres）
     depends_on:

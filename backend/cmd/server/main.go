@@ -48,12 +48,19 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	users := store.NewUserStore(g)
+	projects := store.NewProjectStore(g)
+	// 種初始管理員（僅 user 表為空時；已存在不覆寫，改密碼才不會被重啟打回）
+	if err := store.SeedAdmin(g, os.Getenv("ADMIN_USER"), os.Getenv("ADMIN_PASSWORD")); err != nil {
+		log.Fatal(err)
+	}
+
 	eng := engine.NewEngine(fontsDir, assets.EngineSource())
 	eng.SetUserFontsDir(fonts.Dir())
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.New(templates, assets, fonts, eng, os.Getenv("WEB_ROOT")),
+		Handler:           httpapi.New(templates, assets, fonts, users, projects, eng, os.Getenv("SESSION_SECRET"), os.Getenv("WEB_ROOT")),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second, // 大樣板渲染留餘裕

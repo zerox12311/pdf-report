@@ -4,6 +4,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ELEMENT_META, TemplateElement, emptyTemplate, isChildHost } from '../../core/models/template.model';
 import { FontService } from '../../core/services/font.service';
 import { HostBridgeService } from '../../core/services/host-bridge.service';
+import { ModalService } from '../../core/services/modal.service';
 import { TemplateApiService } from '../../core/services/template-api.service';
 import { ContextMenuComponent } from './context-menu.component';
 import { DataPanelComponent } from './data-panel.component';
@@ -29,7 +30,9 @@ interface PaletteItem {
   template: `
     <div class="editor">
       <header>
-        <a routerLink="/" class="back">← 樣板列表</a>
+        @if (!embedded) {
+          <a [routerLink]="backLink" class="back">← {{ newProjectId ? '專案' : '控制台' }}</a>
+        }
         <input class="name" [ngModel]="state.template().name" (ngModelChange)="state.setName($event)" />
         <div class="right">
           <button class="link" (click)="showIntegration.set(true)" title="iframe 嵌入與渲染 API 說明">🔗 連接</button>
@@ -329,6 +332,18 @@ export class EditorPageComponent {
   private api = inject(TemplateApiService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private modal = inject(ModalService);
+
+  /** 控制台在專案內新建時的目標專案（?project=）；首次 create 時帶入。 */
+  newProjectId?: string;
+
+  /** iframe 嵌入時隱藏「返回控制台」（嵌入端只操作編輯器，不該跳到控制台）。 */
+  readonly embedded = window.parent !== window;
+
+  /** 返回連結：從專案新建 → 回該專案；否則回控制台首頁。 */
+  get backLink(): unknown[] {
+    return this.newProjectId ? ['/projects', this.newProjectId] : ['/'];
+  }
 
   @ViewChild('imageInput') imageInput?: { nativeElement: HTMLInputElement };
 
@@ -370,11 +385,15 @@ export class EditorPageComponent {
     this.sectionDropIndex.set(null);
   }
   /** 從導覽面板刪除節（確認後；元素一併刪除）；不觸發切換 */
-  removeSectionFromNav(e: Event, id: string, name: string) {
+  async removeSectionFromNav(e: Event, id: string, name: string) {
     e.stopPropagation();
-    if (confirm(`刪除節「${name}」？此節上的元素會一併刪除。`)) {
-      this.state.removeSection(id);
-    }
+    const ok = await this.modal.confirm({
+      title: '刪除節',
+      message: `刪除節「${name}」？此節上的元素會一併刪除。`,
+      confirmLabel: '刪除',
+      danger: true,
+    });
+    if (ok) this.state.removeSection(id);
   }
   jsonText = signal('');
   jsonError = signal<string | null>(null);
@@ -479,6 +498,8 @@ export class EditorPageComponent {
     });
     void this.fonts.refresh();
     const id = this.route.snapshot.paramMap.get('id');
+    // 控制台在專案內新建樣板會帶 ?project=<id>；儲存時一路帶到 create 的 ?projectId。
+    this.newProjectId = this.route.snapshot.queryParamMap.get('project') ?? undefined;
     if (id && id !== 'new') {
       this.api.get(id).then(doc => {
         this.state.load(doc);
@@ -664,7 +685,7 @@ export class EditorPageComponent {
       // 目標是圖片元素：設 assetId 並清掉動態/固定連結（三種來源擇一，上傳為明確意圖）
       this.state.patchElement(req.elementId, { assetId: id, key: undefined, url: undefined });
     } catch (e) {
-      alert('圖片上傳失敗：' + (e instanceof Error ? e.message : e));
+      void this.modal.alert({ title: '圖片上傳失敗', message: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -672,7 +693,7 @@ export class EditorPageComponent {
     this.saving.set(true);
     try {
       const t = this.state.template();
-      const saved = t.id ? await this.api.update(t) : await this.api.create(t);
+      const saved = t.id ? await this.api.update(t) : await this.api.create(t, this.newProjectId);
       this.state.load(saved);
       if (!t.id) {
         this.router.navigate(['/editor', saved.id], { replaceUrl: true });
@@ -680,7 +701,7 @@ export class EditorPageComponent {
       // 宿主系統由此事件取得樣板 id，之後其後端可 POST /api/templates/{id}/render 填資料出 PDF
       this.bridge.notify('template-saved', saved.id);
     } catch (e) {
-      alert('儲存失敗：' + (e instanceof Error ? e.message : e));
+      void this.modal.alert({ title: '儲存失敗', message: e instanceof Error ? e.message : String(e) });
     } finally {
       this.saving.set(false);
     }

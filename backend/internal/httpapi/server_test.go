@@ -39,9 +39,11 @@ func newTestServer(t *testing.T) (http.Handler, *store.TemplateStore, *store.Ass
 	if err != nil {
 		t.Fatal(err)
 	}
+	users := store.NewUserStore(g)
+	projects := store.NewProjectStore(g)
 	eng := engine.NewEngine("../../fonts", assets.EngineSource()) // 使用 repo 內的字型檔
 	eng.SetUserFontsDir(fonts.Dir())
-	return New(templates, assets, fonts, eng, ""), templates, assets, g
+	return New(templates, assets, fonts, users, projects, eng, "test-secret", ""), templates, assets, g
 }
 
 func doJSON(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -157,7 +159,7 @@ func TestTemplateErrors(t *testing.T) {
 
 func TestRenderByID(t *testing.T) {
 	h, templates, _, _ := newTestServer(t)
-	id, _, err := templates.Save(db.DefaultTenantID, []byte(minimalTemplate), "")
+	id, _, err := templates.Save(db.DefaultTenantID, "", []byte(minimalTemplate), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +198,7 @@ func TestRenderByID(t *testing.T) {
 	}
 
 	// 樣板檔解析失敗（elements 型別錯誤）
-	badID, _, err := templates.Save(db.DefaultTenantID, []byte(`{"name":"bad","elements":"not-an-array"}`), "")
+	badID, _, err := templates.Save(db.DefaultTenantID, "", []byte(`{"name":"bad","elements":"not-an-array"}`), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +207,7 @@ func TestRenderByID(t *testing.T) {
 	}
 
 	// 引擎渲染失敗（頁首+頁尾吃光內容區）
-	failID, _, err := templates.Save(db.DefaultTenantID, []byte(`{"name":"f","page":{"width":595,"height":842,"headerHeight":500,"footerHeight":500},"elements":[]}`), "")
+	failID, _, err := templates.Save(db.DefaultTenantID, "", []byte(`{"name":"f","page":{"width":595,"height":842,"headerHeight":500,"footerHeight":500},"elements":[]}`), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +222,7 @@ func TestRenderWarningsAndStrict(t *testing.T) {
 	tpl := `{"name":"w","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
 		"elements":[{"type":"placeholder","id":"p","x":10,"y":10,"width":100,"height":20,
 		"key":"who","sample":"某人","fontSize":12,"color":"#000000","align":"left","lineHeight":1.2,"bold":false}]}`
-	id, _, err := templates.Save(db.DefaultTenantID, []byte(tpl), "")
+	id, _, err := templates.Save(db.DefaultTenantID, "", []byte(tpl), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +519,7 @@ func TestFonts(t *testing.T) {
 // templateGetError 的 500 分支：DB 掛掉時 Get 失敗但不是 not-found。
 func TestTemplateGetInternalError(t *testing.T) {
 	h, templates, _, g := newTestServer(t)
-	id, _, err := templates.Save(db.DefaultTenantID, []byte(minimalTemplate), "")
+	id, _, err := templates.Save(db.DefaultTenantID, "", []byte(minimalTemplate), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,8 +568,10 @@ func TestSPAStaticServing(t *testing.T) {
 	templates := store.NewTemplateStore(g)
 	assets, _ := store.NewAssetStore(g, root)
 	fonts, _ := store.NewFontStore(g, root)
+	users := store.NewUserStore(g)
+	projects := store.NewProjectStore(g)
 	eng := engine.NewEngine("../../fonts", assets.EngineSource())
-	srv := New(templates, assets, fonts, eng, web)
+	srv := New(templates, assets, fonts, users, projects, eng, "test-secret", web)
 
 	do := func(path string) (int, string) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

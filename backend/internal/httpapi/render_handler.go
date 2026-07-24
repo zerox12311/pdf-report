@@ -16,12 +16,22 @@ import (
 
 // renderHandler 渲染：正式（樣板 id + 資料）與 adhoc（編輯器預覽）。
 type renderHandler struct {
-	store *store.TemplateStore
-	eng   *engine.Engine
+	store    *store.TemplateStore
+	projects *store.ProjectStore
+	eng      *engine.Engine
 }
 
 // renderByID 正式渲染：宿主系統後端拿樣板 id + 資料 → PDF（整合契約）。
+// 授權：控制台 user 只能渲染自己專案的樣板；無 session（宿主呼叫）維持開放。
 func (h *renderHandler) renderByID(c *gin.Context) {
+	pid, err := h.store.ProjectOf(tenantOf(c), c.Param("id"))
+	if err != nil {
+		templateGetError(c, err)
+		return
+	}
+	if !authorizeProject(c, h.projects, pid) {
+		return
+	}
 	raw, err := h.store.Get(tenantOf(c), c.Param("id"))
 	if err != nil {
 		templateGetError(c, err)

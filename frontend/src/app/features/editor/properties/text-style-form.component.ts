@@ -4,6 +4,7 @@ import {
   ElementPatch, FONT_FAMILIES, PlaceholderElement, TextElement,
 } from '../../../core/models/template.model';
 import { FontService } from '../../../core/services/font.service';
+import { ModalService } from '../../../core/services/modal.service';
 import { EditorStateService } from '../editor-state.service';
 import { SliderFieldComponent } from './slider-field.component';
 
@@ -72,6 +73,7 @@ import { SliderFieldComponent } from './slider-field.component';
 export class TextStyleFormComponent {
   private state = inject(EditorStateService);
   fontSvc = inject(FontService);
+  private modal = inject(ModalService);
   el = input.required<TextElement | PlaceholderElement>();
   fontFamilies = FONT_FAMILIES;
 
@@ -84,7 +86,7 @@ export class TextStyleFormComponent {
       const info = await this.fontSvc.upload(file);
       this.patch({ fontFamily: info.id });
     } catch (e) {
-      alert(e instanceof Error ? e.message : '字型上傳失敗');
+      void this.modal.alert({ title: '字型上傳失敗', message: e instanceof Error ? e.message : '字型上傳失敗' });
     }
   }
 

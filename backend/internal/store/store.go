@@ -83,12 +83,16 @@ func NewTemplateStore(g *gorm.DB) *TemplateStore {
 
 // Save 儲存原始 JSON（只改寫 id / updatedAt），schema 其餘欄位原樣保留。
 // 數字用 json.Number 保留原始字面（passthrough 不損毀精度）。
-func (s *TemplateStore) Save(tenantID string, raw []byte, forceID string) (string, []byte, error) {
+// projectID 為所屬專案（空 → DefaultProjectID）；僅在建立時寫入，更新時不動既有專案歸屬。
+func (s *TemplateStore) Save(tenantID, projectID string, raw []byte, forceID string) (string, []byte, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.UseNumber()
 	var doc map[string]any
 	if err := dec.Decode(&doc); err != nil {
 		return "", nil, errors.New("樣板 JSON 解析失敗（body 需為樣板 JSON 物件）")
+	}
+	if projectID == "" {
+		projectID = db.DefaultProjectID
 	}
 	id := forceID
 	if id == "" {
@@ -102,7 +106,8 @@ func (s *TemplateStore) Save(tenantID string, raw []byte, forceID string) (strin
 		return "", nil, err
 	}
 	name, _ := doc["name"].(string)
-	row := db.Template{ID: id, TenantID: tenantID, Name: name, Doc: out, UpdatedAt: now}
+	// ProjectID 只放在建立用的 struct，不進 Assign map → 更新既有樣板時保留原專案。
+	row := db.Template{ID: id, TenantID: tenantID, ProjectID: projectID, Name: name, Doc: out, UpdatedAt: now}
 	err = s.g.Where("id = ? AND tenant_id = ?", id, tenantID).
 		Assign(map[string]any{"name": name, "doc": out, "updated_at": now}).
 		FirstOrCreate(&row).Error
@@ -123,6 +128,18 @@ func (s *TemplateStore) Get(tenantID, id string) ([]byte, error) {
 	return row.Doc, nil
 }
 
+// ProjectOf 取樣板所屬專案 id（授權 chokepoint 用；查無 → os.ErrNotExist）。
+func (s *TemplateStore) ProjectOf(tenantID, id string) (string, error) {
+	if !SafeID(id) {
+		return "", os.ErrNotExist
+	}
+	var row db.Template
+	if err := s.g.Select("project_id").Where("id = ? AND tenant_id = ?", id, tenantID).First(&row).Error; err != nil {
+		return "", notFoundAs(err)
+	}
+	return row.ProjectID, nil
+}
+
 func (s *TemplateStore) Delete(tenantID, id string) error {
 	if !SafeID(id) {
 		return os.ErrNotExist
@@ -141,6 +158,43 @@ func (s *TemplateStore) List(tenantID string) ([]TemplateSummary, error) {
 	var rows []db.Template
 	if err := s.g.Select("id", "name", "updated_at").
 		Where("tenant_id = ?", tenantID).
+		Order("updated_at DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	list := make([]TemplateSummary, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, TemplateSummary{
+			ID: r.ID, Name: r.Name, UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return list, nil
+}
+
+// ListInProject 專案內的樣板清單（控制台專案頁用）。
+func (s *TemplateStore) ListInProject(tenantID, projectID string) ([]TemplateSummary, error) {
+	var rows []db.Template
+	if err := s.g.Select("id", "name", "updated_at").
+		Where("tenant_id = ? AND project_id = ?", tenantID, projectID).
+		Order("updated_at DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	list := make([]TemplateSummary, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, TemplateSummary{
+			ID: r.ID, Name: r.Name, UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return list, nil
+}
+
+// ListInProjects 多個專案的樣板清單（扁平清單依 user 可存取專案過濾用）。空集合 → 空清單。
+func (s *TemplateStore) ListInProjects(tenantID string, projectIDs []string) ([]TemplateSummary, error) {
+	if len(projectIDs) == 0 {
+		return []TemplateSummary{}, nil
+	}
+	var rows []db.Template
+	if err := s.g.Select("id", "name", "updated_at").
+		Where("tenant_id = ? AND project_id IN (?)", tenantID, projectIDs).
 		Order("updated_at DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -340,7 +394,7 @@ func ImportLegacy(g *gorm.DB, root string) error {
 				continue
 			}
 			id := strings.TrimSuffix(e.Name(), ".json")
-			if _, _, err := ts.Save(db.DefaultTenantID, raw, id); err != nil {
+			if _, _, err := ts.Save(db.DefaultTenantID, db.DefaultProjectID, raw, id); err != nil {
 				return fmt.Errorf("匯入舊樣板 %s: %w", id, err)
 			}
 		}

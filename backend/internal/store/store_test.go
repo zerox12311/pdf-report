@@ -35,11 +35,11 @@ func TestTemplateStoreDB(t *testing.T) {
 	const tid = db.DefaultTenantID
 
 	// Save 壞 JSON
-	if _, _, err := s.Save(tid, []byte("{bad"), ""); err == nil {
+	if _, _, err := s.Save(tid, "", []byte("{bad"), ""); err == nil {
 		t.Error("expected error for bad json")
 	}
 	// Save / Get / List / Delete（passthrough：未知欄位保留）
-	id, out, err := s.Save(tid, []byte(`{"name":"n","futureField":{"x":1.50}}`), "")
+	id, out, err := s.Save(tid, "", []byte(`{"name":"n","futureField":{"x":1.50}}`), "")
 	if err != nil || id == "" || !strings.Contains(string(out), `"updatedAt"`) {
 		t.Fatalf("save: %v %s", err, out)
 	}
@@ -55,7 +55,7 @@ func TestTemplateStoreDB(t *testing.T) {
 		t.Fatalf("list: %v %+v", err, list)
 	}
 	// 更新（同 id 覆寫）
-	if _, _, err := s.Save(tid, []byte(`{"name":"n2"}`), id); err != nil {
+	if _, _, err := s.Save(tid, "", []byte(`{"name":"n2"}`), id); err != nil {
 		t.Fatal(err)
 	}
 	list, _ = s.List(tid)

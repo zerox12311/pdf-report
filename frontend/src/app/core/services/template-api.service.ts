@@ -9,6 +9,36 @@ export interface ValidationResult {
   errors: { path: string; rule: 'required' | 'type'; message: string }[];
 }
 
+/** 控制台專案摘要 */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+/** 控制台使用者（管理畫面用；含指派的專案 id） */
+export interface ConsoleUserView {
+  id: string;
+  username: string;
+  role: 'admin' | 'user';
+  projectIds: string[];
+}
+
+/** 建立使用者的輸入 */
+export interface CreateUserInput {
+  username: string;
+  password: string;
+  role: 'admin' | 'user';
+  projectIds: string[];
+}
+
+/** 更新使用者（帶哪個欄位就改哪個） */
+export interface UpdateUserInput {
+  role?: 'admin' | 'user';
+  password?: string;
+  projectIds?: string[];
+}
+
 /**
  * 樣板/圖片 API。所有方法失敗時 reject 一個訊息已正規化的 Error：
  * 優先取後端 `{ error: string }` 的訊息（含 PDF blob 回應的錯誤分支），呼叫端直接顯示 e.message 即可。
@@ -25,8 +55,10 @@ export class TemplateApiService {
     return this.run(firstValueFrom(this.http.get<TemplateDoc>(`/api/templates/${id}`)));
   }
 
-  create(doc: TemplateDoc): Promise<TemplateDoc> {
-    return this.run(firstValueFrom(this.http.post<TemplateDoc>('/api/templates', doc)));
+  /** 建立樣板；projectId 有值時歸入該專案（控制台在專案內新建用），否則落預設專案。 */
+  create(doc: TemplateDoc, projectId?: string): Promise<TemplateDoc> {
+    const url = projectId ? `/api/templates?projectId=${encodeURIComponent(projectId)}` : '/api/templates';
+    return this.run(firstValueFrom(this.http.post<TemplateDoc>(url, doc)));
   }
 
   update(doc: TemplateDoc): Promise<TemplateDoc> {
@@ -49,6 +81,44 @@ export class TemplateApiService {
     return this.run(firstValueFrom(
       this.http.post<ValidationResult>('/api/validate', { validation, data }),
     ));
+  }
+
+  // ---------- 控制台專案 ----------
+
+  listProjects(): Promise<ProjectSummary[]> {
+    return this.run(firstValueFrom(this.http.get<ProjectSummary[]>('/api/projects')));
+  }
+
+  createProject(name: string): Promise<ProjectSummary> {
+    return this.run(firstValueFrom(this.http.post<ProjectSummary>('/api/projects', { name })));
+  }
+
+  deleteProject(id: string): Promise<void> {
+    return this.run(firstValueFrom(this.http.delete<void>(`/api/projects/${id}`)));
+  }
+
+  listProjectTemplates(projectId: string): Promise<TemplateSummary[]> {
+    return this.run(firstValueFrom(
+      this.http.get<TemplateSummary[]>(`/api/projects/${projectId}/templates`),
+    ));
+  }
+
+  // ---------- 使用者管理（admin） ----------
+
+  listUsers(): Promise<ConsoleUserView[]> {
+    return this.run(firstValueFrom(this.http.get<ConsoleUserView[]>('/api/users')));
+  }
+
+  createUser(input: CreateUserInput): Promise<ConsoleUserView> {
+    return this.run(firstValueFrom(this.http.post<ConsoleUserView>('/api/users', input)));
+  }
+
+  updateUser(id: string, input: UpdateUserInput): Promise<void> {
+    return this.run(firstValueFrom(this.http.patch<void>(`/api/users/${id}`, input)));
+  }
+
+  deleteUser(id: string): Promise<void> {
+    return this.run(firstValueFrom(this.http.delete<void>(`/api/users/${id}`)));
   }
 
   uploadAsset(file: File): Promise<{ id: string }> {

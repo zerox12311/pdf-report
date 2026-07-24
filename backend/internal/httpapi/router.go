@@ -19,16 +19,38 @@ const maxUpload = 10 << 20 // 10MB
 
 // New 組出完整的 HTTP handler（middleware + 路由總表）；main 與測試共用。
 // webRoot 非空時額外 serve 前端靜態檔（單容器部署）；空 = 純 API 模式。
-func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, eng *engine.Engine, webRoot string) http.Handler {
+// sessionSecret 為登入 session 的簽章金鑰（空 → dev 預設，正式必設）。
+func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, users *store.UserStore, projects *store.ProjectStore, eng *engine.Engine, sessionSecret, webRoot string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(slogLogger(), recoverJSON(), cors(), withTenant())
+	r.Use(slogLogger(), recoverJSON(), cors(), sessionMiddleware(sessionSecret), withAuth(users))
 
-	th := &templateHandler{store: templates}
-	rh := &renderHandler{store: templates, eng: eng}
+	th := &templateHandler{store: templates, projects: projects}
+	rh := &renderHandler{store: templates, projects: projects, eng: eng}
 	ah := &assetHandler{store: assets}
 	fh := &fontHandler{store: fonts}
 	vh := &validateHandler{}
+	auth := &authHandler{users: users}
+	ph := &projectHandler{projects: projects, templates: templates}
+	uh := &userHandler{users: users, projects: projects}
+
+	// 控制台登入（開放：login/logout；me/改密碼需登入）
+	r.POST("/api/auth/login", auth.login)
+	r.POST("/api/auth/logout", auth.logout)
+	r.GET("/api/auth/me", auth.me)
+	r.POST("/api/auth/change-password", requireAuth(), auth.changePassword)
+
+	// 控制台專案（皆需登入；建立/刪除為 admin 專屬）
+	r.GET("/api/projects", requireAuth(), ph.list)
+	r.POST("/api/projects", requireAuth(), requireAdmin(), ph.create)
+	r.DELETE("/api/projects/:id", requireAuth(), requireAdmin(), ph.remove)
+	r.GET("/api/projects/:id/templates", requireAuth(), ph.listTemplates)
+
+	// 使用者管理（admin 專屬）
+	r.GET("/api/users", requireAuth(), requireAdmin(), uh.list)
+	r.POST("/api/users", requireAuth(), requireAdmin(), uh.create)
+	r.PATCH("/api/users/:id", requireAuth(), requireAdmin(), uh.update)
+	r.DELETE("/api/users/:id", requireAuth(), requireAdmin(), uh.remove)
 
 	// 路由總表（新增 endpoint 請按資源歸入對應 handler 檔）
 	r.GET("/api/templates", th.list)

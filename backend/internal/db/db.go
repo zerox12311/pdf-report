@@ -15,13 +15,48 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// DefaultTenantID 認證未上線前所有資料歸屬的租戶。
+// DefaultTenantID 目前為單租戶部署，所有資料歸屬此租戶（多租戶 schema 保留給未來）。
 const DefaultTenantID = "default"
+
+// DefaultProjectID 控制台預設專案：既有樣板與未指定專案的建立都掛在這。
+const DefaultProjectID = "default"
 
 // Tenant 租戶（一個宿主系統一個租戶）。
 type Tenant struct {
 	ID        string `gorm:"primaryKey;size:64"`
 	Name      string `gorm:"size:255;not null"`
+	CreatedAt time.Time
+}
+
+// 角色：admin 全功能（使用者管理、建/刪專案、全部專案）；user 只在被指派專案內工作。
+const (
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+)
+
+// User 控制台登入使用者（帳密登入；初始管理員由 env 種）。
+// username 在租戶內唯一。密碼只存 bcrypt 雜湊。
+type User struct {
+	ID           string `gorm:"primaryKey;size:64"`
+	TenantID     string `gorm:"size:64;not null;uniqueIndex:idx_user_tenant_username"`
+	Username     string `gorm:"size:255;not null;uniqueIndex:idx_user_tenant_username"`
+	PasswordHash string `gorm:"size:255;not null"`
+	Role         string `gorm:"size:16;not null;default:'user'"`
+	CreatedAt    time.Time
+}
+
+// Project 專案：租戶底下的 template 分組（JasperReports 式控制台的中間層）。
+type Project struct {
+	ID        string `gorm:"primaryKey;size:64"`
+	TenantID  string `gorm:"size:64;not null;index"`
+	Name      string `gorm:"size:255;not null"`
+	CreatedAt time.Time
+}
+
+// ProjectMember 專案成員：user 角色只看得到自己是成員的專案（admin 不受此限）。
+type ProjectMember struct {
+	UserID    string `gorm:"size:64;not null;primaryKey"`
+	ProjectID string `gorm:"size:64;not null;primaryKey"`
 	CreatedAt time.Time
 }
 
@@ -36,9 +71,11 @@ type APIKey struct {
 }
 
 // Template 樣板：完整文件存 JSONB（raw passthrough），Name 冗餘存放供清單查詢。
+// ProjectID 為所屬專案（控制台分組用）；既有資料由 migrate 補為 DefaultProjectID。
 type Template struct {
 	ID        string `gorm:"primaryKey;size:64"`
 	TenantID  string `gorm:"size:64;not null;index"`
+	ProjectID string `gorm:"size:64;not null;default:'';index"`
 	Name      string `gorm:"size:255;not null"`
 	Doc       datatypes.JSON `gorm:"not null"`
 	CreatedAt time.Time
@@ -72,11 +109,22 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := g.AutoMigrate(&Tenant{}, &APIKey{}, &Template{}, &Asset{}, &Font{}); err != nil {
+	if err := g.AutoMigrate(&Tenant{}, &APIKey{}, &User{}, &Project{}, &ProjectMember{}, &Template{}, &Asset{}, &Font{}); err != nil {
 		return nil, err
 	}
 	if err := g.Where(Tenant{ID: DefaultTenantID}).
 		FirstOrCreate(&Tenant{ID: DefaultTenantID, Name: "預設租戶"}).Error; err != nil {
+		return nil, err
+	}
+	// 預設專案：既有樣板與未指定專案的建立都掛這；控制台至少有一個專案可用。
+	if err := g.Where(Project{ID: DefaultProjectID}).
+		FirstOrCreate(&Project{ID: DefaultProjectID, TenantID: DefaultTenantID, Name: "預設專案"}).Error; err != nil {
+		return nil, err
+	}
+	// 既有樣板（升級前無 project_id）補進預設專案。
+	if err := g.Model(&Template{}).
+		Where("project_id = '' OR project_id IS NULL").
+		Update("project_id", DefaultProjectID).Error; err != nil {
 		return nil, err
 	}
 	return g, nil

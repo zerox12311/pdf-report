@@ -5,6 +5,7 @@ import {
   RectElement, TableCell, TableElement, TemplateElement, cornerRadiiOf,
 } from '../../core/models/template.model';
 import { FontService } from '../../core/services/font.service';
+import { ModalService } from '../../core/services/modal.service';
 import { EditorStateService } from './editor-state.service';
 import { PagePropertiesComponent } from './properties/page-properties.component';
 import { TextStyleFormComponent } from './properties/text-style-form.component';
@@ -548,6 +549,7 @@ import { ScrubDirective } from './scrub.directive';
 export class PropertiesPanelComponent {
   state = inject(EditorStateService);
   fontSvc = inject(FontService);
+  private modal = inject(ModalService);
 
   selectedTableCell = computed<TableCell | null>(() => {
     const el = this.state.selected();
@@ -638,7 +640,7 @@ export class PropertiesPanelComponent {
 
   mergeCells(el: TableElement) {
     const err = this.state.mergeSelectedCells(el.id);
-    if (err) alert(err);
+    if (err) void this.modal.alert({ title: '無法合併儲存格', message: err });
   }
 
   unmergeCell(el: TableElement) {

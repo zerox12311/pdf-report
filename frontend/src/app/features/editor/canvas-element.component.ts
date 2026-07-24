@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
 import { CellBorders, FontFamily, RectElement, TableCell, TableElement, TemplateElement, cornerRadiiOf, coveredCells, fontCss } from '../../core/models/template.model';
 import { formatValue } from '../../core/utils/format-value';
+import { ModalService } from '../../core/services/modal.service';
 import { ContextMenuItem, EditorStateService } from './editor-state.service';
 import { DataKeyPayload, paletteToCellPatch } from './element-factory';
 
@@ -259,6 +260,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
 })
 export class CanvasElementComponent {
   state = inject(EditorStateService);
+  private modal = inject(ModalService);
   z = this.state.zoom;
   el = input.required<TemplateElement>();
 
@@ -686,7 +688,7 @@ export class CanvasElementComponent {
         disabled: !inRange,
         run: () => {
           const err = this.state.mergeSelectedCells(el.id);
-          if (err) alert(err);
+          if (err) void this.modal.alert({ title: '無法合併儲存格', message: err });
         },
       },
       ...(merged ? [{ label: '取消合併', run: () => this.state.unmergeCell(el.id, r, c) }] : []),

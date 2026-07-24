@@ -14,7 +14,7 @@
   - `features/editor/properties-panel.component.ts` — 屬性面板
   - **「新增一種元件」的檔案鏈**：template.model.ts → engine/models.go →（引擎 drawElement case）→ element-factory.ts → canvas-element.component.ts → properties-panel.component.ts，最後更新 docs/editor.md＋engine.md
 - `backend/` — Go（**Gin**）＋ gopdf ＋ boombuler/barcode ＋ **PostgreSQL/GORM**。
-  - `cmd/server/` 進入點（env：`PORT`、`STORAGE_ROOT`、`FONTS_DIR`、`DATABASE_URL`（必填，Postgres-only）、`WEB_ROOT`（前端靜態檔目錄，空 = 純 API 模式；Docker 單容器部署時設，見 `httpapi/spa.go`））
+  - `cmd/server/` 進入點（env：`PORT`、`STORAGE_ROOT`、`FONTS_DIR`、`DATABASE_URL`（必填，Postgres-only）、`WEB_ROOT`（前端靜態檔目錄，空 = 純 API 模式；Docker 單容器部署時設，見 `httpapi/spa.go`）、`ADMIN_USER`/`ADMIN_PASSWORD`（控制台初始管理員，僅 user 表空時種）、`SESSION_SECRET`（登入 session 簽章））
   - `internal/db/` GORM models（多租戶：tenants/api_keys/templates JSONB/assets/fonts）＋ Open/migrate
   - `internal/store/` 資料存取：結構化資料走 DB、圖片/字型二進位留檔案系統；方法都帶 tenantID；ImportLegacy 一次性匯入舊檔案資料
   - `internal/engine/` 報表引擎（本專案核心）
@@ -73,7 +73,9 @@ docker compose up -d --build                                  # 完整 demo（�
 
 ## 產品化 roadmap（已確認的方向）
 
-- 認證：API key（宿主後端，DB 存雜湊，schema 已建）＋ 短效嵌入 token（iframe 編輯器用，宿主拿 key 換 token）——**下一階段實作**，withTenant middleware 是掛載點。端點/交換流程/token 格式**尚未定案**：實作前先提設計給使用者確認，不要自行拍板。
+- 認證，兩條線：
+  - **設計者控制台（帳密登入＋角色）＝已完成**：JasperReports 式登入→專案→樣板，httpOnly cookie session（`withAuth`/`requireAuth`/`requireAdmin`）＋ env 種初始管理員（自癒）。admin/user 兩角色、專案成員授權（`ProjectMember`）、使用者管理畫面。授權走單一 `authorizeProject` chokepoint（碰樣板端點都過）。詳見 docs/console.md。**登入 user 的樣板存取已依專案成員上鎖**；**無 session 的 iframe/宿主呼叫維持開放**（樣板/render/asset），真正對嵌入端上鎖等下一階段。
+  - **宿主整合（機器對機器）＝下一階段**：API key（宿主後端，DB 存雜湊，schema 已建）＋ 短效嵌入 token（iframe 編輯器用，宿主拿 key 換 token）。端點/交換流程/token 格式**尚未定案**：實作前先提設計給使用者確認，不要自行拍板。
 - ORM 選 GORM、多租戶模型已確認；HTTP 框架選 **Gin**（使用者為了學習指定，從 chi 換過來）。
 
 ## 產品方向備忘

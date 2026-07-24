@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PAPER_PRESETS, TemplateDoc, Watermark, mmToPt, ptToMm } from '../../../core/models/template.model';
+import { ModalService } from '../../../core/services/modal.service';
 import { EditorStateService } from '../editor-state.service';
 import { WatermarkFormComponent } from './watermark-form.component';
 
@@ -128,6 +129,7 @@ import { WatermarkFormComponent } from './watermark-form.component';
 })
 export class PagePropertiesComponent {
   state = inject(EditorStateService);
+  private modal = inject(ModalService);
   papers = PAPER_PRESETS;
 
   /** Word 式邊界預設（pt）；custom 代表目前值不符任何預設 */
@@ -179,10 +181,14 @@ export class PagePropertiesComponent {
     return Math.round(ptToMm(pt) * 10) / 10;
   }
 
-  removeSection() {
-    if (confirm(`刪除節「${this.sec().name}」？此節上的元素會一併刪除。`)) {
-      this.state.removeSection(this.sec().id);
-    }
+  async removeSection() {
+    const ok = await this.modal.confirm({
+      title: '刪除節',
+      message: `刪除節「${this.sec().name}」？此節上的元素會一併刪除。`,
+      confirmLabel: '刪除',
+      danger: true,
+    });
+    if (ok) this.state.removeSection(this.sec().id);
   }
 
   /** 下拉顯示值：目前節的紙張；不在預設清單內一律視為自訂 */
