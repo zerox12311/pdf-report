@@ -379,6 +379,7 @@ func TestImageURLBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := NewEngine("../../fonts", nil)
+	e.SetAllowPrivateImageHosts(true) // httptest 在 loopback，測試放行（正式擋 SSRF）
 	data := map[string]any{
 		"logoUrl": srv.URL + "/img.png",
 		"items": []any{

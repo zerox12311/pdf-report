@@ -1,15 +1,16 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { MenuItem } from 'primeng/api';
+import { BreadcrumbModule } from 'primeng/breadcrumb';
 
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-change-password',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, BreadcrumbModule],
   template: `
-    <div class="crumbs"><a (click)="back()">← 返回</a></div>
+    <p-breadcrumb [home]="home" [model]="crumbs" />
     <form class="card" (ngSubmit)="submit()">
       <h1>修改密碼</h1>
       <label>目前密碼
@@ -27,8 +28,7 @@ import { AuthService } from '../../core/services/auth.service';
     </form>
   `,
   styles: `
-    .crumbs { font-size: 13px; margin-bottom: 12px; }
-    .crumbs a { color: #2563eb; cursor: pointer; }
+    p-breadcrumb { display: block; margin-bottom: 14px; }
     .card { max-width: 380px; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
       padding: 28px; display: flex; flex-direction: column; gap: 14px; }
     h1 { font-size: 19px; margin: 0; }
@@ -44,7 +44,9 @@ import { AuthService } from '../../core/services/auth.service';
 })
 export class ChangePasswordComponent {
   private auth = inject(AuthService);
-  private router = inject(Router);
+
+  readonly home: MenuItem = { icon: 'pi pi-home', routerLink: '/' };
+  readonly crumbs: MenuItem[] = [{ label: '修改密碼' }];
 
   oldPassword = '';
   newPassword = '';
@@ -52,10 +54,6 @@ export class ChangePasswordComponent {
   error = signal('');
   done = signal(false);
   busy = signal(false);
-
-  back() {
-    this.router.navigateByUrl('/');
-  }
 
   async submit() {
     if (this.busy()) return;

@@ -35,36 +35,59 @@ Tenant（租戶／組織，目前單租戶 default）
 | `/login` | 帳密登入（已登入自動轉進控制台） | 公開 |
 | `/`（專案清單） | admin：列出／建立／刪除全部專案；user：只列被指派專案 | 需登入 |
 | `/projects/:id` | 該專案的樣板清單（新增／開啟／刪除） | 需登入 |
+| `/projects/:id/settings` | 專案設定（API 金鑰簽發／撤銷；未來專案改名、成員授權） | **僅 admin** |
 | `/users` | 使用者管理 | **僅 admin** |
 | `/account/password` | 修改密碼 | 需登入 |
-| `/editor/:id`、`/editor/new` | 既有編輯器 | **不掛 guard** |
+| `/editor/:id`、`/editor/new` | 既有編輯器 | `editorGuard`：直接開分頁需 session；iframe 嵌入或 URL 帶 `#token=` 放行（走 embed token） |
 
-- **route guard 只掛控制台路由**；`/editor/*` **不掛 guard**——iframe 嵌入開編輯器沒有 session，掛了會被轉登入、嵌入即壞。`/users` 掛 `adminGuard`（非 admin 轉回首頁）。
+- **控制台路由掛 `authGuard`**（需 session）；`/editor/*` 掛 `editorGuard`：直接開分頁需 session、**iframe 嵌入（`window.parent !== window`）或 URL 帶 `#token=` 放行**（沒 session 也給進，改由 embed token 授權；後端仍鎖，沒 token → 401 → 空樣板，不外洩）。`/users` 掛 `adminGuard`（非 admin 轉回首頁）。
 - 控制台在專案內「新增樣板」→ `/editor/new?project=<id>`；編輯器首次儲存時把 `project` 帶到 `POST /api/templates?projectId=<id>`，樣板即歸入該專案。
-- 編輯器左上「返回」：從專案進來 → 回該專案；否則回控制台首頁；**iframe 嵌入時隱藏**。
+- 編輯器左上「返回」：回**樣板所屬專案**（既有樣板由 `GET /api/templates/:id` 的 `X-Project-Id` header 得知，重載／書籤／深連結都正確；專案內新建則用帶入的 `?project=`），都無法判定才回控制台首頁；**iframe 嵌入時隱藏**。
 
-## 授權強制（單一 chokepoint）
+## 授權強制（三來源身分）
 
-所有會碰樣板的端點都先解析出「有效 projectID」，再過同一個 `authorizeProject`：
+**所有資料端點需憑證（`requireAny`）**，匿名一律 **401**（無憑證後門一律關掉，擋 render-by-id 資料外洩、adhoc render SSRF）。身分三來源擇一（`withAuth`）：
 
-- **無 session（iframe／宿主呼叫）→ 放行**（維持既有開放路徑）
-- **admin → 放行**
-- **該專案成員 → 放行**
-- 否則 → **403**
+- **session cookie** → 控制台使用者
+- **API key**（`Authorization: Bearer pdftpl_…`）→ 宿主後端，綁一個專案
+- **embed token**（`Authorization: Bearer <JWT>`）→ iframe，綁單一 template
 
-套用範圍：樣板 `list`（扁平清單依可存取專案過濾）／`create`（含未帶 projectId 落預設專案的情形）／`get`／`update`（含 PUT 不存在 id 會建到預設專案）／`delete`／`render-by-id`，以及專案樣板清單。`requireAdmin` 另外守使用者管理與建立／刪除專案。
+碰樣板的端點過單一授權 chokepoint，依 principal：
 
-## 與 iframe 嵌入的關係（安全邊界）
+| 動作 | user | apikey | embed |
+|---|---|---|---|
+| get/put/delete/render-by-id 某張 | admin 或該專案成員 | 同專案 | **同一張 template** |
+| 建樣板 | admin/成員 | 綁的專案 | ✗ 403 |
+| 列樣板 | 依成員過濾 | 該專案 | ✗ 403 |
+| adhoc render 預覽／assets／fonts／validate | ✓ | ✓ | ✓ |
 
-- **控制台使用者（帶 session）**：樣板存取已依角色與專案成員**真正上鎖**（user 碰非成員專案一律 403）。
-- **無 session（iframe 嵌入、宿主呼叫）**：`/api/templates*`、render、`/editor/:id` 仍**開放**（落 `default` 租戶）——因為 iframe 嵌入要用、嵌入端的認證（短效 embed token）是**下一階段**。所以不帶 cookie 直接打樣板 API 目前仍繞得過。
-- **assets／字型是租戶層、非專案層**：登入的 user 仍能憑 id 抓同租戶任何圖／字型（id 為 128-bit 隨機值、字型本就全租戶共用）。這輪**不納入**專案授權。
+`requireAdmin` 另守使用者管理、建/刪專案、金鑰管理。
+
+## 宿主整合（API key ＋ embed token）
+
+Stripe 式兩段憑證（完整流程見 [embed.md](embed.md)）：
+
+- **API key**：admin 在**專案設定頁**（`/projects/:id/settings`，從專案頁右上「⚙ 專案設定」進入）簽發（明文只顯示一次、只存雜湊、可撤銷），綁該專案，**只放宿主後端**。可在該專案內建 template、換 embed token、正式 render-by-id。
+- **embed token**：宿主後端用 API key 打 `POST /api/embed-token` 換得，短效 JWT、綁單一 template，經 postMessage 交給 iframe，iframe 之後 `Authorization: Bearer`。
+- iframe 編輯器在嵌入情境會**等收到 token 才載入**，並隱藏返回控制台/連接/樣板JSON/資料驗證等元素。
+
+## 其他邊界
+
+- **assets／字型是租戶層**：任何 principal 都能憑 id 抓同租戶的圖/字型（id 隨機、字型全租戶共用）。這輪不綁 scope。
+- **圖片 URL 抓取有 SSRF 防護**：render 會抓樣板裡的圖片 URL，已擋 loopback/private/link-local/metadata IP（含 DNS rebinding）。
+- **尚待強化**：adhoc render 速率限制、`/api/embed-token {}` 便利捷徑節流、template 級 API key、CORS origin 白名單、postMessage origin 驗證。
+
+## 部署安全須知
+
+- **`SESSION_SECRET` 正式部署必設**：未設時 session cookie 用不安全的 dev 預設簽章、可被偽造 → 全面淪陷。`WEB_ROOT` 非空（單容器 serve 前端）時未設會**拒啟動**。
+- session cookie 已 `HttpOnly`＋`SameSite=Lax`（Lax 讓跨站 POST/fetch 不帶 cookie → 一定程度 CSRF 防護）。正式部署走 https，cookie 的 `Secure` 旗標建議由反向代理設定。
+- **登入尚無速率限制**（bcrypt 本身拖慢暴力破解，但非完整防護）——建議後續補上 per-帳號/IP 節流。
 
 ## 後端落點
 
 - `internal/db`：`User`（含 role）、`Project`、`ProjectMember` model；`Template.ProjectID`；migrate 種預設專案並把既有樣板補進去。
-- `internal/store/console.go`：`UserStore`（含 `SeedAdmin` 自癒、bcrypt、角色）、`ProjectStore`（含成員 `IsMember`/`SetMembers`/`ListForUser`）。
-- `internal/httpapi`：`auth_handler.go`、`project_handler.go`、`user_handler.go`；`middleware.go` 的 `sessionMiddleware`／`withAuth`（有 session→載入 role）／`requireAuth`／`requireAdmin`／`authorizeProject`。
-- env：`ADMIN_USER`、`ADMIN_PASSWORD`、`SESSION_SECRET`。
+- `internal/store/console.go`：`UserStore`（含 `SeedAdmin` 自癒、bcrypt、角色）、`ProjectStore`（含成員 `IsMember`/`SetMembers`/`ListForUser`）；`internal/store/apikey.go`：`APIKeyStore`（Create/Verify/List/Delete，SHA-256 雜湊）。
+- `internal/httpapi`：`auth_handler.go`、`project_handler.go`、`user_handler.go`、`key_handler.go`、`embed_handler.go`、`embed_token.go`（JWT 簽/驗）；`middleware.go` 的 `sessionMiddleware`／`withAuth`（三來源 principal）／`requireAuth`（session）／`requireAdmin`／`requireAPIKey`／`requireAny`／`authorizeTemplate`／`authorizeCreateInProject`。
+- env：`ADMIN_USER`、`ADMIN_PASSWORD`、`SESSION_SECRET`（也當 embed token 簽章金鑰）。
 
 端點契約見 [api.md](api.md)。

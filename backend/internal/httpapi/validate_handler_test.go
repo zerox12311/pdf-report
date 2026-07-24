@@ -15,7 +15,8 @@ const validatedTemplate = `{"name":"v","page":{"width":595.28,"height":841.89,"h
 	"validation":{"enabled":true,"fields":[{"path":"who","required":true,"type":"string"}]}}`
 
 func TestRenderByIDValidationGuard(t *testing.T) {
-	h, templates, _, _ := newTestServer(t)
+	h, templates, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 	id, _, err := templates.Save(db.DefaultTenantID, "", []byte(validatedTemplate), "")
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +47,8 @@ func TestRenderByIDValidationGuard(t *testing.T) {
 }
 
 func TestValidateEndpoint(t *testing.T) {
-	h, _, _, _ := newTestServer(t)
+	h, _, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 
 	// 不過 → ok:false + errors
 	rec := doJSON(h, "POST", "/api/validate",

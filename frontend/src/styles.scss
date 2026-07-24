@@ -1,3 +1,6 @@
+/* PrimeNG 圖示（麵包屑分隔符/home 等元件用） */
+@import 'primeicons/primeicons.css';
+
 /* 編輯畫布用的字型 —— 與 PDF 渲染共用同一個 TTF 檔，讓編輯時的外觀貼近輸出 */
 @font-face {
   font-family: 'Noto Sans TC';
@@ -39,3 +42,10 @@ html, body {
   font-family: 'Noto Sans TC', -apple-system, 'Segoe UI', sans-serif;
   background: #f1f5f9;
 }
+
+/* 表單元素預設不繼承頁面字型（用瀏覽器內建字型），會讓中文字體與畫面不一致 —— 統一繼承。
+   只繼承 font-family，不動 font-size/weight，避免影響各元件既有尺寸。 */
+button, input, select, textarea {
+  font-family: inherit;
+}
+

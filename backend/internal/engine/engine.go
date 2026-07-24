@@ -2,12 +2,15 @@ package engine
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 	"image"
 	"image/draw"
@@ -67,6 +70,10 @@ type Engine struct {
 	userFontsDir string // 使用者匯入字型目錄（空 = 停用）
 	assets       AssetSource
 
+	// 圖片 URL 下載是否允許私有/loopback/link-local 目標。預設 false（擋 SSRF：
+	// render 會去抓樣板裡的圖片 URL，未擋則嵌入端使用者可指內網/雲端 metadata）。測試放行本機 httptest。
+	allowPrivateImageHosts bool
+
 	fontOnce sync.Once
 	fontData map[string][]byte // 家族名（含 -bold）→ TTF bytes，首次渲染載入後常駐
 
@@ -78,6 +85,9 @@ type Engine struct {
 func NewEngine(fontsDir string, assets AssetSource) *Engine {
 	return &Engine{fontsDir: fontsDir, assets: assets}
 }
+
+// SetAllowPrivateImageHosts 放行圖片 URL 抓取私有/loopback 目標（僅測試用；正式勿開）。
+func (e *Engine) SetAllowPrivateImageHosts(v bool) { e.allowPrivateImageHosts = v }
 
 // SetUserFontsDir 啟用使用者匯入字型（掃描 dir 下的 {id}.ttf）。
 func (e *Engine) SetUserFontsDir(dir string) { e.userFontsDir = dir }
@@ -611,7 +621,7 @@ func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, to
 		} else {
 			pdf.AddPageWithOption(gopdf.PageOption{PageSize: &gopdf.Rect{W: l.pageW, H: l.pageH}})
 		}
-		ctx := &drawCtx{pdf: pdf, data: l.data, root: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache}
+		ctx := &drawCtx{pdf: pdf, data: l.data, root: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache, allowPrivateHosts: e.allowPrivateImageHosts}
 		wm := l.doc.Page.Watermark
 		// 本頁內容（keep：依 AboveWatermark 過濾——上層浮水印時分兩批畫，
 		// 讓勾了「置於浮水印之上」的元素不被浮水印蓋住）
@@ -864,7 +874,8 @@ type drawCtx struct {
 	assets AssetSource
 	warn   WarnFunc // 渲染警告回報；nil = 不收集
 	// 動態圖片 URL 下載快取（同一次渲染共用；nil 值 = 抓過但失敗，不重試）
-	imgCache map[string][]byte
+	imgCache          map[string][]byte
+	allowPrivateHosts bool // 圖片 URL 是否放行私有目標（SSRF 防護；預設擋）
 
 	// 重複區塊（list）子元素的上下文：root = 整份資料（$sum 等全域彙總）；
 	// parentData = 外層當筆（$parent. 解析）。頂層繪製時皆 nil（root 退回 data）。
@@ -1285,8 +1296,7 @@ func (c *drawCtx) fetchImage(rawURL string) []byte {
 		warn("圖片 URL 不合法（僅支援 http/https）：" + rawURL)
 		return remember(nil)
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(rawURL)
+	resp, err := imageHTTPClient(c.allowPrivateHosts).Get(rawURL)
 	if err != nil {
 		warn("圖片 URL 下載失敗：" + rawURL)
 		return remember(nil)
@@ -1307,6 +1317,38 @@ func (c *drawCtx) fetchImage(rawURL string) []byte {
 		return remember(nil)
 	}
 	return remember(data)
+}
+
+var errBlockedImageHost = errors.New("blocked non-public host (SSRF guard)")
+
+// imageHTTPClient 圖片 URL 下載用的 client。allowPrivate=false（正式）時用 dialer.Control
+// 在「DNS 解析後、實際要連的 IP」上擋掉 loopback/private/link-local/metadata——
+// 因為檢查的是要連的 IP 而非主機名，順帶擋掉 DNS rebinding。
+func imageHTTPClient(allowPrivate bool) *http.Client {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	if !allowPrivate {
+		dialer.Control = func(_, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || isBlockedImageIP(ip) {
+				return errBlockedImageHost
+			}
+			return nil
+		}
+	}
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
+}
+
+// isBlockedImageIP 私有/內網類位址（含雲端 metadata 169.254.169.254 屬 link-local）。
+func isBlockedImageIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast()
 }
 
 // drawImageURLRect 抓取圖片 URL 並畫在指定矩形內；URL 空或抓取失敗時略過（警告已發）。

@@ -22,6 +22,8 @@ export interface ModalState {
     minLength?: number;
     error?: string;
   };
+  /** 有值 = 顯示一格唯讀、可一鍵複製的內容（例如只顯示一次的 API 金鑰明文） */
+  copy?: string;
   buttons: ModalButton[];
   /** 背景/Esc 取消時 resolve 的值 */
   cancelValue: unknown;
@@ -92,13 +94,14 @@ export class ModalService {
     });
   }
 
-  /** 訊息告知（單一確定鈕）。 */
-  alert(opts: { title: string; message?: string }): Promise<void> {
+  /** 訊息告知（單一確定鈕）。`copy` 有值時多顯示一格可一鍵複製的內容。 */
+  alert(opts: { title: string; message?: string; copy?: string }): Promise<void> {
     return new Promise<void>(resolve => {
       this.open(
         {
           title: opts.title,
           message: opts.message,
+          copy: opts.copy,
           buttons: [{ label: '確定', value: undefined, kind: 'primary' }],
           cancelValue: undefined,
         },

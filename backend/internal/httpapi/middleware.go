@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -17,44 +18,69 @@ import (
 )
 
 const (
-	tenantKey = "tenantID"
-	userKey   = "userID"
-	roleKey   = "role"
+	tenantKey    = "tenantID"
+	userKey      = "userID"
+	roleKey      = "role"
+	principalKey = "principal"
 
 	// session 內的鍵
 	sessUserID   = "uid"
 	sessTenantID = "tid"
 
 	sessionCookieName = "pdfsess"
+
+	// 身分種類
+	principalUser   = "user"   // 控制台 session
+	principalAPIKey = "apikey" // 宿主後端 API key
+	principalEmbed  = "embed"  // iframe embed token
 )
 
-// tenantOf 取本請求的租戶 id（由 withAuth middleware 塞入）。
-func tenantOf(c *gin.Context) string {
-	return c.GetString(tenantKey)
+// principal 本請求的身分（三來源擇一）。
+type principal struct {
+	kind       string
+	tenantID   string
+	userID     string // user
+	role       string // user
+	projectID  string // apikey（key 綁的專案）／embed（template 所屬專案）
+	templateID string // embed（鎖定的那張）
 }
 
-// userOf 取本請求已登入的使用者 id（未登入 = 空字串）。
-func userOf(c *gin.Context) string {
-	return c.GetString(userKey)
+// setPrincipal 設身分，並塞相容用的 tenant/user/role 鍵。
+func setPrincipal(c *gin.Context, p principal) {
+	c.Set(principalKey, p)
+	c.Set(tenantKey, p.tenantID)
+	if p.kind == principalUser {
+		c.Set(userKey, p.userID)
+		c.Set(roleKey, p.role)
+	}
 }
 
-// roleOf 取本請求登入者的角色（未登入 = 空字串）。
-func roleOf(c *gin.Context) string {
-	return c.GetString(roleKey)
+func principalOf(c *gin.Context) principal {
+	if v, ok := c.Get(principalKey); ok {
+		if p, ok := v.(principal); ok {
+			return p
+		}
+	}
+	return principal{}
 }
 
-// isAdmin 本請求是否為 admin。
-func isAdmin(c *gin.Context) bool {
-	return roleOf(c) == db.RoleAdmin
-}
+func principalKind(c *gin.Context) string { return principalOf(c).kind }
+
+// tenantOf 取本請求的租戶 id。
+func tenantOf(c *gin.Context) string { return c.GetString(tenantKey) }
+
+// userOf 取本請求登入使用者 id（非 session 身分 = 空字串）。
+func userOf(c *gin.Context) string { return c.GetString(userKey) }
+
+// roleOf 取本請求登入者角色。
+func roleOf(c *gin.Context) string { return c.GetString(roleKey) }
+
+// isAdmin 本請求是否為 admin（session 使用者）。
+func isAdmin(c *gin.Context) bool { return roleOf(c) == db.RoleAdmin }
 
 // sessionMiddleware 設定 gin-contrib/sessions 的 cookie store（httpOnly、簽章）。
-// secret 空時退回一組固定 dev 值（本機/測試方便；正式部署必設 SESSION_SECRET）。
 func sessionMiddleware(secret string) gin.HandlerFunc {
-	if secret == "" {
-		secret = "dev-insecure-session-secret"
-	}
-	store := cookie.NewStore([]byte(secret))
+	store := cookie.NewStore([]byte(resolveSecret(secret)))
 	store.Options(sessions.Options{
 		Path:     "/",
 		MaxAge:   7 * 24 * 3600, // 7 天
@@ -64,49 +90,82 @@ func sessionMiddleware(secret string) gin.HandlerFunc {
 	return sessions.Sessions(sessionCookieName, store)
 }
 
-// withAuth 解析登入 session：有效 session → 載入使用者、設租戶＋使用者＋角色；
-// 沒帶（iframe 嵌入、宿主呼叫）→ 退回預設租戶，維持既有開放路徑不變。
-// 有 session 時才多查一次 user（順帶清掉已被刪的使用者）；iframe 無此成本。
-// iframe 那條的正式上鎖（嵌入 token）為之後階段。
-func withAuth(users *store.UserStore) gin.HandlerFunc {
+// withAuth 解析身分，三來源擇一：
+//  1. Authorization: Bearer <api-key>（pdftpl_ 前綴）→ 宿主後端
+//  2. Authorization: Bearer <jwt>                    → iframe embed token
+//  3. session cookie                                 → 控制台使用者
+//
+// 帶了 Authorization 但驗不過 → 401（不誤放）。都沒帶 → 匿名（落預設租戶，之後被 guard 擋）。
+func withAuth(users *store.UserStore, keys *store.APIKeyStore, secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if bearer, ok := bearerToken(c); ok {
+			if store.HasAPIKeyPrefix(bearer) {
+				rec, err := keys.Verify(bearer)
+				if err != nil {
+					abortUnauthorized(c, "無效的 API 金鑰")
+					return
+				}
+				setPrincipal(c, principal{kind: principalAPIKey, tenantID: rec.TenantID, projectID: rec.ProjectID})
+				c.Next()
+				return
+			}
+			claims, err := parseEmbedToken(bearer, secret)
+			if err != nil {
+				abortUnauthorized(c, "無效或過期的 token")
+				return
+			}
+			setPrincipal(c, principal{kind: principalEmbed, tenantID: claims.Tenant, projectID: claims.ProjectID, templateID: claims.TemplateID})
+			c.Next()
+			return
+		}
+
 		s := sessions.Default(c)
 		uid, _ := s.Get(sessUserID).(string)
 		tid, _ := s.Get(sessTenantID).(string)
 		if uid != "" && tid != "" {
 			u, err := users.GetByID(uid)
 			if err == nil {
-				c.Set(userKey, u.ID)
-				c.Set(tenantKey, u.TenantID)
-				c.Set(roleKey, u.Role)
+				setPrincipal(c, principal{kind: principalUser, tenantID: u.TenantID, userID: u.ID, role: u.Role})
 				c.Next()
 				return
 			}
 			if !errors.Is(err, os.ErrNotExist) {
-				// DB 錯誤（非「使用者不存在」）→ 500，不要誤判成未登入
-				httpInternalError(c, err)
+				httpInternalError(c, err) // DB 錯誤 → 500，不誤判成未登入
 				c.Abort()
 				return
 			}
-			// 使用者已被刪 → 當未登入，落預設租戶
+			// 使用者已被刪 → 當匿名
 		}
 		c.Set(tenantKey, db.DefaultTenantID)
 		c.Next()
 	}
 }
 
-// requireAuth 守住控制台專用端點：未登入 → 401。
+// bearerToken 取 Authorization: Bearer 的值。
+func bearerToken(c *gin.Context) (string, bool) {
+	v := c.GetHeader("Authorization")
+	if t, ok := strings.CutPrefix(v, "Bearer "); ok && t != "" {
+		return t, true
+	}
+	return "", false
+}
+
+func abortUnauthorized(c *gin.Context, msg string) {
+	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": msg})
+}
+
+// requireAuth 控制台端點：需 session 使用者身分。
 func requireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if userOf(c) == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "請先登入"})
+		if principalKind(c) != principalUser {
+			abortUnauthorized(c, "請先登入")
 			return
 		}
 		c.Next()
 	}
 }
 
-// requireAdmin 守住 admin 專屬端點（使用者管理、建/刪專案）：非 admin → 403。
+// requireAdmin admin 專屬（使用者管理、建/刪專案、金鑰管理）：非 admin → 403。
 func requireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !isAdmin(c) {
@@ -117,31 +176,77 @@ func requireAdmin() gin.HandlerFunc {
 	}
 }
 
-// authorizeProject 樣板相關端點的授權 chokepoint：
-//   - 無 session（iframe 嵌入 / 宿主呼叫）→ 放行（維持既有開放路徑）
-//   - admin → 放行
-//   - 該專案成員 → 放行
-//   - 否則 → 403、回傳 false
-//
-// 每條會碰樣板的端點都先解析出「有效 projectID」再過這個函式，集中一處避免漏洞。
-func authorizeProject(c *gin.Context, projects *store.ProjectStore, projectID string) bool {
-	uid := userOf(c)
-	if uid == "" {
-		return true // 無登入 → iframe/宿主路徑，維持開放
+// requireAPIKey embed token 簽發端點：需宿主後端 API key 身分。
+func requireAPIKey() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if principalKind(c) != principalAPIKey {
+			abortUnauthorized(c, "需要 API 金鑰")
+			return
+		}
+		c.Next()
 	}
+}
+
+// requireAny 資料端點：三來源任一皆可，匿名 → 401。
+func requireAny() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if principalKind(c) == "" {
+			abortUnauthorized(c, "需要憑證")
+			return
+		}
+		c.Next()
+	}
+}
+
+// authorizeTemplate 存取「某一張樣板」(get/put/delete/render-by-id) 的授權 chokepoint：
+//   - user  → admin 或 該樣板所屬專案的成員
+//   - apikey → key 綁的專案 == 該樣板所屬專案
+//   - embed → token 鎖的 templateID == 該樣板 id
+//
+// tmplProjectID 是樣板所屬專案、templateID 是樣板 id；不過 → 403、回傳 false。
+func authorizeTemplate(c *gin.Context, projects *store.ProjectStore, tmplProjectID, templateID string) bool {
+	switch principalKind(c) {
+	case principalUser:
+		return authorizeUserProject(c, projects, tmplProjectID)
+	case principalAPIKey:
+		return principalOf(c).projectID == tmplProjectID || forbidTemplate(c)
+	case principalEmbed:
+		return principalOf(c).templateID == templateID || forbidTemplate(c)
+	}
+	return forbidTemplate(c)
+}
+
+// authorizeCreateInProject 在某專案建立樣板的授權：
+//   - user  → admin 或成員；apikey → 綁的專案；embed → 不可建（403）。
+func authorizeCreateInProject(c *gin.Context, projects *store.ProjectStore, projectID string) bool {
+	switch principalKind(c) {
+	case principalUser:
+		return authorizeUserProject(c, projects, projectID)
+	case principalAPIKey:
+		return principalOf(c).projectID == projectID || forbidTemplate(c)
+	}
+	return forbidTemplate(c) // embed 不能建新樣板
+}
+
+// authorizeUserProject 使用者對專案 (admin/member)。
+func authorizeUserProject(c *gin.Context, projects *store.ProjectStore, projectID string) bool {
 	if isAdmin(c) {
 		return true
 	}
-	ok, err := projects.IsMember(uid, projectID)
+	ok, err := projects.IsMember(userOf(c), projectID)
 	if err != nil {
 		httpInternalError(c, err)
 		return false
 	}
 	if !ok {
-		httpError(c, http.StatusForbidden, errors.New("沒有此專案的存取權"))
-		return false
+		return forbidTemplate(c)
 	}
 	return true
+}
+
+func forbidTemplate(c *gin.Context) bool {
+	httpError(c, http.StatusForbidden, errors.New("沒有此資源的存取權"))
+	return false
 }
 
 func slogLogger() gin.HandlerFunc {
@@ -173,8 +278,9 @@ func recoverJSON() gin.HandlerFunc {
 func cors() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Header("Access-Control-Expose-Headers", "X-Project-Id, X-Render-Warnings, X-Render-Warnings-Count")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return

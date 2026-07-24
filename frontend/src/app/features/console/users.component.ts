@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { MenuItem } from 'primeng/api';
+import { BreadcrumbModule } from 'primeng/breadcrumb';
 import { MultiSelect } from 'primeng/multiselect';
 
 import { AuthService } from '../../core/services/auth.service';
@@ -14,9 +15,9 @@ import {
 @Component({
   selector: 'app-users',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, MultiSelect],
+  imports: [FormsModule, MultiSelect, BreadcrumbModule],
   template: `
-    <div class="crumbs"><a (click)="back()">← 專案</a></div>
+    <p-breadcrumb [home]="home" [model]="crumbs" />
     <h1>使用者管理</h1>
     @if (error()) { <div class="err">{{ error() }}</div> }
 
@@ -97,8 +98,7 @@ import {
     }
   `,
   styles: `
-    .crumbs { font-size: 13px; margin-bottom: 10px; }
-    .crumbs a { color: #2563eb; cursor: pointer; }
+    p-breadcrumb { display: block; margin-bottom: 14px; }
     h1 { font-size: 22px; margin: 0 0 16px; }
     h2 { font-size: 15px; margin: 0 0 12px; }
     ul { list-style: none; margin: 0; padding: 0; }
@@ -126,8 +126,10 @@ import {
 export class UsersComponent {
   private api = inject(TemplateApiService);
   private auth = inject(AuthService);
-  private router = inject(Router);
   private modal = inject(ModalService);
+
+  readonly home: MenuItem = { icon: 'pi pi-home', routerLink: '/' };
+  readonly crumbs: MenuItem[] = [{ label: '使用者管理' }];
 
   users = signal<ConsoleUserView[]>([]);
   projects = signal<ProjectSummary[]>([]);
@@ -147,9 +149,6 @@ export class UsersComponent {
     void this.load();
   }
 
-  back() {
-    this.router.navigateByUrl('/');
-  }
 
   private async load() {
     this.loading.set(true);
@@ -208,7 +207,17 @@ export class UsersComponent {
       confirmLabel: '更新',
     });
     if (pw == null) return;
-    await this.patch(u.id, { password: pw });
+    this.error.set('');
+    try {
+      await this.api.updateUser(u.id, { password: pw });
+      await this.load();
+      await this.modal.alert({ title: '密碼已重設', message: `已更新「${u.username}」的密碼。` });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.error.set(msg);
+      await this.load();
+      await this.modal.alert({ title: '重設失敗', message: `無法更新「${u.username}」的密碼：${msg}` });
+    }
   }
 
   async remove(u: ConsoleUserView) {

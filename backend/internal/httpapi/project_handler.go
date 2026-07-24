@@ -91,7 +91,7 @@ func (h *projectHandler) create(c *gin.Context) {
 // listTemplates 專案內的樣板清單；非成員（非 admin）→ 403，專案不存在 → 404，DB 錯誤 → 500。
 func (h *projectHandler) listTemplates(c *gin.Context) {
 	pid := c.Param("id")
-	if !authorizeProject(c, h.projects, pid) {
+	if !authorizeUserProject(c, h.projects, pid) {
 		return
 	}
 	ok, err := h.projects.Exists(tenantOf(c), pid)

@@ -16,6 +16,23 @@ export const authGuard: CanActivateFn = async () => {
 };
 
 /**
+ * 編輯器路由守衛（/editor/*）：
+ * - **iframe 嵌入**（`window.parent !== window`）或 **URL 帶 embed token**（`#token=`）→ 直接放行：
+ *   宿主的使用者沒有控制台 session，改由 embed token 授權；後端每個 API 仍鎖著（沒有
+ *   有效 token → 401 → 編輯器顯示空樣板），故放行不外洩資料。
+ * - **非嵌入且無 token**（直接開分頁）→ 比照控制台，需 session，否則轉 /login。
+ */
+export const editorGuard: CanActivateFn = async () => {
+  const embedded = window.parent !== window;
+  const hasUrlToken = /(?:^|&)token=/.test(window.location.hash.replace(/^#/, ''));
+  if (embedded || hasUrlToken) return true;
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  const user = await auth.me();
+  return user ? true : router.parseUrl('/login');
+};
+
+/**
  * 登入頁守衛：已登入就直接轉進控制台（不顯示登入表單、不閃一下）。
  * 掛在 /login。
  */

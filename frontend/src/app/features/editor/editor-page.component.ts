@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, HostListener, ViewChild, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ELEMENT_META, TemplateElement, emptyTemplate, isChildHost } from '../../core/models/template.model';
 import { FontService } from '../../core/services/font.service';
+import { EmbedTokenService } from '../../core/services/embed-token.service';
 import { HostBridgeService } from '../../core/services/host-bridge.service';
 import { ModalService } from '../../core/services/modal.service';
 import { TemplateApiService } from '../../core/services/template-api.service';
@@ -31,11 +32,13 @@ interface PaletteItem {
     <div class="editor">
       <header>
         @if (!embedded) {
-          <a [routerLink]="backLink" class="back">← {{ newProjectId ? '專案' : '控制台' }}</a>
+          <a [routerLink]="backLink" class="back">← {{ (newProjectId ?? templateProjectId()) ? '專案' : '控制台' }}</a>
         }
         <input class="name" [ngModel]="state.template().name" (ngModelChange)="state.setName($event)" />
         <div class="right">
-          <button class="link" (click)="showIntegration.set(true)" title="iframe 嵌入與渲染 API 說明">🔗 連接</button>
+          @if (!embedded) {
+            <button class="link" (click)="showIntegration.set(true)" title="iframe 嵌入與渲染 API 說明">🔗 連接</button>
+          }
           <button class="save" (click)="save()" [disabled]="saving()">
             {{ saving() ? '儲存中…' : state.dirty() ? '儲存 *' : '儲存' }}
           </button>
@@ -144,7 +147,9 @@ interface PaletteItem {
         <main class="center">
           <div class="tabbar">
             <button [class.on]="tab() === 'design'" (click)="switchTab('design')">設計</button>
-            <button [class.on]="tab() === 'json'" (click)="switchTab('json')">樣板JSON</button>
+            @if (!embedded) {
+              <button [class.on]="tab() === 'json'" (click)="switchTab('json')">樣板JSON</button>
+            }
             <button [class.on]="tab() === 'preview'" (click)="switchTab('preview')">預覽</button>
             <span class="spacer"></span>
             @if (tab() === 'design' && state.selectedIds().length > 1) {
@@ -174,8 +179,10 @@ interface PaletteItem {
                 <button class="zbtn" (click)="zoomBy(0.1)">＋</button>
               </div>
             }
-            <button class="tab-right" [class.on]="tab() === 'validation'" (click)="switchTab('validation')"
-              title="輸入資料驗證（schema）">✓ 驗證</button>
+            @if (!embedded) {
+              <button class="tab-right" [class.on]="tab() === 'validation'" (click)="switchTab('validation')"
+                title="輸入資料驗證（schema）">✓ 驗證</button>
+            }
           </div>
           @switch (tab()) {
             @case ('design') { <app-editor-canvas (elementPicked)="rightTab.set('props')" /> }
@@ -337,12 +344,16 @@ export class EditorPageComponent {
   /** 控制台在專案內新建時的目標專案（?project=）；首次 create 時帶入。 */
   newProjectId?: string;
 
+  /** 既有樣板所屬專案（載入時由 X-Project-Id header 得知）；重載/書籤/存檔後回家用。 */
+  templateProjectId = signal<string | null>(null);
+
   /** iframe 嵌入時隱藏「返回控制台」（嵌入端只操作編輯器，不該跳到控制台）。 */
   readonly embedded = window.parent !== window;
 
-  /** 返回連結：從專案新建 → 回該專案；否則回控制台首頁。 */
+  /** 返回連結：優先回新建時帶入的專案，其次回樣板所屬專案，都沒有才回控制台首頁。 */
   get backLink(): unknown[] {
-    return this.newProjectId ? ['/projects', this.newProjectId] : ['/'];
+    const pid = this.newProjectId ?? this.templateProjectId();
+    return pid ? ['/projects', pid] : ['/'];
   }
 
   @ViewChild('imageInput') imageInput?: { nativeElement: HTMLInputElement };
@@ -488,6 +499,7 @@ export class EditorPageComponent {
   }
 
   private bridge = inject(HostBridgeService);
+  private embedToken = inject(EmbedTokenService);
 
   private fonts = inject(FontService);
 
@@ -496,18 +508,69 @@ export class EditorPageComponent {
     effect(() => {
       if (this.state.imagePickRequest()) this.imageInput?.nativeElement.click();
     });
-    void this.fonts.refresh();
     const id = this.route.snapshot.paramMap.get('id');
     // 控制台在專案內新建樣板會帶 ?project=<id>；儲存時一路帶到 create 的 ?projectId。
     this.newProjectId = this.route.snapshot.queryParamMap.get('project') ?? undefined;
+
+    // Embed token 兩種交付方式：
+    //  1) URL fragment（推薦、零事件）：宿主 `<iframe src=".../editor/:id#token=xxx">`，前端不用寫任何 JS。
+    //  2) postMessage（fallback）：宿主收到 editor-ready 後 post `pdf-template-set-token`（不想讓 token 進 URL 時用）。
+    // 非嵌入（控制台）：走 session cookie，直接載入。
+    const urlToken = this.readUrlToken();
+    if (urlToken) {
+      this.embedToken.token.set(urlToken);
+      this.tokenReceived = true;
+    }
+    if (this.embedded) {
+      window.addEventListener('message', this.onHostMessage);
+      inject(DestroyRef).onDestroy(() => window.removeEventListener('message', this.onHostMessage));
+    }
+    // 有 token（URL）或非嵌入（session）→ 直接載入；嵌入但無 URL token → 等 postMessage 交付。
+    if (this.tokenReceived || !this.embedded) {
+      this.loadInitial(id);
+    }
+    this.bridge.notify('editor-ready', id === 'new' ? null : id);
+  }
+
+  private tokenReceived = false;
+
+  /**
+   * 從 URL fragment 讀 embed token（宿主零事件交付）：`.../editor/:id#token=xxx`。
+   * 用 fragment 不用 query：fragment 不會送到後端（不進 access log）、不進 Referer header。
+   */
+  private readUrlToken(): string | null {
+    const hash = window.location.hash;
+    if (!hash) return null;
+    const t = new URLSearchParams(hash.replace(/^#/, '')).get('token');
+    return t && t.length > 0 ? t : null;
+  }
+
+  /**
+   * 宿主 → iframe 的訊息（postMessage fallback；on destroy 才移除）：
+   * - `pdf-template-set-token`：存下 token（interceptor 之後掛 Bearer）並載入初始資料（只處理一次；URL 已帶 token 時略過）。
+   */
+  private onHostMessage = (e: MessageEvent) => {
+    const d = e.data;
+    if (!d || typeof d.type !== 'string') return;
+    if (d.type === 'pdf-template-set-token' && typeof d.token === 'string') {
+      if (this.tokenReceived) return;
+      this.tokenReceived = true;
+      this.embedToken.token.set(d.token);
+      this.loadInitial(this.route.snapshot.paramMap.get('id'));
+    }
+  };
+
+  /** 載入字型與（既有樣板時）樣板內容。 */
+  private loadInitial(id: string | null) {
+    void this.fonts.refresh();
     if (id && id !== 'new') {
-      this.api.get(id).then(doc => {
+      this.api.getWithProject(id).then(({ doc, projectId }) => {
+        this.templateProjectId.set(projectId); // 返回時回到樣板所屬專案
         this.state.load(doc);
         this.fonts.ensureForDoc(this.state.template());
         this.bridge.notify('template-loaded', doc.id);
-      }).catch(() => this.state.load(emptyTemplate()));
+      }).catch(() => this.state.load(emptyTemplate())); // 失敗時 projectId 維持 null → 乾淨退回首頁
     }
-    this.bridge.notify('editor-ready', id === 'new' ? null : id);
   }
 
   /** 頁面導覽未釘選展開（peek）時，點面板外面就收回（HostListener 跑在 zone 內，會觸發變更偵測） */

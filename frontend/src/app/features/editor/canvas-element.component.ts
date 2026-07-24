@@ -439,6 +439,8 @@ export class CanvasElementComponent {
 
   onSelfEditKey(ev: KeyboardEvent, multiline: boolean) {
     ev.stopPropagation();
+    // 注音／輸入法選字中：Enter 是確認選字，不可當提交
+    if (ev.isComposing || ev.keyCode === 229) return;
     // 多行文字用 Ctrl/⌘+Enter 提交（Enter = 換行）；單行 Enter 直接提交
     if (ev.key === 'Enter' && (!multiline || ev.ctrlKey || ev.metaKey)) {
       ev.preventDefault();
@@ -587,6 +589,8 @@ export class CanvasElementComponent {
 
   onCellEditKey(ev: KeyboardEvent) {
     ev.stopPropagation();
+    // 注音／輸入法選字中：Enter 是確認選字，不可當提交
+    if (ev.isComposing || ev.keyCode === 229) return;
     if (ev.key === 'Enter') (ev.target as HTMLElement).blur();
     if (ev.key === 'Escape') {
       this.cancelEdit = true;

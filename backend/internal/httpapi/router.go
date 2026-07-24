@@ -20,10 +20,10 @@ const maxUpload = 10 << 20 // 10MB
 // New 組出完整的 HTTP handler（middleware + 路由總表）；main 與測試共用。
 // webRoot 非空時額外 serve 前端靜態檔（單容器部署）；空 = 純 API 模式。
 // sessionSecret 為登入 session 的簽章金鑰（空 → dev 預設，正式必設）。
-func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, users *store.UserStore, projects *store.ProjectStore, eng *engine.Engine, sessionSecret, webRoot string) http.Handler {
+func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, users *store.UserStore, projects *store.ProjectStore, keys *store.APIKeyStore, eng *engine.Engine, sessionSecret, webRoot string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(slogLogger(), recoverJSON(), cors(), sessionMiddleware(sessionSecret), withAuth(users))
+	r.Use(slogLogger(), recoverJSON(), cors(), sessionMiddleware(sessionSecret), withAuth(users, keys, sessionSecret))
 
 	th := &templateHandler{store: templates, projects: projects}
 	rh := &renderHandler{store: templates, projects: projects, eng: eng}
@@ -33,6 +33,8 @@ func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.
 	auth := &authHandler{users: users}
 	ph := &projectHandler{projects: projects, templates: templates}
 	uh := &userHandler{users: users, projects: projects}
+	kh := &keyHandler{keys: keys, projects: projects}
+	eh := &embedHandler{templates: templates, secret: sessionSecret}
 
 	// 控制台登入（開放：login/logout；me/改密碼需登入）
 	r.POST("/api/auth/login", auth.login)
@@ -52,26 +54,35 @@ func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.
 	r.PATCH("/api/users/:id", requireAuth(), requireAdmin(), uh.update)
 	r.DELETE("/api/users/:id", requireAuth(), requireAdmin(), uh.remove)
 
-	// 路由總表（新增 endpoint 請按資源歸入對應 handler 檔）
-	r.GET("/api/templates", th.list)
-	r.POST("/api/templates", th.create)
-	r.GET("/api/templates/:id", th.get)
-	r.PUT("/api/templates/:id", th.update)
-	r.DELETE("/api/templates/:id", th.remove)
+	// 宿主整合 API 金鑰（admin 專屬；綁專案）
+	r.GET("/api/projects/:id/keys", requireAuth(), requireAdmin(), kh.list)
+	r.POST("/api/projects/:id/keys", requireAuth(), requireAdmin(), kh.create)
+	r.DELETE("/api/keys/:kid", requireAuth(), requireAdmin(), kh.remove)
+
+	// 換短效 embed token（宿主後端用 project API key 打）
+	r.POST("/api/embed-token", requireAPIKey(), eh.mint)
+
+	// 資料端點：三來源身分任一皆可（requireAny），匿名 → 401。授權細度在各 handler
+	// 依 principal 過 authorizeTemplate/authorizeCreateInProject（user 依成員／apikey 依專案／embed 鎖單張）。
+	r.GET("/api/templates", requireAny(), th.list)
+	r.POST("/api/templates", requireAny(), th.create)
+	r.GET("/api/templates/:id", requireAny(), th.get)
+	r.PUT("/api/templates/:id", requireAny(), th.update)
+	r.DELETE("/api/templates/:id", requireAny(), th.remove)
 
 	// Gin 允許靜態段與 :id 並存且靜態優先，/render 不會被當成樣板 id
-	r.POST("/api/templates/:id/render", rh.renderByID)
-	r.POST("/api/templates/render", rh.renderAdhoc)
+	r.POST("/api/templates/:id/render", requireAny(), rh.renderByID)
+	r.POST("/api/templates/render", requireAny(), rh.renderAdhoc)
 
-	r.POST("/api/assets", ah.upload)
-	r.GET("/api/assets/:id", ah.get)
+	r.POST("/api/assets", requireAny(), ah.upload)
+	r.GET("/api/assets/:id", requireAny(), ah.get)
 
-	r.POST("/api/fonts", fh.upload)
-	r.GET("/api/fonts", fh.list)
-	r.GET("/api/fonts/:id", fh.get)
+	r.POST("/api/fonts", requireAny(), fh.upload)
+	r.GET("/api/fonts", requireAny(), fh.list)
+	r.GET("/api/fonts/:id", requireAny(), fh.get)
 
 	// 編輯器「測試 schema」：拿當前規則 + data 直接驗證（不渲染），與 render 守門同一權威
-	r.POST("/api/validate", vh.check)
+	r.POST("/api/validate", requireAny(), vh.check)
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")

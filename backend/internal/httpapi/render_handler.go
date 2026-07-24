@@ -24,12 +24,13 @@ type renderHandler struct {
 // renderByID 正式渲染：宿主系統後端拿樣板 id + 資料 → PDF（整合契約）。
 // 授權：控制台 user 只能渲染自己專案的樣板；無 session（宿主呼叫）維持開放。
 func (h *renderHandler) renderByID(c *gin.Context) {
-	pid, err := h.store.ProjectOf(tenantOf(c), c.Param("id"))
+	id := c.Param("id")
+	pid, err := h.store.ProjectOf(tenantOf(c), id)
 	if err != nil {
 		templateGetError(c, err)
 		return
 	}
-	if !authorizeProject(c, h.projects, pid) {
+	if !authorizeTemplate(c, h.projects, pid, id) {
 		return
 	}
 	raw, err := h.store.Get(tenantOf(c), c.Param("id"))

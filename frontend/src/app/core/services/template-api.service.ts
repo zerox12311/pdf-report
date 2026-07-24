@@ -39,6 +39,18 @@ export interface UpdateUserInput {
   projectIds?: string[];
 }
 
+/** 宿主整合 API 金鑰摘要（不含明文） */
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+/** 建立金鑰的回應：明文只在此回一次 */
+export interface ApiKeyCreated extends ApiKeySummary {
+  key: string;
+}
+
 /**
  * 樣板/圖片 API。所有方法失敗時 reject 一個訊息已正規化的 Error：
  * 優先取後端 `{ error: string }` 的訊息（含 PDF blob 回應的錯誤分支），呼叫端直接顯示 e.message 即可。
@@ -53,6 +65,15 @@ export class TemplateApiService {
 
   get(id: string): Promise<TemplateDoc> {
     return this.run(firstValueFrom(this.http.get<TemplateDoc>(`/api/templates/${id}`)));
+  }
+
+  /** 取樣板並附帶其所屬專案 id（讀 X-Project-Id header；編輯器「返回」用）。 */
+  getWithProject(id: string): Promise<{ doc: TemplateDoc; projectId: string | null }> {
+    return this.run(
+      firstValueFrom(
+        this.http.get<TemplateDoc>(`/api/templates/${id}`, { observe: 'response' }),
+      ).then(resp => ({ doc: resp.body as TemplateDoc, projectId: resp.headers.get('X-Project-Id') })),
+    );
   }
 
   /** 建立樣板；projectId 有值時歸入該專案（控制台在專案內新建用），否則落預設專案。 */
@@ -119,6 +140,20 @@ export class TemplateApiService {
 
   deleteUser(id: string): Promise<void> {
     return this.run(firstValueFrom(this.http.delete<void>(`/api/users/${id}`)));
+  }
+
+  // ---------- 宿主整合 API 金鑰（admin） ----------
+
+  listKeys(projectId: string): Promise<ApiKeySummary[]> {
+    return this.run(firstValueFrom(this.http.get<ApiKeySummary[]>(`/api/projects/${projectId}/keys`)));
+  }
+
+  createKey(projectId: string, name: string): Promise<ApiKeyCreated> {
+    return this.run(firstValueFrom(this.http.post<ApiKeyCreated>(`/api/projects/${projectId}/keys`, { name })));
+  }
+
+  deleteKey(keyId: string): Promise<void> {
+    return this.run(firstValueFrom(this.http.delete<void>(`/api/keys/${keyId}`)));
   }
 
   uploadAsset(file: File): Promise<{ id: string }> {

@@ -74,8 +74,9 @@ docker compose up -d --build                                  # 完整 demo（�
 ## 產品化 roadmap（已確認的方向）
 
 - 認證，兩條線：
-  - **設計者控制台（帳密登入＋角色）＝已完成**：JasperReports 式登入→專案→樣板，httpOnly cookie session（`withAuth`/`requireAuth`/`requireAdmin`）＋ env 種初始管理員（自癒）。admin/user 兩角色、專案成員授權（`ProjectMember`）、使用者管理畫面。授權走單一 `authorizeProject` chokepoint（碰樣板端點都過）。詳見 docs/console.md。**登入 user 的樣板存取已依專案成員上鎖**；**無 session 的 iframe/宿主呼叫維持開放**（樣板/render/asset），真正對嵌入端上鎖等下一階段。
-  - **宿主整合（機器對機器）＝下一階段**：API key（宿主後端，DB 存雜湊，schema 已建）＋ 短效嵌入 token（iframe 編輯器用，宿主拿 key 換 token）。端點/交換流程/token 格式**尚未定案**：實作前先提設計給使用者確認，不要自行拍板。
+  - **設計者控制台（帳密登入＋角色）＝已完成**：JasperReports 式登入→專案→樣板，httpOnly cookie session（`withAuth`/`requireAuth`/`requireAdmin`）＋ env 種初始管理員（自癒）。admin/user 兩角色、專案成員授權（`ProjectMember`）、使用者管理畫面。授權走單一 `authorizeProject` chokepoint（碰樣板端點都過）。詳見 docs/console.md。
+  - **所有資料端點已上鎖**：樣板/render/adhoc/asset/font/validate 一律 `requireAny`，匿名→401（補掉 render-by-id 資料外洩、adhoc render SSRF）。`SESSION_SECRET` 正式必設（未設＋WEB_ROOT 非空→拒啟動）。圖片 URL 抓取已擋私有/metadata（SSRF）。
+  - **宿主整合（machine-to-machine）＝已完成（Stripe 式）**：**project 級 API key**（admin 在專案頁簽發、只存雜湊、明文回一次；`pdftpl_` 前綴）給宿主後端，可建 template／換 embed token／render-by-id。**embed token**（短效 JWT、綁單一 template）宿主後端用 key 換、postMessage 交給 iframe、`Authorization: Bearer`。`withAuth` 三來源 principal（session／apikey／embed）＋ `authorizeTemplate`/`authorizeCreateInProject`。詳見 docs/embed.md。**尚待強化**：template 級 key、adhoc render 速率限制、mint 便利捷徑節流、CORS origin 白名單、postMessage origin 驗證。
 - ORM 選 GORM、多租戶模型已確認；HTTP 框架選 **Gin**（使用者為了學習指定，從 chi 換過來）。
 
 ## 產品方向備忘

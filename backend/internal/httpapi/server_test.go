@@ -41,9 +41,10 @@ func newTestServer(t *testing.T) (http.Handler, *store.TemplateStore, *store.Ass
 	}
 	users := store.NewUserStore(g)
 	projects := store.NewProjectStore(g)
+	keys := store.NewAPIKeyStore(g)
 	eng := engine.NewEngine("../../fonts", assets.EngineSource()) // 使用 repo 內的字型檔
 	eng.SetUserFontsDir(fonts.Dir())
-	return New(templates, assets, fonts, users, projects, eng, "test-secret", ""), templates, assets, g
+	return New(templates, assets, fonts, users, projects, keys, eng, "test-secret", ""), templates, assets, g
 }
 
 func doJSON(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -54,6 +55,27 @@ func doJSON(h http.Handler, method, path, body string) *httptest.ResponseRecorde
 	return rec
 }
 
+// authInjector 把固定 session cookie 注入每個請求（資料端點上鎖後，讓既有匿名測試變成帶登入）。
+type authInjector struct {
+	h       http.Handler
+	cookies []*http.Cookie
+}
+
+func (a authInjector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	for _, c := range a.cookies {
+		r.AddCookie(c)
+	}
+	a.h.ServeHTTP(w, r)
+}
+
+// asAdmin 種一個 admin、登入，回傳會自動帶該 session 的 handler。
+// 帳號名刻意特殊（不與 console/authz 測試自種的 admin 撞、也不影響使用者數斷言）。
+func asAdmin(t *testing.T, h http.Handler, g *gorm.DB) http.Handler {
+	t.Helper()
+	seedRole(t, g, "__srv_admin__", "pw", db.RoleAdmin)
+	return authInjector{h: h, cookies: loginAs(t, h, "__srv_admin__", "pw")}
+}
+
 // errReader 讀取即失敗，用來觸發 body 讀取錯誤分支。
 type errReader struct{}
 
@@ -62,7 +84,8 @@ func (errReader) Read([]byte) (int, error) { return 0, errors.New("read boom") }
 const minimalTemplate = `{"name":"測試 T","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},"elements":[{"type":"text","id":"t1","x":10,"y":10,"width":100,"height":20,"content":"hi","fontSize":12,"color":"#000000","align":"left","lineHeight":1.2,"bold":false}]}`
 
 func TestTemplateCRUD(t *testing.T) {
-	h, _, _, _ := newTestServer(t)
+	h, _, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 
 	// 空清單
 	rec := doJSON(h, "GET", "/api/templates", "")
@@ -93,11 +116,20 @@ func TestTemplateCRUD(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "測試 T") {
 		t.Fatalf("get: %d", rec.Code)
 	}
+	// 附帶樣板所屬專案（編輯器「返回」用）；未帶 projectId 建立 → 預設專案。
+	if got := rec.Header().Get("X-Project-Id"); got != db.DefaultProjectID {
+		t.Fatalf("X-Project-Id = %q, want %q", got, db.DefaultProjectID)
+	}
 
 	// 更新
 	rec = doJSON(h, "PUT", "/api/templates/"+id, strings.Replace(minimalTemplate, "測試 T", "改名", 1))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "改名") {
 		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	// 更新必須真的落 DB（回應 body 相同不代表持久化）：重新 GET 要看到新內容、看不到舊內容。
+	rec = doJSON(h, "GET", "/api/templates/"+id, "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "改名") || strings.Contains(rec.Body.String(), "測試 T") {
+		t.Fatalf("update not persisted: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// 刪除
@@ -113,6 +145,7 @@ func TestTemplateCRUD(t *testing.T) {
 
 func TestTemplateErrors(t *testing.T) {
 	h, _, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 
 	// POST 壞 JSON
 	if rec := doJSON(h, "POST", "/api/templates", "{not json"); rec.Code != 400 {
@@ -158,7 +191,8 @@ func TestTemplateErrors(t *testing.T) {
 }
 
 func TestRenderByID(t *testing.T) {
-	h, templates, _, _ := newTestServer(t)
+	h, templates, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 	id, _, err := templates.Save(db.DefaultTenantID, "", []byte(minimalTemplate), "")
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +251,8 @@ func TestRenderByID(t *testing.T) {
 }
 
 func TestRenderWarningsAndStrict(t *testing.T) {
-	h, templates, _, _ := newTestServer(t)
+	h, templates, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 	// 樣板有一個綁 who 的欄位；送空 data → 缺 key 警告
 	tpl := `{"name":"w","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
 		"elements":[{"type":"placeholder","id":"p","x":10,"y":10,"width":100,"height":20,
@@ -250,7 +285,8 @@ func TestRenderWarningsAndStrict(t *testing.T) {
 }
 
 func TestRenderAdhoc(t *testing.T) {
-	h, _, _, _ := newTestServer(t)
+	h, _, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 
 	body := `{"template":` + minimalTemplate + `,"data":{"a":"b"}}`
 	rec := doJSON(h, "POST", "/api/templates/render", body)
@@ -309,7 +345,8 @@ func multipartBody(t *testing.T, contentType string, data []byte) (io.Reader, st
 }
 
 func TestAssets(t *testing.T) {
-	h, _, _, _ := newTestServer(t)
+	h, _, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 
 	// 上傳成功
 	body, ct := multipartBody(t, "image/png", pngBytes(t))
@@ -416,6 +453,7 @@ func fontMultipart(t *testing.T, name string, data []byte) (*bytes.Buffer, strin
 
 func TestFonts(t *testing.T) {
 	h, _, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 
 	// 真 TTF（repo 內字型檔）上傳成功
 	ttf, err := os.ReadFile("../../fonts/NotoSansMono-Regular.ttf")
@@ -519,6 +557,7 @@ func TestFonts(t *testing.T) {
 // templateGetError 的 500 分支：DB 掛掉時 Get 失敗但不是 not-found。
 func TestTemplateGetInternalError(t *testing.T) {
 	h, templates, _, g := newTestServer(t)
+	h = asAdmin(t, h, g)
 	id, _, err := templates.Save(db.DefaultTenantID, "", []byte(minimalTemplate), "")
 	if err != nil {
 		t.Fatal(err)
@@ -570,8 +609,9 @@ func TestSPAStaticServing(t *testing.T) {
 	fonts, _ := store.NewFontStore(g, root)
 	users := store.NewUserStore(g)
 	projects := store.NewProjectStore(g)
+	keys := store.NewAPIKeyStore(g)
 	eng := engine.NewEngine("../../fonts", assets.EngineSource())
-	srv := New(templates, assets, fonts, users, projects, eng, "test-secret", web)
+	srv := New(templates, assets, fonts, users, projects, keys, eng, "test-secret", web)
 
 	do := func(path string) (int, string) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

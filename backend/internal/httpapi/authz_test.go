@@ -84,9 +84,34 @@ func TestRoleAuthorization(t *testing.T) {
 		t.Errorf("user 扁平清單應只含自己樣板：%s", flat)
 	}
 
-	// 無 session（iframe / 宿主）維持開放：不帶 cookie 讀 P2 樣板 → 200
-	if rec := doJSON(h, "GET", "/api/templates/"+otherID, ""); rec.Code != 200 {
-		t.Errorf("無 session 應維持開放：%d", rec.Code)
+	// 匿名（無 session）一律 401——資料端點已上鎖，不再有 iframe 開放後門
+	if rec := doJSON(h, "GET", "/api/templates/"+otherID, ""); rec.Code != 401 {
+		t.Errorf("無 session 應 401：%d", rec.Code)
+	}
+}
+
+// TestAnonymousLocked：資料端點一律需登入，匿名 → 401（上鎖後不再有開放後門）。
+func TestAnonymousLocked(t *testing.T) {
+	h, _, _, _ := newTestServer(t)
+	cases := []struct{ method, path string }{
+		{"GET", "/api/templates"},
+		{"POST", "/api/templates"},
+		{"GET", "/api/templates/x"},
+		{"PUT", "/api/templates/x"},
+		{"DELETE", "/api/templates/x"},
+		{"POST", "/api/templates/x/render"},
+		{"POST", "/api/templates/render"},
+		{"GET", "/api/assets/x"},
+		{"POST", "/api/assets"},
+		{"GET", "/api/fonts"},
+		{"GET", "/api/fonts/x"},
+		{"POST", "/api/fonts"},
+		{"POST", "/api/validate"},
+	}
+	for _, c := range cases {
+		if rec := doJSON(h, c.method, c.path, "{}"); rec.Code != 401 {
+			t.Errorf("%s %s 匿名應 401，got %d", c.method, c.path, rec.Code)
+		}
 	}
 }
 

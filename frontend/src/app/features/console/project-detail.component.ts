@@ -1,20 +1,28 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { MenuItem } from 'primeng/api';
+import { BreadcrumbModule } from 'primeng/breadcrumb';
 
 import { TemplateSummary } from '../../core/models/template.model';
+import { AuthService } from '../../core/services/auth.service';
 import { ModalService } from '../../core/services/modal.service';
 import { TemplateApiService } from '../../core/services/template-api.service';
 
 @Component({
   selector: 'app-project-detail',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, DatePipe],
+  imports: [RouterLink, DatePipe, BreadcrumbModule],
   template: `
-    <div class="crumbs"><a routerLink="/">專案</a> ／ {{ projectName() || '…' }}</div>
+    <p-breadcrumb [home]="home" [model]="crumbs()" />
     <div class="head">
       <h1>{{ projectName() || '專案樣板' }}</h1>
-      <a class="new" routerLink="/editor/new" [queryParams]="{ project: projectId }">＋ 新增樣板</a>
+      <div class="head-actions">
+        @if (auth.isAdmin()) {
+          <a class="settings" [routerLink]="['/projects', projectId, 'settings']">⚙ 專案設定</a>
+        }
+        <a class="new" routerLink="/editor/new" [queryParams]="{ project: projectId }">＋ 新增樣板</a>
+      </div>
     </div>
     @if (error()) { <div class="err">{{ error() }}</div> }
     @if (loading()) {
@@ -36,12 +44,17 @@ import { TemplateApiService } from '../../core/services/template-api.service';
     }
   `,
   styles: `
-    .crumbs { font-size: 13px; color: #94a3b8; margin-bottom: 10px; }
-    .crumbs a { color: #2563eb; text-decoration: none; }
-    .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    p-breadcrumb { display: block; margin-bottom: 14px; }
+    .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
     h1 { font-size: 22px; margin: 0; }
-    .new { background: #2563eb; color: #fff; text-decoration: none; padding: 8px 16px; border-radius: 8px; }
+    .head-actions { display: flex; align-items: center; gap: 8px; }
+    .new { background: #2563eb; color: #fff; text-decoration: none; padding: 8px 16px; border-radius: 8px;
+      border: none; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+      display: inline-flex; align-items: center; }
     .new:hover { background: #1d4ed8; }
+    .settings { color: #475569; text-decoration: none; padding: 8px 14px; border-radius: 8px;
+      border: 1px solid #cbd5e1; font-size: 14px; display: inline-flex; align-items: center; background: #fff; }
+    .settings:hover { background: #f1f5f9; border-color: #94a3b8; }
     ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
     li { display: flex; align-items: center; gap: 8px; }
     .tpl { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;
@@ -49,7 +62,8 @@ import { TemplateApiService } from '../../core/services/template-api.service';
     .tpl:hover { border-color: #2563eb; box-shadow: 0 1px 6px rgba(37, 99, 235, .15); }
     .name { font-weight: 600; }
     .time { color: #94a3b8; font-size: 12px; }
-    .del { background: none; border: 1px solid #fecaca; color: #dc2626; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+    .del { background: none; border: 1px solid #fecaca; color: #dc2626; border-radius: 8px; padding: 6px 12px;
+      cursor: pointer; font-family: inherit; font-size: 13px; }
     .del:hover { background: #fef2f2; }
     .hint { color: #94a3b8; text-align: center; padding: 48px 0; }
     .err { color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;
@@ -60,12 +74,16 @@ export class ProjectDetailComponent {
   private api = inject(TemplateApiService);
   private modal = inject(ModalService);
   private route = inject(ActivatedRoute);
+  auth = inject(AuthService);
 
   projectId = this.route.snapshot.paramMap.get('id') ?? '';
   projectName = signal('');
   templates = signal<TemplateSummary[]>([]);
   loading = signal(true);
   error = signal('');
+
+  readonly home: MenuItem = { icon: 'pi pi-home', routerLink: '/' };
+  readonly crumbs = computed<MenuItem[]>(() => [{ label: this.projectName() || '…' }]);
 
   constructor() {
     void this.loadName();

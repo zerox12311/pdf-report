@@ -50,9 +50,21 @@ func main() {
 	}
 	users := store.NewUserStore(g)
 	projects := store.NewProjectStore(g)
+	keys := store.NewAPIKeyStore(g)
 	// 種初始管理員（僅 user 表為空時；已存在不覆寫，改密碼才不會被重啟打回）
 	if err := store.SeedAdmin(g, os.Getenv("ADMIN_USER"), os.Getenv("ADMIN_PASSWORD")); err != nil {
 		log.Fatal(err)
+	}
+
+	// SESSION_SECRET 未設 → session cookie 用不安全的 dev 預設簽章、可被偽造。
+	// 資料端點已上鎖、認證即身分，正式部署（WEB_ROOT 非空 = 有 serve 前端）必須設定，否則拒啟動。
+	webRoot := os.Getenv("WEB_ROOT")
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if sessionSecret == "" {
+		if webRoot != "" {
+			log.Fatal("SESSION_SECRET 未設定：正式部署必須設定（否則登入 session 可被偽造 → 全面淪陷）")
+		}
+		log.Printf("警告：SESSION_SECRET 未設定，session 使用不安全的 dev 預設；正式部署務必設定")
 	}
 
 	eng := engine.NewEngine(fontsDir, assets.EngineSource())
@@ -60,7 +72,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.New(templates, assets, fonts, users, projects, eng, os.Getenv("SESSION_SECRET"), os.Getenv("WEB_ROOT")),
+		Handler:           httpapi.New(templates, assets, fonts, users, projects, keys, eng, sessionSecret, webRoot),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second, // 大樣板渲染留餘裕

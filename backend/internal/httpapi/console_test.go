@@ -262,8 +262,9 @@ func TestSessionDefaultSecret(t *testing.T) {
 	fonts, _ := store.NewFontStore(g, root)
 	users := store.NewUserStore(g)
 	projects := store.NewProjectStore(g)
+	keys := store.NewAPIKeyStore(g)
 	eng := engine.NewEngine("../../fonts", assets.EngineSource())
-	h := New(templates, assets, fonts, users, projects, eng, "", "") // 空 secret
+	h := New(templates, assets, fonts, users, projects, keys, eng, "", "") // 空 secret
 	seedUser(t, g, "admin", "secret")
 	ck := loginAs(t, h, "admin", "secret")
 	if rec := doAuth(h, "GET", "/api/auth/me", "", ck); rec.Code != 200 {

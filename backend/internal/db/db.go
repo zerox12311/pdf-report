@@ -60,11 +60,12 @@ type ProjectMember struct {
 	CreatedAt time.Time
 }
 
-// APIKey 宿主後端的 server-to-server 金鑰（只存雜湊）。
-// 認證 middleware 下一階段掛上；schema 先鋪好。
+// APIKey 宿主後端的 server-to-server 金鑰（只存雜湊）。綁一個專案（v1 只有 project 級）：
+// 這把 key 只能在 ProjectID 這個專案內建 template、換 embed token、正式渲染。
 type APIKey struct {
 	ID        string `gorm:"primaryKey;size:64"`
 	TenantID  string `gorm:"size:64;not null;index"`
+	ProjectID string `gorm:"size:64;not null;index"`
 	Name      string `gorm:"size:255;not null"`
 	KeyHash   string `gorm:"size:128;not null;uniqueIndex"`
 	CreatedAt time.Time

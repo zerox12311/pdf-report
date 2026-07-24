@@ -4,9 +4,20 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 
 **多租戶**：schema 已就緒（tenants/api_keys），目前為單租戶部署、API 層固定 default 租戶；宿主整合的認證（API key＋短效嵌入 token）為下一階段。
 
-**控制台登入（session）＋角色**：設計者控制台走帳密登入 + httpOnly cookie session（見 [console.md](console.md)），有 **admin／user** 兩種角色。`withAuth` middleware：帶有效 session → 解析租戶＋使用者＋角色；沒帶（iframe 嵌入、宿主呼叫）→ 退回 default 租戶、維持既有開放路徑。`requireAuth` 守控制台端點（未登入 → 401）；`requireAdmin` 守 admin 專屬端點（非 admin → 403）。
+**控制台登入（session）＋角色**：設計者控制台走帳密登入 + httpOnly cookie session（見 [console.md](console.md)），有 **admin／user** 兩種角色。`withAuth` middleware：帶有效 session → 解析租戶＋使用者＋角色；沒帶則不設使用者。`requireAdmin` 守 admin 專屬端點（非 admin → 403）。
 
-**授權 chokepoint**：所有碰樣板的端點先解析有效 projectID，再過 `authorizeProject`——無 session（iframe）放行／admin 放行／專案成員放行／否則 **403**。因此登入的 user 只能存取被指派專案的樣板；無 session 的宿主呼叫維持開放（真正上鎖等 embed token 那輪）。
+**三來源身分（`withAuth` 擇一解析）**：
+- **session cookie** → 控制台使用者（依角色/專案成員）
+- **`Authorization: Bearer pdftpl_…`** → 宿主後端 API key（綁一個專案）
+- **`Authorization: Bearer <JWT>`** → iframe embed token（綁單一 template）
+
+帶了 Authorization 但驗不過 → 401；匿名（都沒帶）→ 401。
+
+**所有資料端點需憑證（`requireAny`）**：樣板 CRUD、render-by-id、adhoc render、assets、fonts、validate。授權 chokepoint 依 principal：
+- 碰某張樣板（get/put/delete/render-by-id）：user=admin或該專案成員／apikey=同專案／**embed=同一張 template**，否則 **403**
+- 建樣板：user／apikey 可（落各自專案），**embed 不可（403）**
+- 列樣板：user 依成員過濾、apikey 該專案、**embed 不可（403）**
+- adhoc render 預覽／assets／fonts／validate：三來源任一皆可
 
 ## 認證（控制台）
 
@@ -43,13 +54,35 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 - 降級最後一個 admin（PATCH role → user）同樣擋 400。
 - 非 admin 打以上任一端點 → 403。
 
+## 宿主整合 API 金鑰（admin 專屬；綁專案）
+
+| Method | Path | 說明 |
+|---|---|---|
+| GET | `/api/projects/:id/keys` | 金鑰清單 `[{id, name, createdAt}]`（不含明文/雜湊） |
+| POST | `/api/projects/:id/keys` | body `{name}` → `{id, name, createdAt, key}`；**明文 `key` 只在此回一次** |
+| DELETE | `/api/keys/:kid` | 撤銷 |
+
+金鑰為 `pdftpl_` 前綴的高熵隨機值，只存 SHA-256 雜湊。
+
+## 換 embed token（宿主後端，帶 API key）
+
+| Method | Path | 說明 |
+|---|---|---|
+| POST | `/api/embed-token` | `Authorization: Bearer <API key>`；body `{templateId}` 換既有／`{}` 便利捷徑（在 key 的專案建空樣板＋回 token）→ `{token, templateId, expiresAt}` |
+
+- `templateId` 須屬 key 綁的專案，否則 403；不存在 404。
+- token 為短效 JWT（HS256，預設 30 分鐘），claims 綁 tenant/project/template。
+- 需 API key 身分（session/embed token 打 → 401）。
+
+宿主整合完整流程見 [embed.md](embed.md)。
+
 ## 樣板
 
 | Method | Path | 說明 |
 |---|---|---|
 | GET | `/api/templates` | 清單 `[{id, name, updatedAt}]` |
 | POST | `/api/templates` | 新建（body = 樣板 JSON；伺服器配 id）→ 回完整樣板。選填 `?projectId=<id>` 歸入該專案（見「專案」節），未帶落預設專案 |
-| GET | `/api/templates/:id` | 取得樣板 JSON（原樣） |
+| GET | `/api/templates/:id` | 取得樣板 JSON（原樣）；回應帶 `X-Project-Id` header＝所屬專案（編輯器「返回」用，不放進 body 以保 raw passthrough） |
 | PUT | `/api/templates/:id` | 覆寫 → 回完整樣板 |
 | DELETE | `/api/templates/:id` | 刪除（204） |
 

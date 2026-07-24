@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 
-import { adminGuard, authGuard, guestGuard } from './core/guards/auth.guard';
+import { adminGuard, authGuard, editorGuard, guestGuard } from './core/guards/auth.guard';
 
 export const routes: Routes = [
   // 登入頁：已登入 → 直接轉進控制台（guestGuard）
@@ -29,6 +29,12 @@ export const routes: Routes = [
           import('./features/console/project-detail.component').then(m => m.ProjectDetailComponent),
       },
       {
+        path: 'projects/:id/settings',
+        canActivate: [adminGuard],
+        loadComponent: () =>
+          import('./features/console/project-settings.component').then(m => m.ProjectSettingsComponent),
+      },
+      {
         path: 'account/password',
         loadComponent: () =>
           import('./features/console/change-password.component').then(m => m.ChangePasswordComponent),
@@ -42,9 +48,10 @@ export const routes: Routes = [
     ],
   },
 
-  // 編輯器（**無 guard**）：控制台進來帶 session；iframe 嵌入無 session 也要能開
+  // 編輯器：非嵌入需 session；iframe 嵌入放行、改由 embed token 授權（見 editorGuard）。
   {
     path: 'editor/:id',
+    canActivate: [editorGuard],
     loadComponent: () =>
       import('./features/editor/editor-page.component').then(m => m.EditorPageComponent),
   },

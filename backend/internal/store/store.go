@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"pdftemplate/internal/db"
@@ -106,13 +107,24 @@ func (s *TemplateStore) Save(tenantID, projectID string, raw []byte, forceID str
 		return "", nil, err
 	}
 	name, _ := doc["name"].(string)
-	// ProjectID 只放在建立用的 struct，不進 Assign map → 更新既有樣板時保留原專案。
-	row := db.Template{ID: id, TenantID: tenantID, ProjectID: projectID, Name: name, Doc: out, UpdatedAt: now}
-	err = s.g.Where("id = ? AND tenant_id = ?", id, tenantID).
-		Assign(map[string]any{"name": name, "doc": out, "updated_at": now}).
-		FirstOrCreate(&row).Error
-	if err != nil {
-		return "", nil, err
+
+	// upsert by (id, tenant)：既有 → 只更新 name/doc/updated_at（保留原 project_id、created_at）；
+	// 不存在 → 建立。改用明確 find → Updates/Create（FirstOrCreate+Assign 在 found 分支不會發 UPDATE，會漏存）。
+	var existing db.Template
+	findErr := s.g.Select("id").Where("id = ? AND tenant_id = ?", id, tenantID).First(&existing).Error
+	switch {
+	case findErr == nil:
+		if err := s.g.Model(&db.Template{}).Where("id = ? AND tenant_id = ?", id, tenantID).
+			Updates(map[string]any{"name": name, "doc": datatypes.JSON(out), "updated_at": now}).Error; err != nil {
+			return "", nil, err
+		}
+	case errors.Is(findErr, gorm.ErrRecordNotFound):
+		row := db.Template{ID: id, TenantID: tenantID, ProjectID: projectID, Name: name, Doc: datatypes.JSON(out), CreatedAt: now, UpdatedAt: now}
+		if err := s.g.Create(&row).Error; err != nil {
+			return "", nil, err
+		}
+	default:
+		return "", nil, findErr
 	}
 	return id, out, nil
 }
