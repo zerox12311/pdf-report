@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -100,8 +101,8 @@ func (h *userHandler) update(c *gin.Context) {
 		}
 	}
 	if req.Password != nil {
-		if len(*req.Password) < 4 {
-			httpError(c, 400, errors.New("密碼至少 4 字元"))
+		if len(*req.Password) < minPasswordLen {
+			httpError(c, 400, fmt.Errorf("密碼至少 %d 字元", minPasswordLen))
 			return
 		}
 		if err := h.users.SetPassword(id, *req.Password); err != nil {

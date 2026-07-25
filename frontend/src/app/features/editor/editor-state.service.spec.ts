@@ -160,6 +160,107 @@ describe('EditorStateService', () => {
     expect(data.items[0]['$row']).toBeUndefined();
   });
 
+
+  // 實測回報：驗證分頁按「從樣板偵測欄位」→ 再按「用範例資料填入」→ 驗證 4 筆不通過。
+  // 兩邊各自推型別就會這樣，這個測試把「範例資料必須過得了自己偵測出來的規則」釘住。
+  it('buildSampleData 產出的資料，型別與 detectValidationFields 偵測的一致', () => {
+    // total 用千分位格式（偵測 → number）；items[].amount 靠 $sum 推成 number
+    state.addElement({
+      ...textEl(), type: 'placeholder', key: 'total', sample: '範例值', format: 'comma',
+    } as any);
+    state.select(null);
+    state.addElement({
+      type: 'table', x: 0, y: 400, width: 180, height: 48,
+      columnWidths: [90, 90], rowHeights: [24, 24],
+      borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+      repeat: { enabled: true, key: 'items', rowIndex: 1 },
+      cells: [
+        [{ kind: 'text', value: '品名', key: '', sample: '', align: 'left', bold: false },
+         { kind: 'placeholder', value: '', key: '$sum(items.amount)', sample: '', align: 'right', bold: false }],
+        [{ kind: 'placeholder', value: '', key: 'name', sample: '品', align: 'left', bold: false },
+         { kind: 'placeholder', value: '', key: 'amount', sample: '範例', align: 'right', bold: false }],
+      ],
+    } as any);
+
+    state.detectValidationFields();
+    const fields = state.validation().fields;
+    const data: any = state.buildSampleData();
+
+    const numberFields = fields.filter(f => f.type === 'number');
+    expect(numberFields.length).toBeGreaterThan(0); // 沒偵測到數字欄位的話這個測試就沒在測東西
+
+    const valuesAt = (path: string): unknown[] => {
+      const parts = path.split('.');
+      let cur: unknown[] = [data];
+      for (const raw of parts) {
+        const isArr = raw.endsWith('[]');
+        const seg = isArr ? raw.slice(0, -2) : raw;
+        const next: unknown[] = [];
+        for (const c of cur) {
+          if (c == null || typeof c !== 'object') continue;
+          const v = (c as Record<string, unknown>)[seg];
+          if (isArr) { if (Array.isArray(v)) next.push(...v); } else if (v !== undefined) next.push(v);
+        }
+        cur = next;
+      }
+      return cur;
+    };
+
+    for (const f of numberFields) {
+      const vals = valuesAt(f.path);
+      expect(vals.length).withContext(`${f.path} 沒有產生範例值`).toBeGreaterThan(0);
+      for (const v of vals) {
+        expect(typeof v).withContext(`${f.path} = ${JSON.stringify(v)} 應為數字`).toBe('number');
+      }
+    }
+  });
+
+
+  // 實測回報：按儲存後 undo 立刻變灰，一步都退不回去。
+  it('markSaved 同步 id/updatedAt 但保留復原歷史與選取', () => {
+    state.addElement(textEl() as any);
+    state.addElement({ ...textEl(), y: 100 } as any);
+    const before = state.undoCount();
+    expect(before).toBeGreaterThan(0);
+    const selected = state.selectedId();
+    const elCount = state.visibleElements().length;
+
+    state.markSaved({ ...state.template(), id: 'srv-id', updatedAt: '2026-07-25T00:00:00Z' });
+
+    expect(state.template().id).toBe('srv-id');
+    expect(state.template().updatedAt).toBe('2026-07-25T00:00:00Z');
+    expect(state.dirty()).toBeFalse();
+    expect(state.undoCount()).withContext('存檔不該清掉復原歷史').toBe(before);
+    expect(state.selectedId()).withContext('存檔不該取消選取').toBe(selected);
+    expect(state.visibleElements().length).toBe(elCount);
+
+    // 存檔後仍退得回去（record() 有 400ms 合併視窗，連續兩次新增算同一筆歷史，
+    // 所以這裡只斷言「退得回去」而不是精確退幾個）
+    state.undo();
+    expect(state.visibleElements().length).toBeLessThan(elCount);
+  });
+
+
+  // 實測回報：新建樣板存檔 → 復原 → 再編輯 → 存檔，會默默生出第二份樣板。
+  // 快照含整份文件，存檔前那張的 id 是空的，退回去就把伺服器指派的 id 弄丟。
+  it('undo/redo 不會弄丟伺服器指派的 id（否則再存檔會變成新建）', () => {
+    state.addElement(textEl() as any);          // 第一次編輯（此時 id 還是空的）→ 快照
+    state.markSaved({ ...state.template(), id: 'srv-1', updatedAt: 'T1' });
+    expect(state.template().id).toBe('srv-1');
+
+    state.undo();
+    expect(state.template().id).withContext('復原後 id 不可消失').toBe('srv-1');
+    expect(state.template().updatedAt).toBe('T1');
+
+    state.redo();
+    expect(state.template().id).toBe('srv-1');
+
+    // 之後的存檔仍是「更新既有」而不是「新建」
+    state.addElement({ ...textEl(), y: 200 } as any);
+    state.undo();
+    expect(state.template().id).toBe('srv-1');
+  });
+
   it('buildSampleData：動態圖片 key 產範例 URL（元素與重複列儲存格）', () => {
     state.addElement({
       type: 'image', x: 0, y: 0, width: 100, height: 50,

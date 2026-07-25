@@ -26,7 +26,10 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
         <!-- 浮水印（示意；目前節的有效浮水印，輸出以後端為準） -->
         @if (wm(); as w) {
           @if (w.enabled) {
+            <!-- 上層浮水印半透明：與引擎一致（engine.watermarkAboveAlpha）。
+                 不透明的話會把內文塗掉，畫布也要看得出真正的輸出長相。 -->
             <div class="wm" [style.zIndex]="w.layer === 'above' ? 8 : 1"
+              [style.opacity]="w.layer === 'above' ? 0.35 : 1"
               [style.fontSize.px]="(w.fontSize || 72) * z()" [style.color]="w.color || '#e5e7eb'">
               <div class="wm-rot" [style.transform]="'rotate(' + -(w.rotation || 0) + 'deg)'">
                 @if (w.repeat) {
@@ -186,6 +189,10 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
               <app-canvas-element [el]="el" />
             }
             @if (el.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
+            <!-- 自動增高：畫布照設計高度畫（實際長多高由引擎算），標一下才不會以為間距就是這樣 -->
+            @if (growsOnOverflow(el)) {
+              <div class="grow-badge" title="內容超出時自動增高，並把下方元素往下推——畫布顯示的是設計高度，實際高度看預覽分頁">↕</div>
+            }
             <!-- 可填標示：設計者一眼看出哪些欄位開放給填寫模式；填寫模式下也用它標出可改處 -->
             @if (showsFillable(el)) { <div class="fillable-mark" title="填寫模式可修改此欄位"></div> }
             <!-- 圓角把手（Figma 式）：矩形選取時四角各一，拖曳調整（四角一起變） -->
@@ -273,6 +280,9 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
     .radius-handle { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
       background: #fff; border: 1.5px solid #2563eb; border-radius: 50%; cursor: nwse-resize; z-index: 7; }
     .radius-handle:hover { background: #2563eb; }
+    .grow-badge { position: absolute; bottom: -7px; left: -7px; z-index: 6; font-size: 10px; line-height: 1;
+      background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; border-radius: 4px;
+      padding: 1px 3px; pointer-events: none; opacity: .75; }
     .lock-badge { position: absolute; top: -8px; right: -8px; z-index: 6; font-size: 11px;
       line-height: 1; padding: 1px 2px; background: #fff7ed; border: 1px solid #ea580c;
       border-radius: 4px; opacity: .85; pointer-events: none; }
@@ -408,7 +418,15 @@ export class EditorCanvasComponent {
    * 否則殘留 fillable 的非 text 元素（例如從 JSON 分頁改過 type）會標成可填，
    * 使用者點下去卻只拿到 403。
    */
+  /** 是否為「內容超出時自動增高」的元素。autoGrow 只在 text/placeholder 上有意義
+   *  （TextStyle 的欄位），直接寫 el.autoGrow 會編譯失敗——ImageElement 等沒有這個屬性。 */
+  growsOnOverflow(el: TemplateElement): boolean {
+    return (el.type === 'text' || el.type === 'placeholder') && !!el.autoGrow;
+  }
+
   showsFillable(el: TemplateElement): boolean {
+    // 唯讀模式（view）不畫：那裡什麼都不能填，綠框只會讓人以為點得動。
+    if (this.state.viewMode()) return false;
     return !!el.fillable && el.type === 'text';
   }
 

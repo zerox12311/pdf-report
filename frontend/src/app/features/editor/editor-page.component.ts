@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, ViewChild, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, ViewChild, computed, effect, inject, signal, ElementRef} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ELEMENT_META, TemplateElement, collectFillableValues, emptyTemplate, isChildHost } from '../../core/models/template.model';
@@ -48,6 +48,7 @@ interface PaletteItem {
             <button class="save" (click)="save()" [disabled]="saving()">
               {{ saving() ? '儲存中…' : state.dirty() ? '儲存 *' : '儲存' }}
             </button>
+            @if (savedAt()) { <span class="saved-tip" role="status">✓ 已儲存</span> }
           }
         </div>
       </header>
@@ -92,8 +93,8 @@ interface PaletteItem {
               @if (group.items.length === 0) {
                 <div class="empty-band">（無元素）</div>
               }
-              @for (item of group.items; track item.el.id) {
-                <div class="node" [class.active]="item.el.id === state.selectedId()"
+              @for (item of group.items; track item.key) {
+                <div class="node" [class.active]="isOutlineActive(item)"
                   [class.drop-target]="dropTargetId() === item.el.id"
                   [class.node-hidden]="item.el.hidden"
                   [style.paddingLeft.px]="6 + item.depth * 16"
@@ -103,7 +104,7 @@ interface PaletteItem {
                   (dragover)="onOutlineDragOver($event, item.el)"
                   (dragleave)="dropTargetId.set(null)"
                   (drop)="onOutlineDrop($event, item.el)"
-                  (click)="revealEl(item.el.id)">
+                  (click)="revealItem(item)">
                   <span class="icon">{{ item.icon }}</span>
                   <span class="label">{{ item.label }}</span>
                   @if (!state.restricted()) {
@@ -197,6 +198,7 @@ interface PaletteItem {
                 <button class="zbtn" (click)="zoomBy(-0.1)">−</button>
                 <span class="zval" (click)="state.zoom.set(1.2)">{{ zoomPct() }}%</span>
                 <button class="zbtn" (click)="zoomBy(0.1)">＋</button>
+                <button class="zbtn zfit" (click)="fitZoom()" title="符合寬度：整張紙剛好放進畫布">⇔</button>
               </div>
             }
             @if (!embedded && !state.restricted()) {
@@ -238,7 +240,9 @@ interface PaletteItem {
     </div>
   `,
   styles: `
-    :host { display: block; height: 100vh; }
+    :host { display: block; height: 100vh;
+      /* 分頁列高度：頁面導覽浮層要從它下方開始，兩處共用同一個值才不會各自漂移 */
+      --tabbar-h: 37px; }
     .editor { display: flex; flex-direction: column; height: 100%; }
     header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #1e293b; color: #fff; }
     .back { color: #cbd5e1; text-decoration: none; font-size: 13px; }
@@ -247,6 +251,10 @@ interface PaletteItem {
       background: #0f172a; color: #fff; width: 220px; }
     .right { margin-left: auto; display: flex; gap: 8px; }
     .save { background: #22c55e; color: #fff; border: none; border-radius: 6px; padding: 6px 16px; cursor: pointer; }
+    .saved-tip { margin-left: 8px; color: #16a34a; font-size: 12px; font-weight: 600; white-space: nowrap;
+      animation: savedIn .15s ease-out; }
+    @keyframes savedIn { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .saved-tip { animation: none; } }
     .save:disabled { opacity: .6; }
     .link { background: #334155; color: #e2e8f0; border: 1px solid #475569; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
     .link:hover { background: #3e4f66; }
@@ -301,7 +309,8 @@ interface PaletteItem {
     .navpanel { display: none; flex-direction: column; min-width: 0; }
     .navwrap.pinned .navpanel { display: flex; width: 100%; }
     /* 未釘選展開＝浮層蓋在畫布上，不推版面；點外面收回 */
-    .navwrap.peek .navpanel { display: flex; position: absolute; left: 26px; top: 0; bottom: 0; width: 190px;
+    /* 浮層從分頁列下方開始：蓋住「設計／樣板JSON」時使用者會整個點不動上方分頁列 */
+    .navwrap.peek .navpanel { display: flex; position: absolute; left: 26px; top: var(--tabbar-h); bottom: 0; width: 190px;
       background: #eef1f5; border-right: 1px solid #cfd6df; z-index: 40; box-shadow: 3px 0 10px rgba(0,0,0,.18); }
     .navpanel-head { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid #d7dde6; }
     .navpanel-title { flex: 1; font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: .06em; text-transform: uppercase; }
@@ -329,7 +338,11 @@ interface PaletteItem {
 
     /* 中間 */
     .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-    .tabbar { display: flex; align-items: center; background: #e8ecf1; border-bottom: 1px solid #cfd6df; padding: 0 8px; }
+    .tabbar { display: flex; align-items: center; height: var(--tabbar-h); box-sizing: border-box;
+      background: #e8ecf1; border-bottom: 1px solid #cfd6df; padding: 0 8px;
+      flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+    .tabbar > * { flex-shrink: 0; }
+    .tabbar button, .tabbar .zoom { white-space: nowrap; }
     .tabbar button { border: none; background: none; padding: 8px 16px; font-size: 13px; cursor: pointer;
       color: #475569; border-bottom: 2px solid transparent; }
     .tabbar button.on { color: #1d4ed8; border-bottom-color: #1d4ed8; background: #f8fafc; font-weight: 600; }
@@ -354,6 +367,19 @@ interface PaletteItem {
     .json-actions { display: flex; align-items: center; gap: 10px; }
     .rpanel { width: 280px; flex-shrink: 0; border-left: 1px solid #ddd; background: #fafafa;
       display: flex; flex-direction: column; min-height: 0; }
+
+    /* 嵌入 iframe 的常見寬度：分頁標籤原本會被擠成直排、畫布只剩三分之一，
+       設計模式幾乎不能用。收窄兩側與分頁內距，把空間讓給畫布。 */
+    @media (max-width: 1100px) {
+      .rpanel { width: 232px; }
+      .tabbar button { padding: 8px 10px; font-size: 12.5px; }
+      header { gap: 8px; padding: 6px 8px; }
+    }
+    @media (max-width: 880px) {
+      .rpanel { width: 200px; }
+      .tabbar button { padding: 7px 7px; font-size: 12px; }
+      .tabbar .zoom { font-size: 11px; }
+    }
     .rtabs { display: flex; border-bottom: 1px solid #e2e8f0; background: #f1f5f9; flex-shrink: 0; }
     .rtabs button { flex: 1; border: none; background: none; padding: 7px 0; font-size: 13px; cursor: pointer;
       color: #64748b; border-bottom: 2px solid transparent; }
@@ -364,6 +390,7 @@ interface PaletteItem {
 })
 export class EditorPageComponent {
   state = inject(EditorStateService);
+  private host = inject(ElementRef<HTMLElement>);
   private api = inject(TemplateApiService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -387,6 +414,16 @@ export class EditorPageComponent {
   @ViewChild('imageInput') imageInput?: { nativeElement: HTMLInputElement };
 
   saving = signal(false);
+  /** 存檔成功後短暫顯示「✓ 已儲存」。按鈕上的 * 消失太隱晦——填寫模式的使用者
+   *  常常不確定到底存進去沒，財務單據不該讓人猜。 */
+  savedAt = signal(false);
+  private savedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private flashSaved() {
+    this.savedAt.set(true);
+    if (this.savedTimer) clearTimeout(this.savedTimer);
+    this.savedTimer = setTimeout(() => this.savedAt.set(false), 2500);
+  }
   showIntegration = signal(false);
   rightTab = signal<'props' | 'data'>('props');
   tab = signal<'design' | 'json' | 'preview' | 'validation'>('design');
@@ -475,7 +512,7 @@ export class EditorPageComponent {
     const page = this.state.activePage();
     const headerH = page.headerHeight;
     const footerStart = page.height - page.footerHeight;
-    type Item = { el: TemplateElement; icon: string; label: string; depth: number };
+    type Item = { key: string; el: TemplateElement; icon: string; label: string; depth: number; cell?: { row: number; col: number } };
     const groups = sec.kind === 'flow'
       ? [
           { name: '頁首 Page Header', items: [] as Item[] },
@@ -486,7 +523,7 @@ export class EditorPageComponent {
     for (const el of this.state.visibleElements()) {
       const g = sec.kind !== 'flow' ? groups[0]
         : el.y < headerH ? groups[0] : el.y >= footerStart ? groups[2] : groups[1];
-      g.items.push({ el, icon: this.iconOf(el), label: this.labelOf(el), depth: 0 });
+      g.items.push({ key: el.id, el, icon: this.iconOf(el), label: this.labelOf(el), depth: 0 });
     }
     for (const g of groups) {
       g.items.sort((a, b) => a.el.y - b.el.y);
@@ -496,16 +533,89 @@ export class EditorPageComponent {
         withChildren.push(item);
         if (isChildHost(item.el)) {
           [...item.el.children].sort((a, b) => a.y - b.y)
-            .forEach(c => pushWithKids({ el: c, icon: this.iconOf(c), label: this.labelOf(c), depth: item.depth + 1 }));
+            .forEach(c => pushWithKids({ key: c.id, el: c, icon: this.iconOf(c), label: this.labelOf(c), depth: item.depth + 1 }));
         }
       };
       for (const item of g.items) pushWithKids(item);
       // 填寫模式：大綱＝「待填欄位清單」，只留改得到的（含有可填儲存格的表格也留，
       // 否則表單型樣板的可填格全在表格裡、大綱會整個空掉）。空的 band 分組不顯示。
-      g.items = this.state.fillMode() ? withChildren.filter(i => this.hasFillable(i.el)) : withChildren;
+      // 填寫模式：大綱＝「待填欄位清單」。表格展開成**逐格**項目——只列表格的話，
+      // 清單指給使用者的東西點下去會說「此欄位不開放修改」（可填的是格子不是表格），
+      // 使用者當場卡住，還得自己去畫布上找綠框。
+      g.items = this.state.fillMode()
+        ? withChildren.flatMap(i => this.fillableItems(i))
+        : withChildren;
     }
     return this.state.fillMode() ? groups.filter(g => g.items.length > 0) : groups;
   });
+
+  /**
+   * 填寫模式的大綱項目：可填的 text 元素照原樣；表格展開成逐格項目（只列真的能填的格）；
+   * 其餘一律不列。回傳陣列讓呼叫端 flatMap。
+   */
+  private fillableItems(item: { key: string; el: TemplateElement; icon: string; label: string; depth: number }) {
+    const el = item.el;
+    if (el.type === 'table') {
+      const out: typeof item[] = [];
+      for (let r = 0; r < el.cells.length; r++) {
+        for (let c = 0; c < el.cells[r].length; c++) {
+          const cell = el.cells[r][c];
+          if (cell.kind !== 'text' || !cell.fillable) continue;
+          const text = (cell.value ?? '').trim();
+          out.push({
+            key: `${el.id}#${r},${c}`,
+            el,
+            icon: '✎',
+            label: text || `（空白）第 ${r + 1} 列第 ${c + 1} 欄`,
+            depth: item.depth,
+            cell: { row: r, col: c },
+          } as typeof item);
+        }
+      }
+      return out;
+    }
+    return this.hasFillable(el) ? [item] : [];
+  }
+
+  /**
+   * 把填值 API 的錯誤訊息裡的內部定址換成使用者看得懂的欄位。
+   * 後端格式：`<elementId>：原因` 或 `<tableId>#<row>,<col>：原因`。
+   */
+  private humanizeValueError(msg: string): string {
+    const sep = msg.indexOf('：');
+    if (sep < 0) return msg;
+    const addr = msg.slice(0, sep);
+    const reason = msg.slice(sep + 1);
+    const label = this.labelForValueAddress(addr);
+    return label ? `「${label}」${reason}` : msg;
+  }
+
+  /** 由定址找出欄位在畫面上的名稱（找不到就回 null，讓呼叫端保留原訊息）。 */
+  private labelForValueAddress(addr: string): string | null {
+    const [id, rc] = addr.split('#');
+    const el = this.state.findElement(id);
+    if (!el) return null;
+    if (!rc) return el.type === 'text' ? (el.content || '（空白欄位）').slice(0, 20) : this.labelOf(el);
+    const [r, c] = rc.split(',').map(Number);
+    const cell = el.type === 'table' ? el.cells[r]?.[c] : null;
+    if (!cell) return null;
+    const text = (cell.kind === 'text' ? cell.value : '') || '';
+    return text.trim() ? text.slice(0, 20) : `表格第 ${r + 1} 列第 ${c + 1} 欄`;
+  }
+
+  /** 大綱項目是否為目前選取（儲存格項目要連座標一起比） */
+  isOutlineActive(item: { el: TemplateElement; cell?: { row: number; col: number } }): boolean {
+    if (item.el.id !== this.state.selectedId()) return false;
+    const sel = this.state.selectedCell();
+    if (!item.cell) return !sel;
+    return !!sel && sel.row === item.cell.row && sel.col === item.cell.col;
+  }
+
+  /** 點大綱：一般元素選元素；儲存格項目連同該格一起選起來（填寫模式直接可編輯） */
+  revealItem(item: { el: TemplateElement; cell?: { row: number; col: number } }) {
+    this.revealEl(item.el.id);
+    this.state.selectedCell.set(item.cell ? { ...item.cell } : null);
+  }
 
   /** 該元素本身可填，或（表格）內含可填的 text 儲存格。 */
   private hasFillable(el: TemplateElement): boolean {
@@ -614,10 +724,17 @@ export class EditorPageComponent {
       this.api.getWithProject(id).then(({ doc, projectId }) => {
         this.templateProjectId.set(projectId); // 返回時回到樣板所屬專案
         this.state.load(doc);
+        this.autoFitIfClipped();
         this.fonts.ensureForDoc(this.state.template());
         this.bridge.notify('template-loaded', doc.id);
       }).catch(() => this.state.load(emptyTemplate())); // 失敗時 projectId 維持 null → 乾淨退回首頁
     }
+  }
+
+  /** Esc 收回頁面導覽浮層（沒有這個就只能再按一次 ▤，使用者會覺得關不掉） */
+  @HostListener('document:keydown.escape')
+  onEscape() {
+    if (this.navOpen() && !this.navPinned()) this.navOpen.set(false);
   }
 
   /** 頁面導覽未釘選展開（peek）時，點面板外面就收回（HostListener 跑在 zone 內，會觸發變更偵測） */
@@ -674,6 +791,35 @@ export class EditorPageComponent {
 
   zoomBy(d: number) {
     this.state.zoom.set(Math.min(3, Math.max(0.3, Math.round((this.state.zoom() + d) * 100) / 100)));
+  }
+
+  /**
+   * 符合寬度：把整張紙縮到剛好放進畫布可視區。
+   * 嵌入 iframe 時預設 120% 會讓 A4 比可視區寬，使用者只看得到紙的一部分，
+   * 又不見得知道要去調縮放。
+   */
+  fitZoom() {
+    const z = this.fitZoomValue();
+    if (z) this.state.zoom.set(z);
+  }
+
+  /** 載入後若整張紙塞不進畫布（典型：嵌在窄 iframe 裡），自動縮到符合寬度。
+   *  放得下就完全不動使用者的縮放設定。 */
+  private autoFitIfClipped() {
+    setTimeout(() => {
+      const fit = this.fitZoomValue();
+      if (fit && fit < this.state.zoom()) this.state.zoom.set(fit);
+    });
+  }
+
+  /** 算出「符合寬度」的縮放值；量不到元素或已經放得下就回 null。 */
+  private fitZoomValue(): number | null {
+    const wrap = this.host.nativeElement.querySelector('.canvas-wrap') as HTMLElement | null;
+    if (!wrap) return null;
+    const avail = wrap.clientWidth - 48; // 扣掉尺規與左右留白
+    const pageW = this.state.activePage().width;
+    if (avail <= 0 || pageW <= 0) return null;
+    return Math.min(3, Math.max(0.3, Math.round((avail / pageW) * 100) / 100));
   }
 
   removeEl(e: Event, id: string) {
@@ -812,18 +958,28 @@ export class EditorPageComponent {
           void this.modal.alert({ title: '沒有可填欄位', message: '這份表單目前沒有開放填寫的欄位，請聯絡樣板設計者。' });
           return;
         }
-        await this.api.patchValues(t.id, values);
+        try {
+          await this.api.patchValues(t.id, values);
+        } catch (e) {
+          // 後端的訊息以「<欄位定址>：原因」開頭，定址是內部 id（例如 llhtl58w），
+          // 填單者看不懂那是哪一欄。換成他在畫面上看得到的欄位標題。
+          throw new Error(this.humanizeValueError(e instanceof Error ? e.message : String(e)));
+        }
         // 不用 state.load()：那會清空 undo、取消選取、跳回第一節。
         // 送出的就是畫面上的值，DB 已與畫面一致，只要把「未存」標記清掉。
         this.state.dirty.set(false);
+        this.flashSaved();
         this.bridge.notify('template-saved', t.id);
         return;
       }
-      const saved = t.id ? await this.api.update(t) : await this.api.create(t, this.newProjectId);
-      this.state.load(saved);
+      const doc = this.state.docForSave();
+      const saved = t.id ? await this.api.update(doc) : await this.api.create(doc, this.newProjectId);
+      // 只同步 id/updatedAt，不重載整份文件——load() 會清空復原歷史（存完發現改錯就救不回來）
+      this.state.markSaved(saved);
       if (!t.id) {
         this.router.navigate(['/editor', saved.id], { replaceUrl: true });
       }
+      this.flashSaved();
       // 宿主系統由此事件取得樣板 id，之後其後端可 POST /api/templates/{id}/render 填資料出 PDF
       this.bridge.notify('template-saved', saved.id);
     } catch (e) {

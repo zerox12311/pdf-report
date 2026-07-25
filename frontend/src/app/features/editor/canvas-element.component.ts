@@ -54,7 +54,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
               [style.padding.px]="(el.padding ?? 0) * z()"
               [title]="phLabel(el.key) + '——雙擊編輯變數綁定'"
               (dblclick)="startSelfEdit($event)"
-            >{{ el.sample ? formatted(el.sample, el.format) : phLabel(el.key) }}</div>
+            >{{ phDisplay(el.key, el.sample, el.format) }}</div>
           }
         }
       }
@@ -136,7 +136,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                         [style.backgroundColor]="cell.fillColor || null"
                         [style.verticalAlign]="cell.vAlign || null"
                         [class.ph]="cell.kind === 'placeholder'"
-                        [class.cell-fillable]="cell.kind === 'text' && cell.fillable"
+                        [class.cell-fillable]="showsFillableCell(cell)"
                         [class.cell-selected]="el.id === state.selectedId() && isCellSelected(r, c)"
                         [class.drop-cell]="(dropCell()?.r === r && dropCell()?.c === c) || isElementDropCell(el, r, c)"
                         (pointerdown)="onCellDown(el, r, c, $event)"
@@ -188,8 +188,8 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                         <!-- 換行示意：absolute 貼齊內距，不撐開畫布列高（實際列高由引擎算） -->
                         <span class="cell-wrap-text" [style.inset.px]="el.cellPadding * z()"
                           [style.justifyContent]="cell.vAlign === 'top' ? 'flex-start' : cell.vAlign === 'bottom' ? 'flex-end' : 'center'"
-                          >{{ cell.kind === 'placeholder' ? (cell.sample ? formatted(cell.sample, cell.format) : phLabel(cell.key)) : cell.value }}</span>
-                      } @else {{{ cell.kind === 'placeholder' ? (cell.sample ? formatted(cell.sample, cell.format) : phLabel(cell.key)) : cell.value }}}</td>
+                          >{{ cell.kind === 'placeholder' ? cellDisplay(el, r, cell) : cell.value }}</span>
+                      } @else {{{ cell.kind === 'placeholder' ? cellDisplay(el, r, cell) : cell.value }}}</td>
                     }
                   }
                 </tr>
@@ -276,8 +276,53 @@ export class CanvasElementComponent {
   barcodeEl = computed(() => { const e = this.el(); return e.type === 'barcode' ? e : null; });
   tableEl = computed(() => { const e = this.el(); return e.type === 'table' ? e : null; });
 
+  /**
+   * 儲存格的「可填」綠框。唯讀模式（view）不畫——那裡什麼都不能填，
+   * 綠框只會讓人以為點得動。（元素層的同名判斷在 editor-canvas 的 showsFillable，
+   * 兩處規則必須一致；上一輪只修了元素層、儲存格沒跟上就被實測抓到。）
+   */
+  showsFillableCell(cell: TableCell): boolean {
+    if (this.state.viewMode()) return false;
+    return cell.kind === 'text' && !!cell.fillable;
+  }
+
   phLabel(key: string): string {
     return '{{' + key + '}}';
+  }
+
+  /**
+   * 佔位欄位在畫布上顯示什麼：優先用「資料」分頁貼的實際資料（與文字元素的 {{插值}} 用同一份），
+   * 該 key 取不到值才退回設計期 sample，都沒有就顯示 key 標籤。
+   *
+   * 之前只看 sample，於是同一份貼上的資料「文字元素吃得到、資料欄位吃不到」，
+   * 同一張畫布兩套規則，使用者會以為自己 key 打錯。
+   * （正式渲染缺 key 是留空＋警告、不以 sample 冒充；設計期則以看得懂為主。）
+   */
+  phDisplay(key: string, sample: string, format: Parameters<typeof formatValue>[1]): string {
+    const v = this.resolvePath(this.sampleData(), key);
+    if (v !== undefined && v !== null && typeof v !== 'object') return this.formatted(String(v), format);
+    return sample ? this.formatted(sample, format) : this.phLabel(key);
+  }
+
+  /**
+   * 表格儲存格的畫布顯示值。重複列（與群組首/尾列）的 key 是**相對**於綁定陣列的，
+   * 直接拿去查整份資料當然查不到，於是永遠只看得到設計期範例值——畫布看起來跟
+   * 實際輸出對不上。這裡補上陣列前綴，用**第一筆**資料呈現。
+   *
+   * 畫布刻意只畫一列（設計面板不是輸出預覽，比照 JasperReports 的 detail band）；
+   * 展開幾列、跨頁怎麼切，看預覽分頁的真實 PDF。
+   */
+  cellDisplay(el: TableElement, row: number, cell: TableCell): string {
+    return this.phDisplay(this.effectiveCellKey(el, row, cell.key), cell.sample, cell.format);
+  }
+
+  /** 重複列/群組列的相對 key → `陣列[0].key`；其餘原樣。 */
+  private effectiveCellKey(el: TableElement, row: number, key: string): string {
+    const rep = el.repeat;
+    if (!rep?.enabled || !rep.key || !key || key.startsWith('$')) return key;
+    const inRepeat = row === rep.rowIndex
+      || (!!rep.groupBy && (row === rep.groupHeaderRowIndex || row === rep.groupFooterRowIndex));
+    return inRepeat ? `${rep.key}[0].${key}` : key;
   }
 
   /** 拖曳既有圖片元素時，此格是否為放置目標（高亮） */

@@ -92,4 +92,47 @@ describe('template.model', () => {
     expect(values['tbl#1,0']).toBeUndefined();
     expect(values['tbl#1,1']).toBeUndefined();
   });
+
+  describe('normalizeTemplate 表格防呆', () => {
+    const tableDoc = (table: Record<string, unknown>) =>
+      ({ sections: [{ id: 's1', kind: 'flow', elements: [{ id: 'tbl', type: 'table', x: 0, y: 0, width: 300, height: 60, ...table }] }] });
+    const firstTable = (doc: unknown) =>
+      normalizeTemplate(doc as never).sections[0].elements[0] as TableElement;
+
+    it('缺 columnWidths/rowHeights 時由元素寬高均分補上（原本會讓整張畫布空白）', () => {
+      const t = firstTable(tableDoc({ cells: [[{ kind: 'text', value: 'a' }, { kind: 'text', value: 'b' }]] }));
+      expect(t.columnWidths).toEqual([150, 150]);
+      expect(t.rowHeights).toEqual([60]);
+      expect(t.cells[0][0].value).toBe('a');
+    });
+
+    it('cells 缺格時補空格，既有內容保留', () => {
+      const t = firstTable(tableDoc({ columnWidths: [100, 100, 100], rowHeights: [20, 20], cells: [[{ kind: 'text', value: 'a' }]] }));
+      expect(t.cells.length).toBe(2);
+      expect(t.cells[0].length).toBe(3);
+      expect(t.cells[0][0].value).toBe('a');
+      expect(t.cells[1][2].kind).toBe('text');
+    });
+
+    it('完全沒有 cells / 尺寸也不崩，補成 1x1', () => {
+      const t = firstTable(tableDoc({}));
+      expect(t.columnWidths.length).toBe(1);
+      expect(t.rowHeights.length).toBe(1);
+      expect(t.cells).toEqual([[jasmine.objectContaining({ kind: 'text' })]]);
+    });
+
+    it('結構完整的表格原樣回傳（不動既有樣板）', () => {
+      const cells = [[{ kind: 'text', value: 'a' }, { kind: 'text', value: 'b' }]];
+      const doc = tableDoc({ columnWidths: [150, 150], rowHeights: [60], cells });
+      const t = firstTable(doc);
+      expect(t.columnWidths).toBe((doc.sections[0].elements[0] as never as TableElement).columnWidths);
+      expect(t.cells).toBe(cells as never);
+    });
+
+    it('壞值（NaN／非陣列）視同缺漏而不是照單全收', () => {
+      const t = firstTable(tableDoc({ columnWidths: [NaN, 10], rowHeights: 'nope', cells: [[{ kind: 'text', value: 'a' }]] }));
+      expect(t.columnWidths.every(n => Number.isFinite(n))).toBeTrue();
+      expect(t.rowHeights.every(n => Number.isFinite(n))).toBeTrue();
+    });
+  });
 });

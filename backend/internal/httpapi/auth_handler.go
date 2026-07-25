@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,11 @@ import (
 	"pdftemplate/internal/db"
 	"pdftemplate/internal/store"
 )
+
+// minPasswordLen 設定密碼的最短長度。這是財務單據系統的控制台帳號，
+// 原本 4 字元太弱（四位數字幾秒就能爆破完，登入限流只是拖慢不是擋住）。
+// 只在「設定密碼」時檢查，不影響既有帳號登入。
+const minPasswordLen = 8
 
 // authHandler 控制台登入 / 登出 / 目前使用者 / 改密碼。
 // 目前為單租戶：登入固定對 DefaultTenantID 查帳號（多租戶登入為未來）。
@@ -94,8 +100,8 @@ func (h *authHandler) changePassword(c *gin.Context) {
 		httpError(c, 400, err)
 		return
 	}
-	if len(req.NewPassword) < 4 {
-		httpError(c, 400, errors.New("新密碼至少 4 字元"))
+	if len(req.NewPassword) < minPasswordLen {
+		httpError(c, 400, fmt.Errorf("新密碼至少 %d 字元", minPasswordLen))
 		return
 	}
 	u, err := h.users.GetByID(userOf(c))

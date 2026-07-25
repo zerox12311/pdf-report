@@ -3,6 +3,17 @@ import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { TemplateDoc, TemplateSummary, ValidationSpec } from '../models/template.model';
 
+/** 解析 `X-Render-Warnings`（percent-encoded 的 JSON 字串陣列）；壞掉就當沒有警告，不能因此擋住預覽。 */
+function parseWarnings(header: string | null): string[] {
+  if (!header) return [];
+  try {
+    const arr: unknown = JSON.parse(decodeURIComponent(header));
+    return Array.isArray(arr) ? arr.filter((w): w is string => typeof w === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 /** POST /api/validate 的回應：ok=通過；errors 帶出錯位置與規則 */
 export interface ValidationResult {
   ok: boolean;
@@ -95,11 +106,18 @@ export class TemplateApiService {
     return this.run(firstValueFrom(this.http.delete<void>(`/api/templates/${id}`)));
   }
 
-  /** 後端渲染（未儲存的樣板也可直接送渲染，編輯器預覽用）。 */
-  renderAdhoc(template: TemplateDoc, data: unknown): Promise<Blob> {
-    return this.run(firstValueFrom(
-      this.http.post('/api/templates/render', { template, data }, { responseType: 'blob' }),
+  /**
+   * 後端渲染（未儲存的樣板也可直接送渲染，編輯器預覽用）。
+   * 一併回傳 `X-Render-Warnings`：資料缺 key、圖片抓取失敗這些**不擋渲染**的問題全靠它，
+   * 預覽若只拿 PDF 就等於把警告吞掉——設計者看到 200 與一張少了東西的 PDF，
+   * 完全不知道自己 key 打錯了。
+   */
+  async renderAdhoc(template: TemplateDoc, data: unknown): Promise<{ blob: Blob; warnings: string[] }> {
+    const res = await this.run(firstValueFrom(
+      this.http.post('/api/templates/render', { template, data },
+        { responseType: 'blob', observe: 'response' }),
     ));
+    return { blob: res.body ?? new Blob(), warnings: parseWarnings(res.headers.get('X-Render-Warnings')) };
   }
 
   /** 測試 schema：拿當前（可能未存）規則 + data 驗證，不渲染（與 render 守門同一權威）。 */
@@ -117,6 +135,10 @@ export class TemplateApiService {
 
   createProject(name: string): Promise<ProjectSummary> {
     return this.run(firstValueFrom(this.http.post<ProjectSummary>('/api/projects', { name })));
+  }
+
+  renameProject(id: string, name: string): Promise<ProjectSummary> {
+    return this.run(firstValueFrom(this.http.patch<ProjectSummary>(`/api/projects/${id}`, { name })));
   }
 
   deleteProject(id: string): Promise<void> {

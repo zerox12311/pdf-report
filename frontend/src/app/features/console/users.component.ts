@@ -98,7 +98,6 @@ import {
     }
   `,
   styles: `
-    p-breadcrumb { display: block; margin-bottom: 14px; }
     h1 { font-size: 22px; margin: 0 0 16px; }
     h2 { font-size: 15px; margin: 0 0 12px; }
     ul { list-style: none; margin: 0; padding: 0; }
@@ -201,7 +200,7 @@ export class UsersComponent {
   async resetPassword(u: ConsoleUserView) {
     const pw = await this.modal.prompt({
       title: `重設「${u.username}」的密碼`,
-      placeholder: '新密碼（至少 4 字元）',
+      placeholder: '新密碼（至少 8 字元）',
       password: true,
       minLength: 4,
       confirmLabel: '更新',

@@ -145,7 +145,7 @@ func TestChangePassword(t *testing.T) {
 	seedUser(t, g, "admin", "secret")
 
 	// 未登入 → 401（requireAuth）
-	if rec := doJSON(h, "POST", "/api/auth/change-password", `{"oldPassword":"secret","newPassword":"newpass"}`); rec.Code != 401 {
+	if rec := doJSON(h, "POST", "/api/auth/change-password", `{"oldPassword":"secret","newPassword":"newpass1"}`); rec.Code != 401 {
 		t.Errorf("change no auth: %d", rec.Code)
 	}
 
@@ -159,15 +159,15 @@ func TestChangePassword(t *testing.T) {
 		t.Errorf("change short: %d", rec.Code)
 	}
 	// 舊密碼錯 → 400
-	if rec := doAuth(h, "POST", "/api/auth/change-password", `{"oldPassword":"bad","newPassword":"newpass"}`, ck); rec.Code != 400 {
+	if rec := doAuth(h, "POST", "/api/auth/change-password", `{"oldPassword":"bad","newPassword":"newpass1"}`, ck); rec.Code != 400 {
 		t.Errorf("change wrong old: %d", rec.Code)
 	}
 	// 成功 → 204
-	if rec := doAuth(h, "POST", "/api/auth/change-password", `{"oldPassword":"secret","newPassword":"newpass"}`, ck); rec.Code != 204 {
+	if rec := doAuth(h, "POST", "/api/auth/change-password", `{"oldPassword":"secret","newPassword":"newpass1"}`, ck); rec.Code != 204 {
 		t.Fatalf("change ok: %d %s", rec.Code, rec.Body.String())
 	}
 	// 新密碼可登入、舊密碼不行
-	if rec := doJSON(h, "POST", "/api/auth/login", `{"username":"admin","password":"newpass"}`); rec.Code != 200 {
+	if rec := doJSON(h, "POST", "/api/auth/login", `{"username":"admin","password":"newpass1"}`); rec.Code != 200 {
 		t.Errorf("login new pw: %d", rec.Code)
 	}
 	if rec := doJSON(h, "POST", "/api/auth/login", `{"username":"admin","password":"secret"}`); rec.Code != 401 {
@@ -183,7 +183,7 @@ func TestChangePasswordUserGone(t *testing.T) {
 	if err := g.Where("username = ?", "admin").Delete(&db.User{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if rec := doAuth(h, "POST", "/api/auth/change-password", `{"oldPassword":"secret","newPassword":"newpass"}`, ck); rec.Code != 401 {
+	if rec := doAuth(h, "POST", "/api/auth/change-password", `{"oldPassword":"secret","newPassword":"newpass1"}`, ck); rec.Code != 401 {
 		t.Errorf("change user gone: %d", rec.Code)
 	}
 }
@@ -295,5 +295,55 @@ func TestConsoleDBErrors(t *testing.T) {
 	// 建樣板帶 projectId：Exists 出錯 → 500
 	if rec := doAuth(h, "POST", "/api/templates?projectId=x", minimalTemplate, ck); rec.Code != 500 {
 		t.Errorf("create template projectId db error: %d", rec.Code)
+	}
+}
+
+// TestProjectRename 專案改名（admin 專屬）。實測回報「專案設定頁只有 API 金鑰、沒有改名入口」。
+func TestProjectRename(t *testing.T) {
+	h, _, _, g := newTestServer(t)
+	seedUser(t, g, "admin", "secret")
+	ck := loginAs(t, h, "admin", "secret")
+
+	var p store.ProjectSummary
+	mustUnmarshal(t, doAuth(h, "POST", "/api/projects", `{"name":"舊名"}`, ck).Body.Bytes(), &p)
+
+	// 改名成功 → 回新的摘要，清單也跟著變
+	rec := doAuth(h, "PATCH", "/api/projects/"+p.ID, `{"name":"新名"}`, ck)
+	if rec.Code != 200 {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	var got store.ProjectSummary
+	mustUnmarshal(t, rec.Body.Bytes(), &got)
+	if got.Name != "新名" || got.ID != p.ID {
+		t.Errorf("回應 = %+v", got)
+	}
+	if !strings.Contains(doAuth(h, "GET", "/api/projects", "", ck).Body.String(), "新名") {
+		t.Error("清單應反映新名稱")
+	}
+
+	// 改成同名不算失敗（UPDATE 的 RowsAffected 會是 0，不可誤判成 404）
+	if rec := doAuth(h, "PATCH", "/api/projects/"+p.ID, `{"name":"新名"}`, ck); rec.Code != 200 {
+		t.Errorf("同名改名應成功，得到 %d", rec.Code)
+	}
+
+	// 空名 → 400、壞 JSON → 400、不存在 → 404
+	if rec := doAuth(h, "PATCH", "/api/projects/"+p.ID, `{"name":"  "}`, ck); rec.Code != 400 {
+		t.Errorf("空名應 400，得到 %d", rec.Code)
+	}
+	if rec := doAuth(h, "PATCH", "/api/projects/"+p.ID, `{bad`, ck); rec.Code != 400 {
+		t.Errorf("壞 JSON 應 400，得到 %d", rec.Code)
+	}
+	if rec := doAuth(h, "PATCH", "/api/projects/ghost", `{"name":"x"}`, ck); rec.Code != 404 {
+		t.Errorf("不存在應 404，得到 %d", rec.Code)
+	}
+
+	// 非 admin → 403；匿名 → 401
+	seedRole(t, g, "bob", "bobpw123", db.RoleUser)
+	userCk := loginAs(t, h, "bob", "bobpw123")
+	if rec := doAuth(h, "PATCH", "/api/projects/"+p.ID, `{"name":"x"}`, userCk); rec.Code != 403 {
+		t.Errorf("非 admin 應 403，得到 %d", rec.Code)
+	}
+	if rec := doJSON(h, "PATCH", "/api/projects/"+p.ID, `{"name":"x"}`); rec.Code != 401 {
+		t.Errorf("匿名應 401，得到 %d", rec.Code)
 	}
 }

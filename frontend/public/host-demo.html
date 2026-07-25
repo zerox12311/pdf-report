@@ -77,12 +77,13 @@
     .field input { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
       font-family: inherit; }
     .field input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
-    .err { color: #dc2626; font-size: 12.5px; margin-top: 6px; }
+    .err { color: #dc2626; font-size: 12.5px; margin-top: 6px; white-space: pre-line; }
 
     /* 報表工作區 */
-    .workspace { display: grid; grid-template-columns: 260px 1fr; gap: 18px; align-items: start;
+    .workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start;
       transition: grid-template-columns .2s ease; }
-    .workspace.collapsed { grid-template-columns: 1fr; gap: 0; }
+    .workspace > * { min-width: 0; }   /* grid 預設 min-width:auto 會讓編輯器欄擠不下去 */
+    .workspace.collapsed { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .workspace.collapsed .list-panel { display: none; }
     /* 收合時才顯示 editor 工具列的展開鈕；展開時藏起來（列表 header 有自己的收合鈕） */
     .editor-toolbar .icon-btn { display: none; }
@@ -357,6 +358,20 @@
     // ---- 收合/展開「我的報表」列表（收起來編輯器就佔滿，看正常比例）----
     function toggleList() { document.getElementById('wsGrid').classList.toggle('collapsed'); }
 
+    // 窄畫面（筆電）預設收起報表列表：展開時 iframe 只剩很窄一條，編輯器裡的紙幾乎看不到。
+    // 只在「使用者還沒自己動過」時自動收合，動過就尊重他的選擇。
+    var listTouched = false;
+    document.getElementById('wsGrid').addEventListener('click', function (e) {
+      if (e.target.closest('.icon-btn')) listTouched = true;
+    }, true);
+    function autoCollapseList() {
+      if (listTouched) return;
+      var ws = document.getElementById('wsGrid');
+      ws.classList.toggle('collapsed', window.innerWidth < 1200);
+    }
+    autoCollapseList();
+    window.addEventListener('resize', autoCollapseList);
+
     // ---- 載入 iframe 編輯器 ----
     // 零事件：token 直接放 iframe 網址的 fragment（#token=），前端不用寫任何 postMessage。
     // 設計完成後由使用者按編輯器內的「儲存」；下載的 PDF ＝ 最後存檔的版本。
@@ -404,8 +419,18 @@
           body: JSON.stringify({ data }),
         });
         if (!r.ok) {
+          // 後端把「哪個欄位、什麼規則」都給了（422 的 validationErrors／警告的 warnings）。
+          // 只顯示 j.error 等於把使用者真正需要的資訊丟掉——他會看到「輸入資料驗證未通過」
+          // 卻不知道要改哪裡。宿主整合請照這樣把欄位級錯誤攤開來。
           let msg = 'HTTP ' + r.status;
-          try { const j = await r.json(); if (j.error) msg = j.error; } catch (_) {}
+          try {
+            const j = await r.json();
+            if (j.error) msg = j.error;
+            const details = (j.validationErrors || []).map(function (v) {
+              return '• ' + v.path + '：' + (v.message || v.rule);
+            }).concat(j.warnings || []);
+            if (details.length) msg += '\n' + details.join('\n');
+          } catch (_) {}
           throw new Error(msg);
         }
         const warn = r.headers.get('X-Render-Warnings');

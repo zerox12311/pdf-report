@@ -16,7 +16,7 @@ import { AuthService } from '../../core/services/auth.service';
       <label>目前密碼
         <input name="old" type="password" [(ngModel)]="oldPassword" autocomplete="current-password" />
       </label>
-      <label>新密碼（至少 4 字元）
+      <label>新密碼（至少 8 字元）
         <input name="new" type="password" [(ngModel)]="newPassword" autocomplete="new-password" />
       </label>
       <label>確認新密碼
@@ -28,10 +28,11 @@ import { AuthService } from '../../core/services/auth.service';
     </form>
   `,
   styles: `
-    p-breadcrumb { display: block; margin-bottom: 14px; }
-    .card { max-width: 380px; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
-      padding: 28px; display: flex; flex-direction: column; gap: 14px; }
-    h1 { font-size: 19px; margin: 0; }
+    /* 麵包屑維持主欄寬度（各頁位置固定，不隨內容寬窄移動）；只有卡片置中。 */
+    :host { display: block; }
+    .card { max-width: 420px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0;
+      border-radius: 14px; padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+    h1 { font-size: 19px; margin: 0 0 4px; text-align: center; }
     label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #475569; }
     input { padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
     input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
@@ -59,8 +60,8 @@ export class ChangePasswordComponent {
     if (this.busy()) return;
     this.error.set('');
     this.done.set(false);
-    if (this.newPassword.length < 4) {
-      this.error.set('新密碼至少 4 字元');
+    if (this.newPassword.length < 8) {
+      this.error.set('新密碼至少 8 字元');
       return;
     }
     if (this.newPassword !== this.confirmPassword) {

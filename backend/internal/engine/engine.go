@@ -1395,7 +1395,11 @@ func (c *drawCtx) drawImageBytesRect(data []byte, rx, ry, rw, rh float64, fit st
 	return c.pdf.ImageByHolder(holder, x, dy, &gopdf.Rect{W: w, H: h})
 }
 
-// drawWatermark 每頁背景浮水印（畫在所有元素之下）。
+// watermarkAboveAlpha 上層浮水印的不透明度。夠淡到能讀穿、夠深到看得出是浮水印；
+// 固定常數（不開放設定）以維持渲染決定性。
+const watermarkAboveAlpha = 0.35
+
+// drawWatermark 每頁背景浮水印（Layer=above 時改畫在內容之上，並套半透明）。
 func (c *drawCtx) drawWatermark(wm *Watermark, pageW, pageH float64) error {
 	if wm == nil || !wm.Enabled {
 		return nil
@@ -1434,10 +1438,34 @@ func (c *drawCtx) drawWatermark(wm *Watermark, pageW, pageH float64) error {
 		}
 	}()
 
+	// 上層浮水印必須半透明，否則會把內文塗掉：PDF 沒有 alpha 時，即使很淺的灰也是
+	// **不透明**的——實測「副本」蓋在收款單上，抬頭、金額國字大寫、繳費期限全都讀不出來，
+	// 而那正是這張單據最不能糊掉的欄位。
+	//
+	// 走 CellWithOption 而不是 Text：gopdf v0.37.0 的 Text() 會把 curr.transparency 放進
+	// CellOption，卻**不會**解析成 extGState 索引，於是內容流裡根本不會出現 gs 運算子
+	// （單純呼叫 SetTransparency 沒有任何效果，實測 PDF 逐 byte 相同）。只有 Cell 系列
+	// 會解析。下層浮水印維持原本的 Text() 路徑——它下面沒有東西可蓋，不動路徑也讓
+	// 既有 golden 的 byte 不變。
+	above := wm.Layer == "above"
+	alpha := gopdf.Transparency{Alpha: watermarkAboveAlpha, BlendModeType: gopdf.NormalBlendMode}
+	// putText 在 (x, yTop) 畫一次浮水印文字；yTop 為該格文字的視覺中心線。
+	putText := func(x, yTop float64) error {
+		if !above {
+			c.pdf.SetXY(x, yTop+size*0.3)
+			return c.pdf.Text(text)
+		}
+		// 文字置中於一個以 (x+tw/2, yTop) 為中心的方框，位置與 Text() 版本視覺一致
+		c.pdf.SetXY(x, yTop-size*0.5)
+		return c.pdf.CellWithOption(&gopdf.Rect{W: tw, H: size}, text, gopdf.CellOption{
+			Align:        gopdf.Center | gopdf.Middle,
+			Transparency: &alpha,
+		})
+	}
+
 	if !wm.Repeat {
 		// 單一置中
-		c.pdf.SetXY(cx-tw/2, cy+size*0.3)
-		return c.pdf.Text(text)
+		return putText(cx-tw/2, cy)
 	}
 
 	// 滿版平鋪：整層旋轉後以磚牆式格點鋪滿（覆蓋範圍取頁面對角線，旋轉後不留角）。
@@ -1452,8 +1480,7 @@ func (c *drawCtx) drawWatermark(wm *Watermark, pageW, pageH float64) error {
 			offset = stepX / 2 // 磚牆式錯位
 		}
 		for x := cx - radius - tw + offset; x <= cx+radius; x += stepX {
-			c.pdf.SetXY(x, y+size*0.3)
-			if err := c.pdf.Text(text); err != nil {
+			if err := putText(x, y); err != nil {
 				return err
 			}
 		}
@@ -1768,6 +1795,15 @@ func tableHasSpansOrCellStyle(rows []ExpandedRow) bool {
 // drawTableFragment 畫一個表格分片（rows 含每片重複的表頭列）。
 // 無合併/逐格樣式時走整條格線的快速路徑（輸出與舊版 byte 相同）；否則逐格繪製。
 func (c *drawCtx) drawTableFragment(t *Element, y float64, rows []ExpandedRow) error {
+	// 沒有欄寬 = 沒有可畫的欄，整個表格會靜默消失。手改樣板 JSON 漏掉 columnWidths 時
+	// 才會發生（編輯器產出的表格一定有）。不擋渲染，但一定要出聲——這是財務單據，
+	// 「PDF 少了一張表」不能只靠使用者自己發現。前端畫布會補上預設欄寬讓表格可見。
+	if len(t.ColumnWidths) == 0 {
+		if c.warn != nil {
+			c.warn("表格「" + t.ID + "」缺 columnWidths，未繪製（請在編輯器開啟後重新儲存）")
+		}
+		return nil
+	}
 	if tableHasSpansOrCellStyle(rows) {
 		return c.drawTableCells(t, y, rows)
 	}

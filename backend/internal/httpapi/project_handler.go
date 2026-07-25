@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -11,7 +12,7 @@ import (
 	"pdftemplate/internal/store"
 )
 
-// projectHandler 控制台專案：清單 / 建立 / 刪除 / 專案內樣板清單。皆需登入。
+// projectHandler 控制台專案：清單 / 建立 / 改名 / 刪除 / 專案內樣板清單。皆需登入。
 // 建立/刪除為 admin 專屬（router 掛 requireAdmin）；清單依角色範圍化。
 type projectHandler struct {
 	projects  *store.ProjectStore
@@ -86,6 +87,30 @@ func (h *projectHandler) create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, p)
+}
+
+// rename 改專案名稱（admin 專屬）。空名 → 400、不存在 → 404、DB 錯誤 → 500。
+func (h *projectHandler) rename(c *gin.Context) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(c, &req); err != nil {
+		httpError(c, 400, err)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		httpError(c, 400, errors.New("專案名稱不可為空"))
+		return
+	}
+	p, err := h.projects.Rename(tenantOf(c), c.Param("id"), req.Name)
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, p)
+	case errors.Is(err, os.ErrNotExist):
+		httpError(c, 404, errors.New("專案不存在"))
+	default:
+		httpInternalError(c, err)
+	}
 }
 
 // listTemplates 專案內的樣板清單；非成員（非 admin）→ 403，專案不存在 → 404，DB 錯誤 → 500。

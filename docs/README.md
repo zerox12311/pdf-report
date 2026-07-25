@@ -25,5 +25,7 @@ PDF 樣板編輯器＋報表引擎的**功能現況**文件。給接手開發的
 
 - 入口型別：`template.model.ts` 的 `TemplateDoc`（→ `DocSection` → `TemplateElement` union → `TableElement`/`TableCell`…），每個欄位都有註解。Go 端對應 `engine/models.go`。
 - **舊格式**：早期樣板是 `elements` 平面清單＋`cover`/`backPage`（無 sections）。讀入時由 `template.model.ts` 的 `normalizeTemplate()` 遷移成節模型；**引擎端也保留舊路徑**（`engine.go` 的 Render 依 `Sections` 是否存在分流）。
+- **手改 JSON 的防呆**：`normalizeTemplate()` 會補 container/list 的 `children` 與 table 的 `columnWidths`/`rowHeights`/`cells` 維度。缺這些欄位時畫布會在取值時丟 TypeError，而 Angular 的樣板錯誤會中斷整棵渲染樹——結果是**整張畫布空白、沒有任何提示**。補值只加不減（既有內容一律保留），結構完整時原樣回傳同一個物件（維持 raw passthrough）。後端引擎對同一份 JSON 不會崩，但表格畫不出來，所以會發渲染警告（見 [engine.md](engine.md#錯誤與警告)）。
 - **改 schema 的檢查清單**：① TS model ② Go model ③ `normalizeTemplate()`（舊樣板補預設值）④ 新欄位是**指標/slice** 時，`engine.go` 的 `cloneElements` 要補手動深拷貝（scalar 不用）⑤ UI 跟上：畫布視覺（`canvas-element.component.ts` / `editor-canvas.component.ts`）＋屬性面板（`properties-panel.component.ts`）。
 - 儲存端是 raw JSON passthrough：後端不解析樣板內容存 JSONB，schema 落後不會丟資料，只是引擎忽略新欄位。
+- **純設計期欄位可以只加在 TS 端**（例外，不算漏同步）：`TemplateDoc.sampleData`（「資料」分頁的測試 JSON）只服務設計與預覽，引擎完全不讀它，靠 passthrough 原樣存回。這類欄位在 TS 註解裡明講「引擎忽略」，Go model 不必跟。

@@ -43,6 +43,9 @@ import { ProjectSummary, TemplateApiService } from '../../core/services/template
     }
   `,
   styles: `
+    /* 首頁沒有麵包屑（它就是階層的根）；預留等高空間，換頁時內容不會上下跳。
+       高度取自 styles.scss 的 --crumb-row，與麵包屑本身同一個來源。 */
+    :host { display: block; padding-top: var(--crumb-row); }
     .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
     h1 { font-size: 22px; margin: 0; }
     .new { display: flex; gap: 8px; }

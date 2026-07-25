@@ -22,17 +22,36 @@ const cellAddrSep = "#"
 var (
 	errValueTargetNotFound = errors.New("找不到指定的欄位")
 	errValueNotFillable    = errors.New("此欄位未開放在填寫模式修改")
-	errValueHasBinding     = errors.New("填寫內容不可含資料綁定語法（{{…}}）")
+	errValueHasBinding     = errors.New("填寫內容不可新增資料綁定語法（{{…}}）")
 )
 
 // bindingRe 與引擎的插值語法一致（engine.interpolateRe）：只有真的會被插值的寫法才擋，
 // 「單價 {{ 每公斤」這種沒有結尾的字面文字要放行。
 var bindingRe = regexp.MustCompile(`\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}`)
 
-// 填寫模式的值是**字面文字**，不是樣板語法。引擎會對 text 的 content 做 {{key}} 插值，
-// 若放行，填寫者可寫 {{customer.secret}} 把宿主 render payload 裡「樣板沒綁的欄位」印進 PDF
-// （收款單的 payload 常含個資／金流欄位），或用不存在的 key 讓 ?strict=1 的出單流程永久 422。
-func hasBindingSyntax(s string) bool { return bindingRe.MatchString(s) }
+// 擋的是**新增**綁定，不是「含有」綁定。引擎會對 text 的 content 做 {{key}} 插值，
+// 放行新增等於讓填寫者寫 {{customer.secret}} 把宿主 render payload 裡「樣板沒綁的欄位」
+// 印進 PDF（收款單的 payload 常含個資／金流欄位），或用不存在的 key 讓 ?strict=1 的
+// 出單流程永久 422。
+//
+// 但**原本就在的**綁定必須放行：設計者可以把「收款單 {{customer.name}}」這種欄位標成可填，
+// 填寫者改前後文時原有的綁定會原樣送回來。一律擋「含有」的話，這個欄位永遠存不了，
+// 而且會連累整批（fail-closed）——填寫者不管改哪一格都存不進去，唯一的自救是把設計者的
+// 綁定刪掉，等於用防護把資料綁定給毀了。
+// 比的是「用到哪些 key＋格式化」的**集合**而非次數：把既有的 {{a}} 重複幾次並沒有讀到
+// 新欄位，不算提權。key 與格式化分開比對（{{total}} → {{total|twUpper}} 會改變輸出，算新增）。
+func addsBinding(oldValue, newValue string) bool {
+	have := map[string]bool{}
+	for _, m := range bindingRe.FindAllStringSubmatch(oldValue, -1) {
+		have[m[1]+"|"+m[2]] = true
+	}
+	for _, m := range bindingRe.FindAllStringSubmatch(newValue, -1) {
+		if !have[m[1]+"|"+m[2]] {
+			return true
+		}
+	}
+	return false
+}
 
 // applyValues 在樣板 doc（raw JSON 解出的 map）上套用 values。
 // 任一項失敗即整批中止（fail-closed，不做部分套用）。
@@ -94,7 +113,8 @@ func setElementValue(el map[string]any, value string) error {
 	if t, _ := el["type"].(string); t != "text" {
 		return errValueNotFillable
 	}
-	if hasBindingSyntax(value) {
+	old, _ := el["content"].(string)
+	if addsBinding(old, value) {
 		return errValueHasBinding
 	}
 	el["content"] = value
@@ -124,7 +144,8 @@ func setCellValue(el map[string]any, row, col int, value string) error {
 	if k, _ := cell["kind"].(string); k != "text" {
 		return errValueNotFillable
 	}
-	if hasBindingSyntax(value) {
+	old, _ := cell["value"].(string)
+	if addsBinding(old, value) {
 		return errValueHasBinding
 	}
 	cell["value"] = value

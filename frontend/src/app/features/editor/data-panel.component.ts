@@ -27,7 +27,7 @@ interface DataNode {
       <div class="hint">貼上後端預計 POST 過來的 <b>data</b> JSON（預覽分頁用同一份）。從下方清單把欄位<b>拖到畫布</b>生成元件；<b>拖到表格的儲存格上</b>則直接把該格變成資料欄位（拖進重複列會自動轉相對 key）。</div>
       <button class="fill" (click)="fillSample()">用畫布現有欄位產生範例資料</button>
       <textarea spellcheck="false" placeholder='{"customer":{"name":"王小明"},"items":[{"name":"商品A","qty":1}]}'
-        [ngModel]="state.previewData()" (ngModelChange)="state.previewData.set($event)"></textarea>
+        [ngModel]="state.previewData()" (ngModelChange)="state.setPreviewData($event)"></textarea>
       @if (parsed().error; as err) {
         <div class="error">{{ err }}</div>
       }
@@ -124,7 +124,7 @@ export class DataPanelComponent {
   });
 
   fillSample() {
-    this.state.previewData.set(JSON.stringify(this.state.buildSampleData(), null, 2));
+    this.state.setPreviewData(JSON.stringify(this.state.buildSampleData(), null, 2));
   }
 
   onDragStart(ev: DragEvent, n: DataNode) {

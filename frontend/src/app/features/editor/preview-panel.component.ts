@@ -21,6 +21,14 @@ import { EditorStateService } from './editor-state.service';
           {{ loading() ? '產生中…' : '重新產生 PDF' }}
         </button>
         @if (error(); as err) { <div class="error">{{ err }}</div> }
+        <!-- 渲染警告（資料缺 key、圖片抓不到…）：不擋出 PDF，但一定要讓設計者看見。
+             以前只把 PDF 塞進 iframe，警告整個吞掉，key 打錯就是一張默默少東西的單據。 -->
+        @if (warnings().length) {
+          <div class="warns" role="status">
+            <b>⚠ {{ warnings().length }} 項渲染警告</b>（仍會出 PDF，但正式渲染帶 <code>?strict=1</code> 時會被擋下）
+            <ul>@for (w of warnings(); track $index) { <li>{{ w }}</li> }</ul>
+          </div>
+        }
       </div>
       <div class="pdf-col">
         @if (pdfUrl(); as u) { <iframe [src]="u"></iframe> } @else { <div class="empty">尚未產生</div> }
@@ -47,6 +55,11 @@ import { EditorStateService } from './editor-state.service';
     .primary { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 10px; cursor: pointer; font-size: 14px; }
     .primary:disabled { opacity: .6; }
     .error { color: #dc2626; font-size: 12px; white-space: pre-wrap; }
+    .warns { margin-top: 8px; padding: 8px 10px; background: #fffbeb; border: 1px solid #fcd34d;
+      border-radius: 6px; color: #92400e; font-size: 11.5px; line-height: 1.6; }
+    .warns b { color: #b45309; }
+    .warns ul { margin: 4px 0 0; padding-left: 18px; }
+    .warns code { background: #fef3c7; padding: 0 3px; border-radius: 3px; }
   `,
 })
 export class PreviewPanelComponent implements OnInit {
@@ -55,6 +68,8 @@ export class PreviewPanelComponent implements OnInit {
   private sanitizer = inject(DomSanitizer);
 
   loading = signal(false);
+  /** 後端回的渲染警告（X-Render-Warnings）；空陣列 = 這次渲染乾淨。 */
+  warnings = signal<string[]>([]);
   error = signal<string | null>(null);
   pdfUrl = signal<SafeResourceUrl | null>(null);
   private objectUrl: string | null = null;
@@ -67,7 +82,7 @@ export class PreviewPanelComponent implements OnInit {
   }
 
   get dataJson() { return this.state.previewData(); }
-  set dataJson(v: string) { this.state.previewData.set(v); }
+  set dataJson(v: string) { this.state.setPreviewData(v); }
 
   // 分頁切到預覽時元件會重新建立 → 自動產生一次
   ngOnInit() {
@@ -82,9 +97,11 @@ export class PreviewPanelComponent implements OnInit {
   async render() {
     this.loading.set(true);
     this.error.set(null);
+    this.warnings.set([]);
     try {
       const data = this.dataJson.trim() ? JSON.parse(this.dataJson) : {};
-      const blob = await this.api.renderAdhoc(this.state.template(), data);
+      const { blob, warnings } = await this.api.renderAdhoc(this.state.template(), data);
+      this.warnings.set(warnings);
       if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
       this.objectUrl = URL.createObjectURL(blob);
       this.pdfUrl.set(this.sanitizer.bypassSecurityTrustResourceUrl(this.objectUrl));

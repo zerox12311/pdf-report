@@ -44,7 +44,6 @@ import { TemplateApiService } from '../../core/services/template-api.service';
     }
   `,
   styles: `
-    p-breadcrumb { display: block; margin-bottom: 14px; }
     .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
     h1 { font-size: 22px; margin: 0; }
     .head-actions { display: flex; align-items: center; gap: 8px; }

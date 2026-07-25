@@ -14,6 +14,13 @@ export interface TemplateDoc {
 
   /** 輸入資料驗證（選填）：enabled 時，正式渲染（renderByID）前先驗證宿主 POST 的 data */
   validation?: ValidationSpec;
+
+  /**
+   * 設計期的測試資料（「資料」分頁貼的 JSON 原文，跟著樣板存檔）。
+   * 只服務設計與預覽——**引擎完全忽略**，正式渲染一律用宿主 POST 進來的 data。
+   * 存原文而不是解析後的物件：使用者的排版原樣保留，打到一半的壞 JSON 也不會擋存檔。
+   */
+  sampleData?: string;
 }
 
 /** 輸入驗證的欄位型別 */
@@ -477,6 +484,8 @@ export function normalizeTemplate(doc: TemplateInput | null | undefined): Templa
     page: normPage,
     sections: normalizeSections(doc, normPage),
     validation: normalizeValidation(doc.validation),
+    // 設計期測試資料：只有字串才收（別的型別視同沒有，不讓壞資料進畫面）
+    sampleData: typeof doc.sampleData === 'string' ? doc.sampleData : undefined,
   };
 }
 
@@ -497,16 +506,74 @@ function normalizeValidation(v: Partial<ValidationSpec> | null | undefined): Val
   };
 }
 
-/** 確保 container/list 元素帶 children 陣列（手改樣板 JSON 缺欄位時防呆；遞迴巢狀 list）。
- *  只補缺的 children、其餘欄位原樣保留（維持 raw passthrough）。 */
+/** 確保 container/list 元素帶 children 陣列、table 元素帶可渲染的維度
+ *  （手改樣板 JSON 缺欄位時防呆；遞迴巢狀 list）。
+ *  只補缺的欄位、其餘原樣保留（維持 raw passthrough）。 */
 function ensureChildren(els: unknown): TemplateElement[] {
   if (!Array.isArray(els)) return [];
   return els.map(e => {
-    if (e && typeof e === 'object' && ((e as TemplateElement).type === 'container' || (e as TemplateElement).type === 'list')) {
+    if (!e || typeof e !== 'object') return e;
+    const type = (e as TemplateElement).type;
+    if (type === 'container' || type === 'list') {
       return { ...e, children: ensureChildren((e as { children?: unknown }).children) };
     }
+    if (type === 'table') return ensureTable(e as TableElement);
     return e;
   }) as TemplateElement[];
+}
+
+/** 有效的尺寸陣列：非空、且每個元素都是有限數字。否則視為缺漏，由呼叫端推導。 */
+function sizeArray(v: unknown): number[] | null {
+  return Array.isArray(v) && v.length > 0 && v.every(n => typeof n === 'number' && Number.isFinite(n))
+    ? (v as number[])
+    : null;
+}
+
+/**
+ * 表格防呆：缺 columnWidths/rowHeights 或 cells 維度不足時補齊。
+ *
+ * 為什麼要有：畫布在 `el.columnWidths.length` 上取值，缺這個欄位會丟 TypeError，
+ * 而 Angular 的樣板錯誤會中斷整棵渲染樹——結果是**整張畫布空白**，一個元素都畫不出來，
+ * 使用者只看到白畫面、沒有任何錯誤提示。（後端引擎對同一份 JSON 是安全的，
+ * 只會把表格畫成空的，所以這是純前端的健壯性缺口。）
+ *
+ * 結構完整時原樣回傳同一個物件，不改既有樣板；補齊時只加不減（既有儲存格一律保留）。
+ */
+function ensureTable(el: TableElement): TableElement {
+  const widths = sizeArray(el.columnWidths);
+  const heights = sizeArray(el.rowHeights);
+  const src = Array.isArray(el.cells) ? el.cells : null;
+
+  const cols = widths?.length ?? src?.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0) ?? 0;
+  const rows = heights?.length ?? src?.length ?? 0;
+  const colCount = cols > 0 ? cols : 1;
+  const rowCount = rows > 0 ? rows : 1;
+
+  const cellsOk = !!src && src.length >= rowCount
+    && src.every(r => Array.isArray(r) && r.length >= colCount);
+  if (widths && heights && cellsOk) return el;
+
+  // 缺尺寸 → 以元素本身的寬高均分（寬高也不可用時退回單格預設值）
+  const totalW = typeof el.width === 'number' && el.width > 0 ? el.width : colCount * 80;
+  const totalH = typeof el.height === 'number' && el.height > 0 ? el.height : rowCount * 24;
+
+  const cells: TableCell[][] = [];
+  for (let r = 0; r < Math.max(rowCount, src?.length ?? 0); r++) {
+    const srcRow = Array.isArray(src?.[r]) ? (src[r] as TableCell[]) : null;
+    const row: TableCell[] = [];
+    for (let c = 0; c < Math.max(colCount, srcRow?.length ?? 0); c++) {
+      const cell = srcRow?.[c];
+      row.push(cell && typeof cell === 'object' ? cell : emptyCell());
+    }
+    cells.push(row);
+  }
+
+  return {
+    ...el,
+    columnWidths: widths ?? Array.from({ length: colCount }, () => totalW / colCount),
+    rowHeights: heights ?? Array.from({ length: rowCount }, () => totalH / rowCount),
+    cells,
+  };
 }
 
 /** 節清單正規化；無 sections 時把舊格式（cover/elements/backPage）遷移成節 */

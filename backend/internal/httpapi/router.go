@@ -54,6 +54,7 @@ func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.
 	// 控制台專案（皆需登入；建立/刪除為 admin 專屬）
 	r.GET("/api/projects", requireAuth(), ph.list)
 	r.POST("/api/projects", requireAuth(), requireAdmin(), ph.create)
+	r.PATCH("/api/projects/:id", requireAuth(), requireAdmin(), ph.rename)
 	r.DELETE("/api/projects/:id", requireAuth(), requireAdmin(), ph.remove)
 	r.GET("/api/projects/:id/templates", requireAuth(), ph.listTemplates)
 

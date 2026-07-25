@@ -1,43 +1,84 @@
-import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ModalService } from '../../core/services/modal.service';
+
+/** 一條語法：清單只顯示 code，說明與範例點開才出現 */
+interface SyntaxEntry {
+  code: string;
+  title: string;
+  detail: string;
+  example?: string;
+}
+
+const GROUPS: { name: string; entries: SyntaxEntry[] }[] = [
+  {
+    name: '插值',
+    entries: [
+      {
+        code: '{{key}}',
+        title: '資料欄位插值',
+        detail: '文字元件內容與表格儲存格皆可混排。key 支援點與索引路徑，例如 customer.name、items[0].qty。\n\n渲染時資料缺這個 key 會產生警告（回應標頭 X-Render-Warnings）；宿主端加 ?strict=1 時，有警告即回 422 不產生 PDF。',
+        example: '收款人：{{customer.name}}',
+      },
+      {
+        code: '{{key|格式}}',
+        title: '插值加格式',
+        detail: '在 key 後面加 | 與格式名稱，即可套用下方「格式」區列出的任一種。資料欄位元件也可以在屬性面板的格式下拉選同樣的格式。',
+        example: '金額：{{total|comma}}',
+      },
+    ],
+  },
+  {
+    name: '格式',
+    entries: [
+      { code: 'comma', title: '千分位', detail: '數值加上千分位逗號。', example: '12345 → 12,345' },
+      {
+        code: 'twUpper',
+        title: '國字大寫金額',
+        detail: '轉為銀行慣用的國字大寫。輸出已包含「元整」，樣板上不要再自己加一次。',
+        example: '5400 → 伍仟肆佰元整',
+      },
+      { code: 'rocDate', title: '民國年', detail: '西元日期轉民國年。', example: '2026-08-10 → 115/08/10' },
+      { code: 'rocDateLong', title: '民國年長式', detail: '西元日期轉民國年長格式。', example: '2026-08-10 → 民國115年8月10日' },
+    ],
+  },
+  {
+    name: '引擎函式',
+    entries: [
+      { code: '$page', title: '目前頁碼', detail: '由引擎計算，不需資料提供。通常放在頁尾。', example: '第 {{$page}} 頁／共 {{$pages}} 頁' },
+      { code: '$pages', title: '總頁數', detail: '由引擎計算，不需資料提供。通常放在頁尾。', example: '第 {{$page}} 頁／共 {{$pages}} 頁' },
+      { code: '$sum(路徑)', title: '陣列欄位總和', detail: '對整份資料的陣列路徑加總。', example: '{{$sum(items.amount)}}' },
+      { code: '$count(路徑)', title: '陣列筆數', detail: '對整份資料的陣列路徑計數。', example: '{{$count(items)}}' },
+      { code: '$avg(路徑)', title: '陣列欄位平均', detail: '對整份資料的陣列路徑取平均。', example: '{{$avg(items.amount)}}' },
+      { code: '$row', title: '重複列序號', detail: '從 1 開始。只在重複列的儲存格內有效。', example: '{{$row}}' },
+      { code: '$gsum(欄位)', title: '群組小計', detail: '放在群組尾列的儲存格。', example: '{{$gsum(amount)}}' },
+      { code: '$gcount', title: '群組筆數', detail: '放在群組首列或尾列的儲存格。', example: '{{$gcount}}' },
+      { code: '$gavg(欄位)', title: '群組平均', detail: '放在群組尾列的儲存格。', example: '{{$gavg(amount)}}' },
+    ],
+  },
+];
 
 /**
- * 資料語法速查（可折疊）：插值 {{key|格式}}、格式對照、引擎函式。
- * 單一來源，放在資料分頁與「連接」對話框兩處，避免各處 hint 散落不一致。
+ * 資料語法速查（可折疊）：只列語法本身，點一下才用 modal 顯示說明與範例。
+ * 先前把所有說明攤在面板上，右欄整個被表格塞滿。
  */
 @Component({
   selector: 'app-syntax-help',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="sh">
-      @if (!always()) {
-        <button class="sh-toggle" (click)="open.set(!open())">
-          <span class="chev" [class.o]="open()">▸</span> 資料語法速查（插值、格式、函式）
-        </button>
-      }
-      @if (open() || always()) {
-        <div class="sh-body" ngNonBindable>
-          <div class="sh-sec">插值：文字元件內容與表格儲存格皆可混排資料</div>
-          <table class="sh-tbl">
-            <tr><td><code>{{customer.name}}</code></td><td>資料欄位（點/索引路徑：<code>items[0].qty</code>）</td></tr>
-            <tr><td><code>{{total|comma}}</code></td><td>加格式：<code>{{key|格式}}</code></td></tr>
-          </table>
-
-          <div class="sh-sec">格式（<code>|</code> 後綴 / 資料欄位的格式下拉）</div>
-          <table class="sh-tbl">
-            <tr><td><code>comma</code></td><td>千分位</td><td>12345 → 12,345</td></tr>
-            <tr><td><code>twUpper</code></td><td>國字大寫金額<b>（已含「元整」，勿再加）</b></td><td>5400 → 伍仟肆佰元整</td></tr>
-            <tr><td><code>rocDate</code></td><td>民國年</td><td>2026-08-10 → 115/08/10</td></tr>
-            <tr><td><code>rocDateLong</code></td><td>民國年長式</td><td>→ 民國115年8月10日</td></tr>
-          </table>
-
-          <div class="sh-sec">引擎函式（<code>$</code> 開頭；不需資料提供，由引擎計算）</div>
-          <table class="sh-tbl">
-            <tr><td><code>$page</code> / <code>$pages</code></td><td>目前頁碼 / 總頁數（放頁尾）</td></tr>
-            <tr><td><code>$sum(items.amount)</code></td><td>陣列欄位總和；另有 <code>$count(items)</code>、<code>$avg(items.amount)</code></td></tr>
-            <tr><td><code>$row</code></td><td>重複列序號（1,2,3…）；只在重複列儲存格有效</td></tr>
-            <tr><td><code>$gsum(amount)</code></td><td>群組小計（放群組尾列）；另有 <code>$gcount</code>、<code>$gavg(欄位)</code></td></tr>
-          </table>
-          <div class="sh-note">缺 key 時渲染會出警告（回應標頭 <code>X-Render-Warnings</code>）；宿主端加 <code>?strict=1</code> 有警告即回 422。</div>
+      <button class="sh-toggle" (click)="open.set(!open())">
+        <span class="chev" [class.o]="open()">▸</span> 資料語法速查
+      </button>
+      @if (open()) {
+        <div class="sh-body">
+          @for (g of groups; track g.name) {
+            <div class="sh-sec">{{ g.name }}</div>
+            <div class="chips">
+              @for (e of g.entries; track e.code) {
+                <button class="chip" [title]="e.title + '——點擊看說明'" (click)="show(e)">{{ e.code }}</button>
+              }
+            </div>
+          }
         </div>
       }
     </div>
@@ -46,19 +87,28 @@ import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core
     :host { display: block; }
     .sh { border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; }
     .sh-toggle { width: 100%; text-align: left; border: none; background: none; padding: 7px 10px;
-      cursor: pointer; color: #1d4ed8; font-weight: 600; font-size: 12px; }
+      cursor: pointer; color: #1d4ed8; font-weight: 600; font-size: 12px; font-family: inherit; }
     .chev { display: inline-block; transition: transform .12s; }
     .chev.o { transform: rotate(90deg); }
-    .sh-body { padding: 4px 10px 10px; color: #334155; }
-    .sh-sec { font-weight: 700; color: #475569; margin: 8px 0 3px; }
-    .sh-tbl { width: 100%; border-collapse: collapse; }
-    .sh-tbl td { padding: 2px 6px 2px 0; vertical-align: top; }
-    .sh-tbl code { background: #f1f5f9; border-radius: 3px; padding: 0 4px; white-space: nowrap; }
-    .sh-note { color: #64748b; margin-top: 8px; line-height: 1.6; }
+    .sh-body { padding: 2px 10px 10px; }
+    .sh-sec { font-weight: 700; color: #475569; margin: 8px 0 4px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+    .chip { border: 1px solid #dbe2ea; background: #f8fafc; border-radius: 4px; padding: 2px 7px;
+      font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #0f172a; cursor: pointer; white-space: nowrap; }
+    .chip:hover { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }
   `,
 })
 export class SyntaxHelpComponent {
-  /** always=true 時常開不可折疊（連接對話框用） */
-  always = input(false);
+  private modal = inject(ModalService);
+  readonly groups = GROUPS;
   open = signal(false);
+
+  show(e: SyntaxEntry) {
+    void this.modal.alert({
+      title: `${e.code} — ${e.title}`,
+      message: e.example ? `${e.detail}\n\n範例：\n${e.example}` : e.detail,
+      copy: e.code,
+    });
+  }
 }

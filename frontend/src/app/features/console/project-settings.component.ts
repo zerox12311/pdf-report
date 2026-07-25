@@ -24,6 +24,17 @@ import { ApiKeySummary, TemplateApiService } from '../../core/services/template-
     <section class="card">
       <div class="chead">
         <div>
+          <h2>專案名稱</h2>
+          <p class="khint">顯示在專案清單與麵包屑上。改名不影響已簽發的 API 金鑰與樣板。</p>
+        </div>
+        <button class="new" (click)="rename()">✎ 改名</button>
+      </div>
+      <div class="pname">{{ projectName() || '…' }}</div>
+    </section>
+
+    <section class="card">
+      <div class="chead">
+        <div>
           <h2>API 金鑰（宿主整合）</h2>
           <p class="khint">給宿主後端用的 server-to-server 金鑰，綁定此專案：可換取編輯器 embed token、正式渲染。明文只在建立當下顯示一次。</p>
         </div>
@@ -45,7 +56,6 @@ import { ApiKeySummary, TemplateApiService } from '../../core/services/template-
     </section>
   `,
   styles: `
-    p-breadcrumb { display: block; margin-bottom: 14px; }
     h1 { font-size: 22px; margin: 0 0 20px; }
     .err { color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;
       padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
@@ -53,6 +63,7 @@ import { ApiKeySummary, TemplateApiService } from '../../core/services/template-
     .chead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 4px; }
     h2 { font-size: 16px; margin: 0; }
     .khint { color: #94a3b8; font-size: 12px; margin: 8px 0 0; line-height: 1.5; max-width: 620px; }
+    .pname { font-size: 17px; font-weight: 600; color: #0f172a; padding: 4px 0 2px; }
     .new { flex: none; background: #2563eb; color: #fff; border: none; font-family: inherit; font-size: 14px;
       font-weight: 500; padding: 8px 16px; border-radius: 8px; cursor: pointer; white-space: nowrap;
       display: inline-flex; align-items: center; }
@@ -106,6 +117,24 @@ export class ProjectSettingsComponent {
     }
   }
 
+  async rename() {
+    const name = await this.modal.prompt({
+      title: '專案改名',
+      message: '輸入新的專案名稱',
+      placeholder: '專案名稱',
+      initial: this.projectName(),
+      confirmLabel: '儲存',
+    });
+    if (name == null || !name.trim() || name.trim() === this.projectName()) return;
+    this.error.set('');
+    try {
+      const p = await this.api.renameProject(this.projectId, name.trim());
+      this.projectName.set(p.name);
+    } catch (e) {
+      this.error.set(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   async createKey() {
     const name = await this.modal.prompt({
       title: '建立 API 金鑰',
@@ -117,12 +146,14 @@ export class ProjectSettingsComponent {
     this.error.set('');
     try {
       const created = await this.api.createKey(this.projectId, name.trim() || 'API 金鑰');
+      // 先刷新清單再開明文對話框：放在後面的話，關掉對話框還要等一次網路往返，
+      // 這段空窗期畫面仍寫「尚無金鑰」，看起來像建立失敗。
+      await this.loadKeys();
       await this.modal.alert({
         title: 'API 金鑰已建立',
         message: '請立即複製並妥善保存——離開後將無法再看到這串明文：',
         copy: created.key,
       });
-      await this.loadKeys();
     } catch (e) {
       this.error.set(e instanceof Error ? e.message : String(e));
     }

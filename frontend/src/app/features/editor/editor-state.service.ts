@@ -109,8 +109,23 @@ export class EditorStateService {
     }
     return true;
   }
-  /** 預覽分頁的資料 JSON（跨分頁切換保留） */
+  /** 預覽分頁的資料 JSON（跨分頁切換保留；存檔時併回文件的 sampleData） */
   readonly previewData = signal('');
+
+  /** 改設計期測試資料：同時標記未存檔，否則使用者貼完 JSON 直接離開會默默丟掉。 */
+  setPreviewData(v: string) {
+    if (this.previewData() === v) return;
+    this.previewData.set(v);
+    this.dirty.set(true);
+  }
+
+  /** 存檔用的完整樣板：把只存在畫面狀態的設計期測試資料併回文件。
+   *  空字串不寫欄位（JSON.stringify 會略過 undefined），避免每張樣板都多一個空鍵。 */
+  docForSave(): TemplateDoc {
+    const t = this.template();
+    const sample = this.previewData();
+    return { ...t, sampleData: sample.trim() ? sample : undefined };
+  }
   /** 尺規單位（左上角切換） */
   readonly rulerUnit = signal<'pt' | 'mm' | 'in'>('pt');
   /** 圖片上傳請求（editor-page 監聽並開檔案選擇器）：目標為某儲存格或某圖片元素 */
@@ -171,7 +186,7 @@ export class EditorStateService {
     const prev = this.history.pop();
     if (!prev) return;
     this.future.push(this.template());
-    this.template.set(prev);
+    this.template.set(this.keepIdentity(prev));
     this.afterTimeTravel();
   }
 
@@ -179,8 +194,22 @@ export class EditorStateService {
     const next = this.future.pop();
     if (!next) return;
     this.history.push(this.template());
-    this.template.set(next);
+    this.template.set(this.keepIdentity(next));
     this.afterTimeTravel();
+  }
+
+  /**
+   * 復原/重做時保住 id 與 updatedAt：那是伺服器指派的身分，不是使用者編輯的內容。
+   *
+   * 快照存的是整份文件。新建樣板第一次存檔前的快照裡 id 是空的，退回那個快照就會
+   * 把 id 弄丟 —— 下次按儲存變成「新建」，畫面毫無提示地生出**第二份樣板**，
+   * 設計者以為還在編輯同一份，宿主拿到的 id 卻指向被遺棄的那一份。
+   * （以前存檔會清空歷史，所以碰不到；改成保留歷史後才暴露出來。）
+   */
+  private keepIdentity(snap: TemplateDoc): TemplateDoc {
+    const cur = this.template();
+    if (snap.id === cur.id && snap.updatedAt === cur.updatedAt) return snap;
+    return { ...snap, id: cur.id, updatedAt: cur.updatedAt };
   }
 
   private afterTimeTravel() {
@@ -405,7 +434,12 @@ export class EditorStateService {
 
   load(doc: TemplateDoc) {
     // 正規化（immutable）：補齊舊樣板缺欄位，不修改呼叫者的物件
-    this.template.set(normalizeTemplate(doc));
+    const norm = normalizeTemplate(doc);
+    this.template.set(norm);
+    // 設計期測試資料跟著樣板回來。之前它只活在記憶體，重整就默默變回內建預設，
+    // 使用者貼的 JSON 全丟；而且「欄位（拖到畫布）」清單是從這份資料推的，
+    // 空字串 → 清單整個不出現，看起來像功能不存在。
+    this.previewData.set(norm.sampleData ?? '');
     this.selectedId.set(null);
     this.selectedCell.set(null);
     this.activeSectionId.set(this.template().sections[0].id);
@@ -415,6 +449,18 @@ export class EditorStateService {
     this.lastRecord = 0;
     this.undoCount.set(0);
     this.redoCount.set(0);
+  }
+
+  /**
+   * 存檔成功後同步伺服器指派的 id／updatedAt，**不重載整份文件**。
+   *
+   * 之前走 load()，於是每按一次儲存就清空復原歷史、取消選取、跳回第一節——
+   * 存完才發現改錯就再也退不回去。儲存是 raw JSON passthrough，回應與送出的內容
+   * 只差 id 與 updatedAt，沒有理由重建整個編輯狀態。
+   */
+  markSaved(saved: TemplateDoc) {
+    this.template.update(t => ({ ...t, id: saved.id, updatedAt: saved.updatedAt }));
+    this.dirty.set(false);
   }
 
   select(id: string | null) {
@@ -628,6 +674,17 @@ export class EditorStateService {
         const nextY = Math.max(...bodyBottoms) + 10;
         if (nextY + withId.height <= contentBottom) {
           withId.y = nextY;
+        } else {
+          // 內容區排滿了：以階梯狀錯開，**不要**沿用工廠預設座標。
+          // 原本會落回同一點，於是連點第 7、8、9 次時畫面完全沒變化，
+          // 使用者以為沒加到而重複點，最後留下一堆看不見的重疊欄位
+          // ——在財務單據上就是隱形的重複欄位。
+          const step = 12;
+          const taken = new Set(this.visibleElements().map(e => `${Math.round(e.x)},${Math.round(e.y)}`));
+          let x = 40, y = contentTop + 20;
+          for (let i = 0; i < 40 && taken.has(`${x},${y}`); i++) { x += step; y += step; }
+          withId.x = x;
+          withId.y = Math.min(y, Math.max(contentTop, contentBottom - withId.height));
         }
       }
       this.template.update(t => this.pushTo(t, this.activeKey(), withId));
@@ -1299,7 +1356,49 @@ export class EditorStateService {
         }
       }
     }
+    this.alignSampleTypes(data);
     return data;
+  }
+
+  /**
+   * 把範例資料調成與「偵測欄位」推出來的型別一致。
+   *
+   * 沒有這一步的話，兩邊是各自推型別的：偵測從格式化與 $sum() 判斷 `total`／`items[].amount`
+   * 是數字，範例產生器卻給 "範例值"／"範例1" 這種字串 —— 於是「用範例資料填入」產出的資料
+   * 過不了它自己偵測出來的規則，工具自己打自己。這裡以偵測結果為準做最後對齊，
+   * 讓兩者結構上不可能不一致。
+   */
+  private alignSampleTypes(data: Record<string, unknown>) {
+    const visit = (root: unknown, path: string, fn: (holder: Record<string, unknown>, key: string) => void) => {
+      const parts = path.split('.');
+      const walk = (cur: unknown, i: number) => {
+        if (cur == null || typeof cur !== 'object') return;
+        const raw = parts[i];
+        const isArr = raw.endsWith('[]');
+        const seg = isArr ? raw.slice(0, -2) : raw;
+        const obj = cur as Record<string, unknown>;
+        if (i === parts.length - 1 && !isArr) {
+          if (seg in obj) fn(obj, seg);
+          return;
+        }
+        const next = obj[seg];
+        if (isArr) {
+          if (Array.isArray(next)) for (const item of next) walk(item, i + 1);
+        } else {
+          walk(next, i + 1);
+        }
+      };
+      walk(root, 0);
+    };
+    for (const f of this.deriveFieldCandidates()) {
+      if (f.type !== 'number') continue;
+      visit(data, f.path, (holder, key) => {
+        const v = holder[key];
+        if (typeof v === 'number') return;
+        // 字面是數字就照用（保留設計者填的範例），否則給一個像金額的值
+        holder[key] = typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : 12345;
+      });
+    }
   }
 
   // ---------- 輸入驗證 ----------

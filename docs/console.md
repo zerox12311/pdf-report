@@ -22,6 +22,7 @@ Tenant（租戶／組織，目前單租戶 default）
 ## 登入與帳號
 
 - **初始管理員由 env 種**（比照一般 docker 服務）：`ADMIN_USER` / `ADMIN_PASSWORD`，角色為 admin。
+- **設定密碼最少 8 字元**（建立使用者、改密碼、admin 重設皆同）。只在設定時檢查，不影響既有帳號登入；env 種帳號不走這道檢查，請自行給夠長的值。
 - 種帳號規則：**user 表為空時**用 env 種一個 admin；**已有使用者但無任何 admin**（例如升級前種的帳號 role 被 default 成 user）→ 自癒：優先把 `ADMIN_USER` 提升為 admin，否則提升最早建立者。**不覆寫既有密碼**（改完密碼重啟不會被打回）。
 - env 未設時初始帳密退回 `admin` / `admin`（log 警告請立即改密碼）。
 - **使用者管理**（admin，`/users`）：建立使用者（帳密／角色／指派專案）、改角色、重設密碼、勾選可存取專案（即時生效）、刪除。防呆：**不能刪除自己、不能降級／刪除最後一個 admin**。
@@ -35,11 +36,12 @@ Tenant（租戶／組織，目前單租戶 default）
 | `/login` | 帳密登入（已登入自動轉進控制台） | 公開 |
 | `/`（專案清單） | admin：列出／建立／刪除全部專案；user：只列被指派專案 | 需登入 |
 | `/projects/:id` | 該專案的樣板清單（新增／開啟／刪除） | 需登入 |
-| `/projects/:id/settings` | 專案設定（API 金鑰簽發／撤銷；未來專案改名、成員授權） | **僅 admin** |
+| `/projects/:id/settings` | 專案設定：**專案改名** ＋ API 金鑰簽發／撤銷（未來成員授權也在此） | **僅 admin** |
 | `/users` | 使用者管理 | **僅 admin** |
 | `/account/password` | 修改密碼 | 需登入 |
 | `/editor/:id`、`/editor/new` | 既有編輯器 | `editorGuard`：直接開分頁需 session；iframe 嵌入或 URL 帶 `#token=` 放行（走 embed token） |
 
+- **版面**：內容置中 760px 欄；除首頁外每頁上方一列麵包屑（`p-breadcrumb`，高度與間距由 `styles.scss` 的 `--crumb-h`／`--crumb-gap`／`--crumb-row` 單一來源定義）。首頁是階層的根、不放麵包屑，改以 `--crumb-row` 預留等高空間，換頁時內容不會上下跳。修改密碼是窄卡片、水平置中，但麵包屑仍維持主欄寬度（各頁位置一致）。
 - **控制台路由掛 `authGuard`**（需 session）；`/editor/*` 掛 `editorGuard`：直接開分頁需 session、**iframe 嵌入（`window.parent !== window`）或 URL 帶 `#token=` 放行**（沒 session 也給進，改由 embed token 授權；後端仍鎖，沒 token → 401 → 空樣板，不外洩）。`/users` 掛 `adminGuard`（非 admin 轉回首頁）。
 - 控制台在專案內「新增樣板」→ `/editor/new?project=<id>`；編輯器首次儲存時把 `project` 帶到 `POST /api/templates?projectId=<id>`，樣板即歸入該專案。
 - 編輯器左上「返回」：回**樣板所屬專案**（既有樣板由 `GET /api/templates/:id` 的 `X-Project-Id` header 得知，重載／書籤／深連結都正確；專案內新建則用帶入的 `?project=`），都無法判定才回控制台首頁；**iframe 嵌入時隱藏**。

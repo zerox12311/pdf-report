@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -358,13 +359,88 @@ func TestBindingReMatchesEngine(t *testing.T) {
 		"", "沒有語法", "單價 {{ 每公斤", "}} 開頭", "{ {a} }", "{{}", "${a}", "{{a|b|c}}",
 	}
 	for _, s := range interpolated {
-		if !hasBindingSyntax(s) {
-			t.Errorf("hasBindingSyntax(%q) = false，引擎會插值 → 必須擋", s)
+		if !addsBinding("", s) {
+			t.Errorf("addsBinding(\"\", %q) = false，引擎會插值 → 必須擋", s)
 		}
 	}
 	for _, s := range literal {
-		if hasBindingSyntax(s) {
-			t.Errorf("hasBindingSyntax(%q) = true，但引擎不會插值 → 不該擋", s)
+		if addsBinding("", s) {
+			t.Errorf("addsBinding(\"\", %q) = true，但引擎不會插值 → 不該擋", s)
 		}
 	}
+}
+
+// TestAddsBindingKeepsExisting 擋的是「新增」綁定，不是「含有」。
+// 設計者可以把含 {{customer.name}} 的欄位標成可填；填寫者改前後文時原綁定要能送回來，
+// 否則那個欄位永遠存不了，還會因 fail-closed 連累整批（填寫者被完全鎖死）。
+func TestAddsBindingKeepsExisting(t *testing.T) {
+	cases := []struct {
+		name     string
+		old, new string
+		want     bool
+	}{
+		{"原樣送回", "收款單 {{customer.name}}", "收款單 {{customer.name}}", false},
+		{"只改前後文、保留原綁定", "收款單 {{customer.name}}", "本期收款單 {{customer.name}} 敬啟", false},
+		{"空白差異視為同一個綁定", "{{ customer.name }}", "{{customer.name}}", false},
+		{"刪掉原有綁定（允許：沒有提權）", "收款單 {{customer.name}}", "收款單", false},
+		{"重複既有綁定（沒有讀到新欄位）", "{{a}}", "{{a}} 與 {{a}}", false},
+		{"新增另一個綁定", "收款單 {{customer.name}}", "收款單 {{customer.name}} {{customer.secret}}", true},
+		{"換成別的綁定", "{{customer.name}}", "{{customer.taxId}}", true},
+		{"原本沒有綁定卻加上", "備註：無", "備註：{{items[0].price}}", true},
+		{"同 key 但換格式化（會改變輸出）", "{{total}}", "{{total|twUpper}}", true},
+		{"從無到有的彙總語法", "小計", "{{$sum(items.amt)}}", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := addsBinding(tc.old, tc.new); got != tc.want {
+				t.Errorf("addsBinding(%q, %q) = %v, want %v", tc.old, tc.new, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyValuesUnchangedBindingField 重現實測回報的阻斷：
+// 樣板裡有一個「含資料綁定且被標成可填」的欄位，填寫者只改另一個欄位。
+// 前端會把所有可填欄位的現值一起送出，原本會因為那個沒被碰過的欄位含 {{…}} 而
+// 整批 fail-closed —— 填寫者不管改什麼都存不了，且錯誤指向他沒動過的欄位。
+func TestApplyValuesUnchangedBindingField(t *testing.T) {
+	const tpl = `{"sections":[{"id":"s1","kind":"flow","elements":[
+		{"id":"title","type":"text","content":"QA 收款單 {{customer.name}}","fillable":true},
+		{"id":"memo","type":"text","content":"備註：無","fillable":true}
+	]}]}`
+
+	t.Run("原樣送回含綁定的欄位不擋", func(t *testing.T) {
+		doc := decodeDoc(t, tpl)
+		err := applyValues(doc, map[string]string{
+			"title": "QA 收款單 {{customer.name}}", // 沒動過，原樣送回
+			"memo":  "備註：請於三日內繳款",              // 真正改的
+		})
+		if err != nil {
+			t.Fatalf("不該擋: %v", err)
+		}
+		if got := findElementByID(doc, "memo")["content"]; got != "備註：請於三日內繳款" {
+			t.Errorf("memo = %v", got)
+		}
+		if got := findElementByID(doc, "title")["content"]; got != "QA 收款單 {{customer.name}}" {
+			t.Errorf("title 綁定應原樣保留，得到 %v", got)
+		}
+	})
+
+	t.Run("改前後文但保留原綁定也放行", func(t *testing.T) {
+		doc := decodeDoc(t, tpl)
+		if err := applyValues(doc, map[string]string{"title": "本期收款單 {{customer.name}} 敬啟"}); err != nil {
+			t.Fatalf("不該擋: %v", err)
+		}
+	})
+
+	t.Run("新增別的綁定仍然擋（提權才是要防的）", func(t *testing.T) {
+		doc := decodeDoc(t, tpl)
+		err := applyValues(doc, map[string]string{"memo": "備註：{{customer.secret}}"})
+		if !errors.Is(err, errValueHasBinding) {
+			t.Fatalf("應擋新增綁定，得到 %v", err)
+		}
+		if got := findElementByID(doc, "memo")["content"]; got != "備註：無" {
+			t.Errorf("擋下時不該部分套用，得到 %v", got)
+		}
+	})
 }

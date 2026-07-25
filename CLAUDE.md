@@ -22,7 +22,7 @@
     **Gin 契約**：樣板 payload 一律 raw bytes（readBody/c.Data），**禁用 ShouldBindJSON**——會破壞 raw JSON passthrough 與 json.Number 數字字面；middleware 用自寫的 slogLogger/recoverJSON/cors（不用 gin.Default）；New 回傳 http.Handler，httptest 直接打。
   - `internal/testdb/` 測試用 per-test database 工具
 - `Dockerfile`（根目錄，單一 image：前端 Angular build → Go build → runtime，**後端直接 serve 前端靜態檔、無 nginx**）＋ `docker-compose.yml` — project `pdf-template-demo`：**app :8090**（前端與 /api 同源）、postgres db :5442（本機開發/測試共用）、volumes `pdf-storage`（二進位檔）+ `pg-data`。
-- `docs/` — **功能現況文件**（README 索引＋editor/engine/api/embed）。embed.md 是宿主整合指南（編輯器內建「🔗 連接」對話框有同樣內容可複製）。
+- `docs/` — **功能現況文件**（README 索引＋editor/engine/api/embed）。embed.md 是宿主整合指南；**對外交付的 API 說明是編輯器內的「🔗 連接」對話框**（`integration-dialog.component.ts`，分前端/後端兩分頁、各可複製整份，會代入實際樣板 id 與服務位址）。改了 API 契約要同時更新它與 embed.md。**刻意不做 OpenAPI/Swagger**（使用者決定：那類端點正式環境要關掉，自製對話框可以留著當交付文件）。
 
 ## 常用指令
 
@@ -53,7 +53,9 @@ docker compose up -d --build                                  # 完整 demo（�
 - **httpapi `New` 維持 100% 覆蓋**（`go tool cover -func`），新 endpoint 要補齊所有分支的測試。
 - **格式化雙實作**：`internal/engine/format.go`（權威）↔ `frontend/src/app/core/utils/format-value.ts`（畫布預覽鏡像），改一邊必改另一邊＋兩邊測試（format_test.go / format-value.spec.ts）。
 - **EditorStateService 必須可 `new` 建構**（specs 直接 `new EditorStateService()`，內部不得用 `inject()`）。
+- **改過 Angular 樣板就要跑 `npx ng build --configuration production`**：`tsc --noEmit` **不檢查樣板**，karma 的 spec 也沒有實例化 editor-canvas／editor-page，所以「型別乾淨＋單元測試全過」可能還是**建置失敗**（實際踩過：`@if (el.autoGrow)` 對 `ImageElement` 不存在，tsc 與 82 個測試全過但 ng build 直接 ERROR）。樣板裡要用只存在於部分元素型別的欄位，走 component 方法收斂型別（例：`growsOnOverflow(el)`）。
 - 渲染錯誤不靜默：資料缺 key → 警告（`X-Render-Warnings` header）；`?strict=1` → 422。壞 JSON body → 400。這是財務單據產品的硬要求。
+- **對外的 API 說明只寫端點、請求、回應**：「🔗 連接」對話框（＝交付給客戶工程師的 API 文件）**不寫實作機制、設計理由、內部防護怎麼做的**。呼叫方要知道的是「打哪支、送什麼、回什麼、什麼錯誤碼」。被退過的實例：解釋速率限制的計數維度、解釋 X-Render-Warnings 為何重要、解釋 token 為何放 fragment、「不該做的事」安全告誡、「寫回的是樣板本體」的機制說明。程式碼註解不受此限——那裡要解釋「為什麼」。
 - **功能完成 = 文件已更新**：每個功能開發完成後**主動**更新 `docs/` 對應文件（editor/engine/api）。文件只描述目前狀態（結果），不記錄行為變更的歷史；改了行為就直接改寫描述。新功能沒進文件不算完成。
 
 ## 領域模型速記

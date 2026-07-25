@@ -232,6 +232,24 @@ func (s *ProjectStore) Create(tenantID, name string) (ProjectSummary, error) {
 	return ProjectSummary{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339)}, nil
 }
 
+// Rename 改專案名稱。查無（或跨租戶）→ os.ErrNotExist。
+func (s *ProjectStore) Rename(tenantID, id, name string) (ProjectSummary, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ProjectSummary{}, errors.New("專案名稱不可為空")
+	}
+	// 先確認存在再更新：改成同名時 UPDATE 的 RowsAffected 是 0，不能用它判斷「不存在」
+	var p db.Project
+	if err := s.g.Where("id = ? AND tenant_id = ?", id, tenantID).First(&p).Error; err != nil {
+		return ProjectSummary{}, notFoundAs(err)
+	}
+	if err := s.g.Model(&db.Project{}).Where("id = ? AND tenant_id = ?", id, tenantID).
+		Update("name", name).Error; err != nil {
+		return ProjectSummary{}, err
+	}
+	return ProjectSummary{ID: p.ID, Name: name, CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339)}, nil
+}
+
 // Exists 專案是否屬於該租戶（建立樣板 / 列專案樣板時驗 projectId 用）。
 // DB 錯誤照實回傳（不吞成 false）——否則故障時會被誤判成「專案不存在」。
 func (s *ProjectStore) Exists(tenantID, id string) (bool, error) {

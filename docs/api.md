@@ -21,7 +21,7 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 
 ## 速率限制
 
-會爆破、燒 CPU、製造列鎖爭用或會建資料的端點掛了令牌桶（`internal/httpapi/ratelimit.go`）。超限 → **429**「請求過於頻繁，請稍後再試」＋ `Retry-After`（秒）。
+可被暴力嘗試、耗用大量 CPU、造成列鎖爭用或會建立資料的端點掛了令牌桶（`internal/httpapi/ratelimit.go`）。超限 → **429**「請求過於頻繁，請稍後再試」＋ `Retry-After`（秒）。
 
 | 端點 | 計數維度 | burst | 補充速率 |
 |---|---|--:|---|
@@ -31,8 +31,8 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 | `POST /api/embed-token` | 身分 | 30 | 1 次 / 2s |
 | `POST /api/assets`、`POST /api/fonts` | 身分 | 20 | 1 次 / 3s |
 
-- 「身分」= 登入使用者 id／API key 的專案／embed token 的 template，各自獨立：一個宿主打爆自己的額度不影響別人。
-- 填值以**樣板**為維度而非身分：爭用的是那一列的鎖，換 token 繞不過去。
+- 「身分」= 登入使用者 id／API key 的專案／embed token 的 template，各維度獨立計數，宿主之間的額度互不影響。
+- 填值以**樣板**為維度而非身分：爭用對象是該列的鎖，更換 token 無法規避。
 - 讀取類端點（清單、取樣板、取圖片/字型）不限流。
 - **單實例限定**：桶在記憶體內、隨 router 實例建立。多副本部署時每個副本各有一套，實際上限是副本數的倍數；要精確需改用共用計數器。
 
@@ -43,7 +43,7 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 | POST | `/api/auth/login` | body `{username, password}` → 設 session cookie、回 `{username}`；失敗 → 401「帳號或密碼錯誤」（帳號不存在與密碼錯同訊息，防枚舉） |
 | POST | `/api/auth/logout` | 清 session（204） |
 | GET | `/api/auth/me` | 目前登入者 `{username}`；未登入 → 401 |
-| POST | `/api/auth/change-password` | 需登入；body `{oldPassword, newPassword}`；新密碼 < 4 字元 → 400；舊密碼錯 → 400；成功 204 |
+| POST | `/api/auth/change-password` | 需登入；body `{oldPassword, newPassword}`；新密碼 < 8 字元 → 400；舊密碼錯 → 400；成功 204 |
 
 初始管理員由 env 種（`ADMIN_USER`/`ADMIN_PASSWORD`，僅 user 表空時）；session 簽章金鑰 `SESSION_SECRET`。
 
@@ -53,6 +53,7 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 |---|---|---|
 | GET | `/api/projects` | 專案清單 `[{id, name, createdAt}]`；admin 全部、user 只列被指派專案 |
 | POST | `/api/projects` | **admin**；body `{name}`（空 → 400）→ 回專案摘要 |
+| PATCH | `/api/projects/:id` | **admin**；body `{name}` 改名（空 → 400、不存在 → 404）→ 回專案摘要 |
 | DELETE | `/api/projects/:id` | **admin**；預設專案不可刪（400）、非空專案需先清空（400）、不存在 404 |
 | GET | `/api/projects/:id/templates` | 該專案樣板清單；非成員（非 admin）→ 403、專案不存在 → 404 |
 
@@ -65,7 +66,7 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 |---|---|---|
 | GET | `/api/users` | 使用者清單 `[{id, username, role, projectIds}]` |
 | POST | `/api/users` | body `{username, password, role, projectIds}` → 建立；帳號空/重複 → 400 |
-| PATCH | `/api/users/:id` | 帶哪個欄位改哪個：`{role?, password?, projectIds?}`；密碼 < 4 字元 → 400；不存在 → 404 |
+| PATCH | `/api/users/:id` | 帶哪個欄位改哪個：`{role?, password?, projectIds?}`；密碼 < 8 字元 → 400；不存在 → 404 |
 | DELETE | `/api/users/:id` | 刪除；**不能刪自己**（400）、**不能刪最後一個 admin**（400）、不存在 404 |
 
 - 降級最後一個 admin（PATCH role → user）同樣擋 400。
@@ -104,11 +105,11 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 | GET | `/api/templates/:id` | 取得樣板 JSON（原樣）；回應帶 `X-Project-Id` header＝所屬專案（編輯器「返回」用，不放進 body 以保 raw passthrough） |
 | PUT | `/api/templates/:id` | 覆寫 → 回完整樣板（embed 需 `design` 模式，否則 403） |
 | PATCH | `/api/templates/:id/values` | **填寫模式窄介面**：body `{"values":{"<elementId>":"新值","<tableId>#2,3":"新值"}}`，只覆寫被標記 `fillable` 的 text 元素／text 儲存格，其餘結構原地不動。未標記 → 403、找不到欄位/定址錯 → 400、樣板不存在 → 404 |
-
-**寫入的並行控制**：`PATCH /values` 是伺服器端的 read-modify-write，整段在單一交易內以 `SELECT … FOR UPDATE` 鎖住該列——否則設計者的 PUT 落在讀與寫之間會被整份覆寫回捲。`PUT` 的更新同樣進交易。兩者都設等鎖上限（`store.LockWaitTimeout`，預設 3s），**等不到鎖 → 409**「樣板正在被其他請求修改，請稍後再試」，不無界卡住。同一張樣板的併發寫入因此是序列化的：改**不同欄位**不會互相清掉，改**同一欄位**是 last-write-wins。設計者的 PUT 沒有版本檢查（無樂觀鎖），會覆蓋期間的填寫內容——方向上如此設計（設計者為權威）。
 | DELETE | `/api/templates/:id` | 刪除（204）；**embed token 一律 403**（要刪走控制台或 API key） |
 
 body 上限 10MB；非 JSON 物件 → 400「樣板 JSON 解析失敗（body 需為樣板 JSON 物件）」；找不到 → 404。
+
+**寫入的並行控制**：`PATCH /values` 是伺服器端的 read-modify-write，整段在單一交易內以 `SELECT … FOR UPDATE` 鎖住該列——否則設計者的 PUT 落在讀與寫之間會被整份覆寫回捲。`PUT` 的更新同樣進交易。兩者都設等鎖上限（`store.LockWaitTimeout`，預設 3s），**等不到鎖 → 409**「樣板正在被其他請求修改，請稍後再試」，不無界卡住。同一張樣板的併發寫入因此是序列化的：改**不同欄位**不會互相清掉，改**同一欄位**是 last-write-wins。設計者的 PUT 沒有版本檢查（無樂觀鎖），會覆蓋期間的填寫內容——方向上如此設計（設計者為權威）。
 
 ## 渲染
 

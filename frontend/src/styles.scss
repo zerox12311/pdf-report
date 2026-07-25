@@ -49,3 +49,18 @@ button, input, select, textarea {
   font-family: inherit;
 }
 
+
+/* 控制台的麵包屑列：高度與間距集中在這裡定義。
+   沒有麵包屑的頁面（專案首頁）以 --crumb-row 預留等高空間，換頁時內容才不會上下跳。
+   數值單一來源，兩邊不會各自漂移。 */
+:root {
+  --crumb-h: 24px;
+  --crumb-gap: 14px;
+  --crumb-row: calc(var(--crumb-h) + var(--crumb-gap));
+}
+
+p-breadcrumb {
+  display: block;
+  min-height: var(--crumb-h);
+  margin-bottom: var(--crumb-gap);
+}

@@ -44,6 +44,12 @@ import { ScrubDirective } from './scrub.directive';
       } @else if (state.selected(); as el) {
         <h3>屬性 <span class="type-tag">{{ typeName(el.type) }}</span>
           <span class="band-tag" [title]="'依 Y 座標判定；移動元素跨過虛線會換區'">{{ bandOf(el) }}</span></h3>
+        <!-- 多選時要講清楚面板在編誰：只顯示最後選到的那個屬性，但對齊/分佈作用在全部。
+             不說的話使用者以為只選到一個（儲存格多選有寫「已選 N 格」，兩邊要一致）。 -->
+        @if (state.selectedIds().length > 1) {
+          <div class="multi-note">已選 {{ state.selectedIds().length }} 個元素——下方屬性只套用到這一個；
+            上方對齊/分佈作用於全部。</div>
+        }
 
         <!-- 標籤可左右拖曳調整數值（Figma 式 scrub；指標鎖定可無限拖） -->
         <div class="grid4">
@@ -574,6 +580,8 @@ import { ScrubDirective } from './scrub.directive';
     .chip { width: 56px !important; }
     .cell-editor { border: 1px solid #dbe3f5; background: #eef3ff; border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
     .hint { color: #999; font-size: 12px; }
+    .multi-note { margin: -2px 0 8px; padding: 6px 8px; background: #eff6ff; border-left: 3px solid #2563eb;
+      border-radius: 4px; color: #1e40af; font-size: 11.5px; line-height: 1.5; }
     /* 可填標記勾選（填寫模式權限）：綠色呼應畫布上的可填標示 */
     .chk { display: flex; flex-direction: row; align-items: center; gap: 6px; cursor: pointer;
       background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 6px 8px; color: #15803d; }

@@ -74,7 +74,7 @@ import { EditorStateService } from './editor-state.service';
       <div class="col test">
         <div class="col-head">
           <span>測試這份 schema</span>
-          <button class="secondary" (click)="fillSample()">用範例資料填入</button>
+          <button class="secondary" (click)="fillSample()" [title]="sampleSourceHint()">用範例資料填入</button>
         </div>
         <div class="hint">貼一段 <b>data</b> JSON，按驗證當場檢查（不渲染）。測試會忽略上方總開關，一律套用目前規則。</div>
         <textarea [(ngModel)]="testData" spellcheck="false" placeholder='{ "school": { "name": "…" }, "items": [ … ] }'></textarea>
@@ -176,7 +176,31 @@ export class ValidationPanelComponent {
   setRequired(i: number, v: boolean) { this.state.updateValidationField(i, { required: v }); }
   setType(i: number, v: string) { this.state.updateValidationField(i, { type: v as ValidationFieldType }); }
 
-  fillSample() { this.testData.set(JSON.stringify(this.state.buildSampleData(), null, 2)); }
+  /** 按鈕提示：講清楚這一按會帶入哪來的資料（state 是 private，不能直接在樣板裡讀） */
+  sampleSourceHint(): string {
+    return this.state.previewData().trim()
+      ? '帶入「資料」分頁貼的那份 JSON'
+      : '「資料」分頁沒有資料 → 由樣板欄位合成一份';
+  }
+
+  /**
+   * 帶入測試資料。優先用「資料」分頁貼的那份 —— 兩邊各自產生「範例資料」的話，
+   * 設計者會拿一份跟預覽/渲染無關的資料去驗證，過了也不代表實際出單會過。
+   * 資料分頁是空的或壞 JSON 才退回由樣板合成。
+   */
+  fillSample() {
+    const pasted = this.state.previewData().trim();
+    if (pasted) {
+      try {
+        const parsed: unknown = JSON.parse(pasted);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          this.testData.set(JSON.stringify(parsed, null, 2));
+          return;
+        }
+      } catch { /* 壞 JSON → 退回合成 */ }
+    }
+    this.testData.set(JSON.stringify(this.state.buildSampleData(), null, 2));
+  }
 
   async runTest() {
     this.testing.set(true);

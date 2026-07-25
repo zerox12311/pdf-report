@@ -12,9 +12,9 @@ import (
 func TestRoleAuthorization(t *testing.T) {
 	h, _, _, g := newTestServer(t)
 	seedUser(t, g, "admin", "secret")             // admin
-	uid := seedRole(t, g, "bob", "bobpw", db.RoleUser) // user
+	uid := seedRole(t, g, "bob", "bobpw123", db.RoleUser) // user
 	adminCk := loginAs(t, h, "admin", "secret")
-	userCk := loginAs(t, h, "bob", "bobpw")
+	userCk := loginAs(t, h, "bob", "bobpw123")
 
 	// admin 建兩個專案，只把 P1 指派給 bob
 	var p1, p2 store.ProjectSummary
@@ -33,7 +33,7 @@ func TestRoleAuthorization(t *testing.T) {
 	forbid("POST", "/api/projects", `{"name":"X"}`)
 	forbid("DELETE", "/api/projects/"+p2.ID, "")
 	forbid("GET", "/api/users", "")
-	forbid("POST", "/api/users", `{"username":"z","password":"zzzz"}`)
+	forbid("POST", "/api/users", `{"username":"z","password":"zzzzzzzz"}`)
 	forbid("PATCH", "/api/users/"+uid, `{"role":"admin"}`)
 	forbid("DELETE", "/api/users/"+uid, "")
 
@@ -125,7 +125,7 @@ func TestUserManagement(t *testing.T) {
 	mustUnmarshal(t, doAuth(h, "POST", "/api/projects", `{"name":"P"}`, ck).Body.Bytes(), &p)
 
 	// 建立 user、指派 P
-	rec := doAuth(h, "POST", "/api/users", `{"username":"bob","password":"bobpw","role":"user","projectIds":["`+p.ID+`"]}`, ck)
+	rec := doAuth(h, "POST", "/api/users", `{"username":"bob","password":"bobpw123","role":"user","projectIds":["`+p.ID+`"]}`, ck)
 	if rec.Code != 200 {
 		t.Fatalf("建立 user：%d %s", rec.Code, rec.Body.String())
 	}
@@ -143,16 +143,16 @@ func TestUserManagement(t *testing.T) {
 	}
 
 	// bob 登入看得到 P
-	bobCk := loginAs(t, h, "bob", "bobpw")
+	bobCk := loginAs(t, h, "bob", "bobpw123")
 	if !strings.Contains(doAuth(h, "GET", "/api/projects", "", bobCk).Body.String(), p.ID) {
 		t.Error("bob 應看得到 P")
 	}
 
 	// 重設密碼（PATCH）→ 新密碼可登入
-	if rec := doAuth(h, "PATCH", "/api/users/"+bob.ID, `{"password":"newbob"}`, ck); rec.Code != 204 {
+	if rec := doAuth(h, "PATCH", "/api/users/"+bob.ID, `{"password":"newbob12"}`, ck); rec.Code != 204 {
 		t.Errorf("重設密碼：%d", rec.Code)
 	}
-	if rec := doJSON(h, "POST", "/api/auth/login", `{"username":"bob","password":"newbob"}`); rec.Code != 200 {
+	if rec := doJSON(h, "POST", "/api/auth/login", `{"username":"bob","password":"newbob12"}`); rec.Code != 200 {
 		t.Errorf("bob 新密碼登入：%d", rec.Code)
 	}
 	// 密碼太短 → 400

@@ -67,6 +67,8 @@
 
 文字（或 key 綁定值）、字級、顏色、rotation、repeat 平鋪（gapX/gapY）、layer below/above。節可覆寫（inherit/none/custom）。layer=above 時 aboveWatermark 元素畫在浮水印之後（第三層）。
 
+**layer=above 一律以 35% 不透明度繪製**（`watermarkAboveAlpha`，固定常數以維持渲染決定性；前端畫布同值）。PDF 的文字沒有 alpha 就是**不透明**的，即使很淺的灰也會把下方內文塗掉——收款單的抬頭、金額國字大寫、繳費期限全都會讀不出來。實作上走 `CellWithOption` 而非 `Text`：gopdf 的 `Text()` 不會把 transparency 解析成 extGState，單純呼叫 `SetTransparency` 產出的 PDF 逐 byte 相同。layer=below 維持原本的 `Text()` 路徑（下方沒有內容可蓋，也讓既有 golden 的 byte 不變）。
+
 ## 字型
 
 內建 sans/serif/mono（Noto TC，Big5 常用字 subset，與前端同 TTF）；使用者匯入字型以 id 為字型名動態註冊，壞檔跳過並警告。註冊固定排序（決定性）。
@@ -74,3 +76,5 @@
 ## 錯誤與警告
 
 渲染錯誤不靜默：資料缺 key → 警告（`X-Render-Warnings` header，同訊息去重）；`?strict=1` 時有警告直接 422。壞 JSON body → 400。
+
+**表格缺 `columnWidths`**（手改樣板 JSON 才會發生）→ 該表格不繪製＋警告「表格「id」缺 columnWidths，未繪製」。引擎沒有欄寬即無可繪製的欄；「PDF 少一張表」不應僅依賴使用者自行察覺，故發警告。前端 `normalizeTemplate()` 會在畫布上補預設欄寬（元素寬高均分）讓表格可見可修，**在編輯器存檔一次即補進 DB**，之後渲染就正常。

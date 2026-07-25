@@ -288,3 +288,69 @@ func TestTruncateToWidth(t *testing.T) {
 		t.Errorf("未超寬不應裁切: %q", got)
 	}
 }
+
+// TestTableMissingColumnWidthsWarns 缺 columnWidths 的表格畫不出來，但必須出聲。
+// 手改樣板 JSON 才會發生（編輯器產出的表格一定有欄寬）。前端畫布會補上預設欄寬讓表格
+// 可見並可修正，後端則是不繪製＋警告——「PDF 少了一張表」不能只靠使用者自己發現。
+func TestTableMissingColumnWidthsWarns(t *testing.T) {
+	tpl := `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+	"elements":[{"type":"table","id":"badtbl","x":40,"y":40,"width":180,"height":48,
+		"borderColor":"#000","borderWidth":1,"fontSize":10,"cellPadding":4,
+		"cells":[[{"kind":"text","value":"甲"},{"kind":"text","value":"乙"}]]}]}`
+	var doc TemplateDoc
+	if err := json.Unmarshal([]byte(tpl), &doc); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine("../../fonts", nil)
+	out, warnings, err := e.Render(&doc, map[string]any{})
+	if err != nil {
+		t.Fatalf("不可擋渲染，只警告: %v", err)
+	}
+	if len(out) == 0 {
+		t.Error("其餘內容仍應產出 PDF")
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "badtbl") && strings.Contains(w, "columnWidths") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("缺 columnWidths 應產生警告，得到 %v", warnings)
+	}
+}
+
+// TestWatermarkAboveIsTransparent 上層浮水印必須半透明，否則會把內文塗掉。
+// gopdf 的 Text() 不會把 transparency 解析成 extGState（只有 Cell 系列會），
+// 所以這裡直接檢查產出的 PDF 內容流真的帶了 alpha —— 光呼叫 SetTransparency 是沒有效果的。
+func TestWatermarkAboveIsTransparent(t *testing.T) {
+	tpl := func(layer string) string {
+		return `{"name":"t","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0,
+		"watermark":{"enabled":true,"text":"副本","color":"#e5e7eb","fontSize":72,"rotation":45,
+		             "repeat":true,"gapX":80,"gapY":80,"layer":"` + layer + `"}},
+		"elements":[{"type":"text","id":"t1","x":40,"y":40,"width":300,"height":24,
+			"content":"應繳金額 14,050","fontSize":14,"color":"#000000","align":"left","lineHeight":1.2,"bold":false}]}`
+	}
+	render := func(layer string) []byte {
+		t.Helper()
+		var doc TemplateDoc
+		if err := json.Unmarshal([]byte(tpl(layer)), &doc); err != nil {
+			t.Fatal(err)
+		}
+		out, _, err := NewEngine("../../fonts", nil).Render(&doc, map[string]any{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	// 註：gopdf 一律會寫出 /ExtGState 資源字典，所以要看的是真的有沒有 alpha 值。
+	if !bytes.Contains(render("above"), []byte("/ca 0.350")) {
+		t.Error("上層浮水印應設定 fill alpha 0.35（否則會把內文塗掉）")
+	}
+
+	// 下層浮水印維持原路徑：不引入 alpha（它下面沒有東西可蓋），既有 golden 才不會變。
+	if bytes.Contains(render("below"), []byte("/ca ")) {
+		t.Error("下層浮水印不該引入 alpha（會動到既有 golden 的 byte）")
+	}
+}
