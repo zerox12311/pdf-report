@@ -26,6 +26,23 @@ type embedHandler struct {
 	secret    string
 }
 
+// context 回目前憑證的嵌入模式與能力，供前端畫 UI。
+// 前端與後端讀**同一份**解析結果（capabilitiesOf），UI 與強制不會漂移。
+// 非 embed 身分（控制台 session／宿主後端 API key）→ 視同 design（完整能力）。
+func (h *embedHandler) context(c *gin.Context) {
+	p := principalOf(c)
+	mode := modeDesign
+	if p.kind == principalEmbed {
+		mode = normalizeMode(p.mode)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"kind":         p.kind,
+		"mode":         mode,
+		"templateId":   p.templateID, // embed 才有值
+		"capabilities": capabilitiesOf(mode),
+	})
+}
+
 // mint：body `{templateId}` 換既有那張／`{}`(或空 body) 便利捷徑「在 key 的專案建空的＋回 token」。
 func (h *embedHandler) mint(c *gin.Context) {
 	p := principalOf(c) // 必為 apikey（requireAPIKey 已擋）
@@ -37,12 +54,22 @@ func (h *embedHandler) mint(c *gin.Context) {
 	}
 	var req struct {
 		TemplateID string `json:"templateId"`
+		// Mode 權限模式（design|fill|view）；未帶或不認得 → design。
+		// 這是宿主「後端」的政策決定，故只在此端點（需 API key）接受。
+		Mode string `json:"mode"`
 	}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, &req); err != nil {
 			httpError(c, 400, errors.New("請求格式錯誤（需為 JSON）"))
 			return
 		}
+	}
+
+	// mode 明確傳了就必須是合法值（大小寫敏感）。不做寬容解析——否則宿主把
+	// "Fill"／"readonly" 這種拼錯的值送進來，卻默默拿到 design（最高權限）。
+	if req.Mode != "" && !validMode(req.Mode) {
+		httpError(c, 400, errors.New(`mode 不合法（可用：design｜fill｜view）`))
+		return
 	}
 
 	templateID := req.TemplateID
@@ -71,7 +98,8 @@ func (h *embedHandler) mint(c *gin.Context) {
 		}
 	}
 
-	token, exp, err := signEmbedToken(h.secret, p.tenantID, p.projectID, templateID)
+	mode := normalizeMode(req.Mode)
+	token, exp, err := signEmbedToken(h.secret, p.tenantID, p.projectID, templateID, mode)
 	if err != nil {
 		httpInternalError(c, err)
 		return
@@ -79,6 +107,7 @@ func (h *embedHandler) mint(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"token":      token,
 		"templateId": templateID,
+		"mode":       mode,
 		"expiresAt":  exp.UTC().Format(time.RFC3339),
 	})
 }

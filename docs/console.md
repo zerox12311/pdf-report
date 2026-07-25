@@ -79,7 +79,7 @@ Stripe 式兩段憑證（完整流程見 [embed.md](embed.md)）：
 
 ## 部署安全須知
 
-- **`SESSION_SECRET` 正式部署必設**：未設時 session cookie 用不安全的 dev 預設簽章、可被偽造 → 全面淪陷。`WEB_ROOT` 非空（單容器 serve 前端）時未設會**拒啟動**。
+- **`SESSION_SECRET` 未設一律拒啟動**（不分部署型態）：它同時簽 session cookie 與 embed token，退回原始碼裡的 dev 常數等於兩者都可被偽造（偽造的 embed token 可讀寫任意樣板）。開發用 `SESSION_SECRET=dev-secret` 即可。
 - session cookie 已 `HttpOnly`＋`SameSite=Lax`（Lax 讓跨站 POST/fetch 不帶 cookie → 一定程度 CSRF 防護）。正式部署走 https，cookie 的 `Secure` 旗標建議由反向代理設定。
 - **登入尚無速率限制**（bcrypt 本身拖慢暴力破解，但非完整防護）——建議後續補上 per-帳號/IP 節流。
 

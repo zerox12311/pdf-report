@@ -24,12 +24,17 @@ import { SyntaxHelpComponent } from './syntax-help.component';
 
           <section>
             <div class="sec-head">
-              <h3>1. 前端：iframe 嵌入編輯器</h3>
+              <h3>1. 嵌入編輯器（宿主前端零事件）</h3>
               <button class="copy" (click)="copy('embed', embedHtml())">{{ copied() === 'embed' ? '已複製 ✓' : '複製' }}</button>
             </div>
-            <p>貼進宿主系統的頁面即可。使用者按「儲存」時，編輯器會用 postMessage 把樣板 id 通知宿主頁——把它存進你的系統，之後渲染都靠這個 id。</p>
+            <p>宿主<b>後端</b>用專案 API 金鑰（專案設定頁簽發）換一張短效 token，前端把它接在 iframe 網址的 <code>#token=</code> 後面即可，<b>不用寫任何 JavaScript</b>。</p>
             <pre>{{ embedHtml() }}</pre>
-            <p class="note">事件有三種：<code>editor-ready</code>（編輯器載入完成）、<code>template-loaded</code>（既有樣板載入完成）、<code>template-saved</code>（儲存成功，一定帶 id）。listener 要在 iframe 之前註冊，避免漏接 editor-ready。</p>
+            <p class="note">
+              <b>權限模式（mode）</b>由宿主後端在換 token 時指定，簽在 token 裡、前端改不了：
+              <code>design</code> 完整編輯器｜<code>fill</code> 只能改被標記「允許在填寫模式修改」的欄位、版面鎖死｜<code>view</code> 唯讀。
+              可填欄位在設計模式的屬性面板勾選，畫布上顯示綠色虛線。
+              <br />token 放 <code>#</code>（fragment）不放 <code>?</code>：不會進後端 log 與 Referer。不想讓 token 進網址可改用 postMessage 交付（見 docs/embed.md）。
+            </p>
           </section>
 
           <section>
@@ -106,17 +111,14 @@ export class IntegrationDialogComponent {
 
   renderUrl = computed(() => `${this.origin}/api/templates/${this.idOrPlaceholder()}/render`);
 
-  embedHtml = computed(() => `<script>
-  // 先註冊 listener 再放 iframe，避免漏接編輯器的事件
-  window.addEventListener('message', function (e) {
-    if (!e.data || e.data.source !== 'pdf-template-editor') return;
-    if (e.data.type === 'template-saved') {
-      // 使用者按了「儲存」：把樣板 id 存進你的系統，之後渲染 PDF 都用它
-      console.log('樣板已儲存，id =', e.data.id);
-    }
-  });
-<\/script>
-<iframe src="${this.origin}/editor/${this.templateId() || 'new'}"
+  // 宿主前端零事件：後端換好 token，前端只放 iframe（token 接在 #token= 後）
+  embedHtml = computed(() => `<!-- 1) 宿主「後端」用 project API key 換短效 token（mode 決定權限） -->
+<!--    POST ${this.origin}/api/embed-token
+        Authorization: Bearer <API key>
+        { "templateId": "${this.idOrPlaceholder()}", "mode": "design" }   // design｜fill｜view  -->
+
+<!-- 2) 宿主前端只要這一行，不需要寫任何 JavaScript -->
+<iframe src="${this.origin}/editor/${this.templateId() || 'new'}#token={上一步拿到的 token}"
         style="width: 100%; height: 820px; border: 0;"></iframe>`);
 
   sampleJson = computed(() =>

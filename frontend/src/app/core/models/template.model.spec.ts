@@ -1,5 +1,5 @@
 import {
-  ContainerElement, TextElement, cloneWithNewIds, emptyTemplate, fontCss, normalizeTemplate,
+  ContainerElement, TableElement, TextElement, cloneWithNewIds, collectFillableValues, emptyTemplate, fontCss, normalizeTemplate,
 } from './template.model';
 
 describe('template.model', () => {
@@ -57,5 +57,39 @@ describe('template.model', () => {
     // 原件不受影響
     expect(container.id).toBe('c1');
     expect(container.children[0].id).toBe('t1');
+  });
+  it('collectFillableValues 只收可填的文字元素與 text 儲存格（含容器巢狀）', () => {
+    const t = emptyTemplate();
+    const text: TextElement = { type: 'text', id: 'open', x: 0, y: 0, width: 10, height: 10,
+      content: '可改', fontSize: 12, color: '#000', align: 'left', lineHeight: 1.2, bold: false, fillable: true };
+    const locked: TextElement = { ...text, id: 'locked', content: '不可改', fillable: undefined };
+    const nested: ContainerElement = {
+      type: 'container', id: 'box', x: 0, y: 0, width: 50, height: 50,
+      title: '', borderWidth: 0, borderColor: '#000', fillColor: null,
+      children: [{ ...text, id: 'inner', content: '巢狀可改' }],
+    };
+    const table = {
+      type: 'table', id: 'tbl', x: 0, y: 0, width: 100, height: 40,
+      columnWidths: [50, 50], rowHeights: [20, 20], borderColor: '#000', borderWidth: 1,
+      fontSize: 10, cellPadding: 2,
+      cells: [
+        [{ kind: 'text', value: '表頭', key: '', sample: '', align: 'left', bold: true },
+         { kind: 'text', value: '格可改', key: '', sample: '', align: 'left', bold: false, fillable: true }],
+        [{ kind: 'placeholder', value: '', key: 'amount', sample: '1', align: 'left', bold: false, fillable: true },
+         { kind: 'text', value: '格鎖住', key: '', sample: '', align: 'left', bold: false }],
+      ],
+    } as unknown as TableElement;
+    t.sections[0].elements = [text, locked, nested, table];
+
+    const values = collectFillableValues(t);
+    expect(values).toEqual({
+      open: '可改',
+      inner: '巢狀可改',
+      'tbl#0,1': '格可改',
+    });
+    // 未標記的、非 text 型別的都不在其中（placeholder 格即使標了也不收）
+    expect(values['locked']).toBeUndefined();
+    expect(values['tbl#1,0']).toBeUndefined();
+    expect(values['tbl#1,1']).toBeUndefined();
   });
 });

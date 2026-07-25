@@ -155,6 +155,10 @@ export interface ElementBase {
   locked?: boolean;
   /** 隱藏：設計時與渲染都不顯示（保留版面空間，與條件顯示 visibleKey 同閘門）；設計者手動關 */
   hidden?: boolean;
+  /** 允許在**填寫模式**（embed token mode=fill）修改內容值。
+   *  設計者在設計模式勾選；目前只有 text 元素有效（後端白名單，見 httpapi/values.go）。
+   *  不影響渲染。 */
+  fillable?: boolean;
 }
 
 /** 字型家族：sans 黑體（預設）| serif 明體 | mono 等寬（英數）| 其他 = 匯入字型的 id */
@@ -285,6 +289,8 @@ export interface TableCell {
   value: string;
   key: string;
   sample: string;
+  /** 允許在**填寫模式**修改此格的值（只有 kind='text' 有效；見 ElementBase.fillable） */
+  fillable?: boolean;
   align: 'left' | 'center' | 'right';
   /** 垂直對齊（未設 = middle）；與 align 組成九點對齊 */
   vAlign?: 'top' | 'middle' | 'bottom';
@@ -634,4 +640,30 @@ export function newId(): string {
 
 export function emptyCell(): TableCell {
   return { kind: 'text', value: '', key: '', sample: '', align: 'left', bold: false };
+}
+
+/**
+ * 收集所有「被標記可填」欄位的目前值，供填寫模式儲存（PATCH /values）。
+ * 定址與後端 httpapi/values.go 一致：一般元素 `id`、表格儲存格 `id#row,col`。
+ * 只收 text 元素與 text 儲存格（與後端白名單相同）；後端仍會再驗一次。
+ */
+export function collectFillableValues(doc: TemplateDoc): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (els: TemplateElement[]) => {
+    for (const el of els) {
+      if (el.type === 'text' && el.fillable) out[el.id] = el.content;
+      if (el.type === 'table') {
+        // 被合併蓋住的格編輯不到（onCellDbl 會導向主格），送出去只會在 DB 養一個看不見的值
+        const covered = coveredCells(el);
+        el.cells.forEach((row, r) => row.forEach((cell, c) => {
+          if (cell.kind === 'text' && cell.fillable && !covered.has(`${r},${c}`)) {
+            out[`${el.id}#${r},${c}`] = cell.value;
+          }
+        }));
+      }
+      if (isChildHost(el)) walk(el.children);
+    }
+  };
+  doc.sections.forEach(s => walk(s.elements));
+  return out;
 }

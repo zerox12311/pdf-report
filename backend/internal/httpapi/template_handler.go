@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -127,11 +128,66 @@ func (h *templateHandler) update(c *gin.Context) {
 	}
 	// 更新既有樣板不改專案歸屬（Save 只在建立時寫 projectID）。
 	_, out, err := h.store.Save(tenantOf(c), "", raw, id)
+	switch {
+	case err == nil:
+		writeRawJSON(c, out)
+	case errors.Is(err, store.ErrLocked):
+		httpError(c, http.StatusConflict, err) // 有人正在填值，等鎖逾時
+	default:
+		httpError(c, 400, err)
+	}
+}
+
+// patchValues 填寫模式的窄介面：body `{"values":{"<elementId>":"新值","<tableId>#2,3":"新值"}}`。
+// 讀出 DB 原件、只覆寫被標記 fillable 的 text 元素 content／text 儲存格 value，其餘結構原地不動。
+// 需 capEditValues（router 掛 requireCapability）。
+func (h *templateHandler) patchValues(c *gin.Context) {
+	raw, err := readBody(c, maxUpload)
 	if err != nil {
 		httpError(c, 400, err)
 		return
 	}
-	writeRawJSON(c, out)
+	var req struct {
+		Values map[string]string `json:"values"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		httpError(c, 400, errors.New("請求格式錯誤（需為 JSON）"))
+		return
+	}
+	if len(req.Values) == 0 {
+		httpError(c, 400, errors.New("values 不可為空"))
+		return
+	}
+
+	id := c.Param("id")
+	pid, err := h.store.ProjectOf(tenantOf(c), id)
+	if err != nil {
+		templateGetError(c, err) // 不存在 → 404
+		return
+	}
+	if !authorizeTemplate(c, h.projects, pid, id) {
+		return
+	}
+
+	// 讀取→套用→寫回全在同一交易＋列鎖內（PatchDoc）：否則設計者的 PUT 落在讀與寫之間
+	// 會被整份覆寫回捲，連「剛撤銷的 fillable」都會被還原。
+	saved, err := h.store.PatchDoc(tenantOf(c), id, func(doc map[string]any) error {
+		return applyValues(doc, req.Values)
+	})
+	switch {
+	case err == nil:
+		writeRawJSON(c, saved)
+	case errors.Is(err, errValueNotFillable):
+		httpError(c, http.StatusForbidden, err) // 未開放修改
+	case errors.Is(err, errValueTargetNotFound), errors.Is(err, errValueHasBinding):
+		httpError(c, 400, err) // 找不到欄位／定址錯／含綁定語法
+	case errors.Is(err, store.ErrLocked):
+		httpError(c, http.StatusConflict, err) // 同一張樣板另有寫入中，等鎖逾時
+	case errors.Is(err, os.ErrNotExist):
+		templateGetError(c, err) // 樣板在交易內消失
+	default:
+		httpInternalError(c, err)
+	}
 }
 
 func (h *templateHandler) remove(c *gin.Context) {

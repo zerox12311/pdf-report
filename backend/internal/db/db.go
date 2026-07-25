@@ -110,6 +110,17 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 連線池上限：Go 預設無上限，一波併發（例如填寫模式的 PATCH 排隊等列鎖）會 1:1 佔用
+	// PG 連線，逼近 max_connections 時**整個 app**（控制台、其他專案）都連不上。
+	// 設上限後最壞情況只是請求在 Go 端排隊，爆炸半徑限縮在延遲而非全面失敗。
+	sqlDB, err := g.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(20)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+
 	if err := g.AutoMigrate(&Tenant{}, &APIKey{}, &User{}, &Project{}, &ProjectMember{}, &Template{}, &Asset{}, &Font{}); err != nil {
 		return nil, err
 	}

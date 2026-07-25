@@ -34,17 +34,52 @@ POST https://<樣板服務>/api/embed-token
 Authorization: Bearer <API key>
 Content-Type: application/json
 
-{ "templateId": "abc" }        // 編輯既有那張
-或 { }                          // 便利捷徑：在該專案建一張空樣板，回它的 token
+{ "templateId": "abc", "mode": "fill" }   // 編輯既有那張，用填寫模式
+或 { "mode": "design" }                    // 便利捷徑：在該專案建一張空樣板，回它的 token
 ```
 
 回應：
 
 ```json
-{ "token": "eyJ...", "templateId": "abc", "expiresAt": "2026-07-24T09:11:59Z" }
+{ "token": "eyJ...", "templateId": "abc", "mode": "fill", "expiresAt": "2026-07-24T09:11:59Z" }
 ```
 
 `templateId` 必須屬於這把 key 綁的專案，否則 403。token 綁定該 template、短效。
+
+### 權限模式（mode）
+
+| mode | 可改版面 | 可改內容 | 上傳圖片/字型 | 用途 |
+|---|:--:|---|:--:|---|
+| `design`（預設） | ✓ | 全部 | ✓ | 完整編輯器 |
+| `fill` | ✗ | **只有被標記可填的欄位** | ✗ | 讓使用者填抬頭/備註，版面鎖死 |
+| `view` | ✗ | ✗ | ✗ | 唯讀檢視 |
+
+- **mode 是宿主「後端」換 token 時決定的政策**，簽在 token 裡。**絕不可以做成宿主前端傳進來的參數**——那等於讓使用者自己選權限。依使用者角色決定，例如主管給 `design`、門市人員給 `fill`。
+- 三種模式都不能刪除樣板（要刪請走控制台或用 API key）。
+- **未帶 mode** → `design`（向後相容加 mode 之前簽出的 token）。
+- **不認得的值 → `POST /api/embed-token` 直接回 400**（大小寫敏感、不 trim）：`"Fill"`、`"readonly"` 這種拼錯不會默默拿到 design。若既有 token 的 claim 出現未知值（版本回退等），解析時**降權為 `view`**，不是升權。
+
+**哪些欄位可填**由設計者決定：在 `design` 模式選中文字元素或表格儲存格，屬性面板勾「允許在填寫模式修改」（多選可批次勾），畫布上會顯示綠色虛線標示。
+
+`fill` 模式的儲存走窄介面（編輯器自動使用，宿主不需經手）：
+
+```
+PATCH /api/templates/{id}/values
+Authorization: Bearer <embed token>
+
+{ "values": { "<elementId>": "新文字", "<tableId>#2,3": "新文字" } }
+```
+
+後端讀出原件、**只覆寫被標記可填的 text 元素 content／text 儲存格 value**，其餘結構原地不動——沒被標記的欄位即使直接打 API 也改不到（403），不是靠前端隱藏 UI。填寫的值必須是**字面文字**，含 `{{…}}` 資料綁定語法會被拒絕（否則填寫者可用它讀出宿主 render 資料裡未綁定的欄位）。
+
+> ⚠️ **fill 模式寫回的是樣板本體，不是某一份填寫實例。**
+> 同一張樣板給多人 fill 會互相覆蓋，且改完之後**所有人**用這張樣板產生的 PDF 都會是新值。
+> 若每位使用者/分店要有自己的內容，請**一人一張樣板**：宿主後端用 `POST /api/embed-token` 的
+> `{}` 便利捷徑（或先複製一份）替每位使用者各建一張，再各自發 token。
+
+同一張樣板的並行寫入以**列鎖序列化**：改不同欄位不會互相清掉，改同一欄位是 last-write-wins。等鎖超過 3 秒 → **409**（客戶端可重試）。設計者的 PUT 沒有版本檢查，會覆蓋期間的填寫內容（設計者為權威）。
+
+`PATCH /values` 有速率限制：**以樣板為單位** burst 20、之後 5 次/秒，超過 → **429** ＋ `Retry-After`。正常填寫碰不到；換 token 也繞不過去（維度是樣板不是身分）。完整限流表見 [api.md](api.md#速率限制)。
 
 ## 3. 嵌入編輯器（推薦：URL fragment，零事件）
 
@@ -116,7 +151,9 @@ curl -X POST https://<樣板服務>/api/templates/{id}/render \
 - **token 放 URL fragment（`#`）不放 query（`?`）**：fragment 不進後端 log、不進 Referer；且 token 短效＋只綁單一 template，外洩風險有限。不想進 URL 就用 postMessage（見 3. 選配）。
 - postMessage 交付時兩端都應驗 `e.origin` / 指定 `targetOrigin`（範例已標註）。
 - 目前 CORS 為 `*`＋允許 `Authorization`：bearer 流程可用；正式對外前建議**收斂成宿主 origin 白名單**，並視需要加 iframe `Content-Security-Policy: frame-ancestors` 限制誰能嵌入。
-- **尚未做**（記錄在案）：adhoc render 的速率限制、`POST /api/embed-token {}` 便利捷徑的建立節流、template 級 API key（目前只有 project 級）。圖片 URL 抓取已擋私有/內網/metadata（SSRF 防護）。
+- **已知限制：樣板內容對持有 token 的人是可讀的**。`GET /api/templates/:id` 回完整樣板 JSON，含所有資料綁定 key（`customer.name` 這類）。fill/view 模式在 UI 上隱藏了「資料」分頁與綁定 key 的顯示，但那是**體驗層**——開 devtools 或直接打 API 仍讀得到。若樣板的 key 名稱本身屬機密，目前的模式機制擋不住，需要伺服器端的欄位遮蔽（尚未實作）。
+- **速率限制已就位**（登入／渲染／填值／換 token／上傳，見 [api.md](api.md#速率限制)）；資料庫連線池已設上限，一波併發不會耗盡整台的連線預算。
+- **尚未做**（記錄在案）：template 級 API key（目前只有 project 級）、填寫模式 token 的 TTL/refresh 策略、限流的跨副本共用計數器（目前單實例）。圖片 URL 抓取已擋私有/內網/metadata（SSRF 防護）。
 
 ## 本機示範
 

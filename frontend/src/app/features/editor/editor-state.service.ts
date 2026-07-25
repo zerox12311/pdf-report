@@ -34,6 +34,81 @@ export class EditorStateService {
   readonly selectedCellRange = signal<{ r1: number; c1: number; r2: number; c2: number } | null>(null);
   readonly zoom = signal(1.2);
   readonly dirty = signal(false);
+  /** 嵌入填寫模式：只能改被標記 fillable 的欄位，不能動版面（值由 editor-page 從
+   *  EmbedContextService 注入——本服務必須可直接 new，不得在內部 inject）。 */
+  readonly fillMode = signal(false);
+  /** 嵌入唯讀模式：什麼都不能改。 */
+  readonly viewMode = signal(false);
+  /** 受限模式（fill 或 view）：畫布不可拖曳/縮放/新增/刪除。 */
+  readonly restricted = computed(() => this.fillMode() || this.viewMode());
+  /** 該元素在目前模式下可否編輯內容：設計模式全可；填寫模式只有 fillable；唯讀一律否。 */
+  canEditElement(el: { fillable?: boolean } | null | undefined): boolean {
+    if (this.viewMode()) return false;
+    if (!this.fillMode()) return true;
+    return !!el?.fillable;
+  }
+
+  /**
+   * 儲存格的內容可否編輯。**所有儲存格編輯入口都用這個**（畫布雙擊／屬性面板／setCellContent），
+   * 否則各處各寫各的就會漏 —— 例如只檢查 fillable 卻沒檢查 kind：設計者「先勾可填、
+   * 後把格子改成資料欄位」時 fillable 會殘留，雙擊就會把資料綁定 key 洩給填寫者。
+   */
+  canEditCell(cell: TableCell | null | undefined): boolean {
+    if (!cell) return false;
+    if (!this.restricted()) return true; // 設計模式：任何格都能編輯（text 改 value、placeholder 改 key）
+    return cell.kind === 'text' && this.canEditElement(cell);
+  }
+
+  /** 元素的內容可否編輯（受限模式只放行已標記的 text 元素，與後端白名單一致）。 */
+  canEditElementContent(el: TemplateElement | null | undefined): boolean {
+    if (!el) return false;
+    if (!this.restricted()) return true;
+    return el.type === 'text' && this.canEditElement(el);
+  }
+
+  /**
+   * 受限模式下 patchElement 是否放行：只有「已標記可填的 text 元素」且 patch **只含 content**。
+   * 任何多帶一個欄位（例如順手改 x 或 fillable）都會落回一般規則被擋掉。
+   */
+  private isFillableContentPatch(id: string, patch: ElementPatch): boolean {
+    const keys = Object.keys(patch);
+    if (keys.length !== 1 || keys[0] !== 'content') return false;
+    const el = this.findElement(id);
+    return !!el && el.type === 'text' && this.canEditElement(el);
+  }
+
+  /**
+   * 設定單一儲存格的內容值（畫布就地編輯用）。受限模式下只放行「可填的 text 格」，
+   * 且只寫該格的 value/key —— 走這條而不是自組 cells 打 patchElement，才不會被守衛誤擋。
+   */
+  setCellContent(tableId: string, row: number, col: number, value: string) {
+    const t = this.tableOf(tableId);
+    const cell = t?.cells[row]?.[col];
+    if (!t || !cell) return;
+    const allowed = this.canEditCell(cell);
+    const cells = t.cells.map((r, ri) => r.map((c, ci) => {
+      if (ri !== row || ci !== col) return c;
+      return c.kind === 'text' ? { ...c, value } : { ...c, key: value };
+    }));
+    this.applyElementPatch(tableId, { cells } as Partial<TableElement>, allowed);
+  }
+
+  /** 受限模式下 patchSelectedCells 是否放行：只改 value，且選取範圍內每一格都是可填的 text 格。 */
+  private isFillableCellPatch(tableId: string, patch: Partial<TableCell>): boolean {
+    const keys = Object.keys(patch);
+    if (keys.length !== 1 || keys[0] !== 'value') return false;
+    const el = this.findElement(tableId);
+    if (!el || el.type !== 'table') return false;
+    const b = this.selectedCellBounds();
+    if (!b) return false;
+    for (let r = b.r1; r <= b.r2; r++) {
+      for (let c = b.c1; c <= b.c2; c++) {
+        const cell = el.cells[r]?.[c];
+        if (!this.canEditCell(cell)) return false;
+      }
+    }
+    return true;
+  }
   /** 預覽分頁的資料 JSON（跨分頁切換保留） */
   readonly previewData = signal('');
   /** 尺規單位（左上角切換） */
@@ -48,6 +123,9 @@ export class EditorStateService {
   readonly contextMenu = signal<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
   openContextMenu(x: number, y: number, items: ContextMenuItem[]) {
+    // 受限模式（嵌入 fill/view）：右鍵選單全是結構操作（刪除/複製/圖層/表格增刪列欄），
+    // 點了本來就會被 record() 擋掉，直接不開才不會讓人以為能用。
+    if (this.restricted()) return;
     this.contextMenu.set({ x, y, items });
   }
 
@@ -63,14 +141,22 @@ export class EditorStateService {
   readonly redoCount = signal(0);
 
   /**
-   * 在每個變更前記錄快照。400ms 滑動視窗內的連續變更合併為同一步
-   * （拖曳一整段、連續打字都算一步）；有新變更時清空重做堆疊。
+   * 變更守衛 ＋ 快照。**所有會改到樣板的操作都必須先過這裡**（`if (!this.record()) return;`），
+   * 這是前端唯一的變更 chokepoint —— 受限模式（嵌入 fill/view）在此一次擋掉所有結構性變更，
+   * 不必在右鍵選單／快捷鍵／大綱／屬性面板逐點補判斷（漏一個就破功）。
+   * fill 模式的「可填欄位內容值」是唯一例外，由呼叫端傳 allowInRestricted=true 放行。
+   *
+   * 快照本身：400ms 滑動視窗內的連續變更合併為同一步（拖曳一整段、連續打字都算一步）；
+   * 有新變更時清空重做堆疊。
+   *
+   * @returns 是否放行本次變更
    */
-  private record() {
+  private record(allowInRestricted = false): boolean {
+    if (this.restricted() && !allowInRestricted) return false;
     const now = Date.now();
     if (now - this.lastRecord < 400) {
       this.lastRecord = now;
-      return;
+      return true; // 併入前一步快照，變更仍放行
     }
     this.lastRecord = now;
     this.history.push(this.template());
@@ -78,6 +164,7 @@ export class EditorStateService {
     this.future = [];
     this.undoCount.set(this.history.length);
     this.redoCount.set(0);
+    return true;
   }
 
   undo() {
@@ -153,7 +240,7 @@ export class EditorStateService {
 
   /** 新增節（紙張複製文件預設）並切過去 */
   addSection(kind: 'flow' | 'single') {
-    this.record();
+    if (!this.record()) return;
     const base = this.template().page;
     const sec: DocSection = {
       id: newId(),
@@ -174,14 +261,14 @@ export class EditorStateService {
   removeSection(id: string) {
     const secs = this.template().sections;
     if (secs.length <= 1) return;
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => ({ ...t, sections: t.sections.filter(s => s.id !== id) }));
     if (this.activeSectionId() === id) this.setActiveSection(this.template().sections[0].id);
     this.dirty.set(true);
   }
 
   patchSection(id: string, patch: Partial<DocSection>) {
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => ({
       ...t,
       sections: t.sections.map(s => (s.id === id ? { ...s, ...patch } : s)),
@@ -195,7 +282,7 @@ export class EditorStateService {
     const i = secs.findIndex(s => s.id === id);
     const j = i + dir;
     if (i < 0 || j < 0 || j >= secs.length) return;
-    this.record();
+    if (!this.record()) return;
     [secs[i], secs[j]] = [secs[j], secs[i]];
     this.template.update(t => ({ ...t, sections: secs }));
     this.dirty.set(true);
@@ -207,7 +294,7 @@ export class EditorStateService {
     const from = secs.findIndex(s => s.id === id);
     const to = Math.max(0, Math.min(toIndex, secs.length - 1));
     if (from < 0 || from === to) return;
-    this.record();
+    if (!this.record()) return;
     const [moved] = secs.splice(from, 1);
     secs.splice(to, 0, moved);
     this.template.update(t => ({ ...t, sections: secs }));
@@ -383,7 +470,7 @@ export class EditorStateService {
     const maxY = Math.max(...els.map(e => e.y + e.height));
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => this.mapLists(t, list => list.map(e => {
       if (!this.selectedIds().includes(e.id) || e.locked) return e;
       switch (edge) {
@@ -411,7 +498,7 @@ export class EditorStateService {
     const step = (last - first) / (sorted.length - 1);
     const target = new Map<string, number>();
     sorted.forEach((e, i) => target.set(e.id, first + step * i));
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => this.mapLists(t, list => list.map(e => {
       const c = target.get(e.id);
       if (c === undefined || e.locked) return e;
@@ -425,7 +512,7 @@ export class EditorStateService {
   /** 一起移動多選元素（拖曳用）：對每個選取的頂層元素套用 dx/dy。
    *  record 的 400ms 節流會把連續拖曳合併成一步 undo。 */
   moveSelectedBy(origins: Map<string, { x: number; y: number }>, dx: number, dy: number) {
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => this.mapLists(t, list => list.map(e => {
       const o = origins.get(e.id);
       if (!o) return e;
@@ -438,7 +525,7 @@ export class EditorStateService {
   removeSelected() {
     const ids = this.selectedIds();
     if (ids.length === 0) return;
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => this.mapLists(t, list => list.filter(e => !ids.includes(e.id))));
     this.select(null);
     this.dirty.set(true);
@@ -501,20 +588,20 @@ export class EditorStateService {
   }
 
   setName(name: string) {
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => ({ ...t, name }));
     this.dirty.set(true);
   }
 
   patchPage(patch: Partial<TemplateDoc['page']>) {
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => ({ ...t, page: { ...t.page, ...patch } }));
     this.dirty.set(true);
   }
 
   /** 新增元素；目前選著容器（或其子元素）時，加入該容器（座標轉為容器相對） */
   addElement(el: NewTemplateElement) {
-    this.record();
+    if (!this.record()) return;
     const withId = { ...el, id: newId() } as TemplateElement;
     const sel = this.selected();
     const target = sel
@@ -551,7 +638,7 @@ export class EditorStateService {
 
   /** 在指定座標新增元素（拖放用，不做自動排位）；給 containerId 時放進容器（x/y 視為容器相對座標） */
   addElementAt(el: NewTemplateElement, x: number, y: number, containerId?: string) {
-    this.record();
+    if (!this.record()) return;
     const withId = { ...el, id: newId() } as TemplateElement;
     const container = containerId ? this.findElement(containerId) : null;
     if (container && isChildHost(container) && this.canNestInto(withId, container)) {
@@ -570,7 +657,13 @@ export class EditorStateService {
   }
 
   patchElement(id: string, patch: ElementPatch) {
-    this.record();
+    // 受限模式唯一的放行通道：改「已標記可填元素」的 content（且只有 content 這一個欄位）
+    this.applyElementPatch(id, patch, this.isFillableContentPatch(id, patch));
+  }
+
+  /** patchElement 的內部實作；allowInRestricted 由呼叫端依「是否為可填欄位的內容值」判定。 */
+  private applyElementPatch(id: string, patch: ElementPatch, allowInRestricted: boolean) {
+    if (!this.record(allowInRestricted)) return;
     const mapEl = (e: TemplateElement): TemplateElement => {
       if (e.id === id) return { ...e, ...patch } as TemplateElement;
       // 遞迴進 container/list 子樹（支援 list 兩層巢狀）；無匹配時 map 原樣回傳
@@ -584,7 +677,7 @@ export class EditorStateService {
   }
 
   removeElement(id: string) {
-    this.record();
+    if (!this.record()) return;
     // 遞迴移除（支援 container / list 巢狀子樹）
     const strip = (els: TemplateElement[]): TemplateElement[] => els
       .filter(e => e.id !== id)
@@ -600,7 +693,7 @@ export class EditorStateService {
     const el = this.findElement(id);
     const abs = this.absPosOf(id);
     if (!parent || !el || !abs) return;
-    this.record();
+    if (!this.record()) return;
     const listKey = this.listKeyOf(id);
     const moved = { ...el, x: abs.x, y: abs.y } as TemplateElement;
     // 從任意深度子樹遞迴移除，再放到節頂層
@@ -630,7 +723,7 @@ export class EditorStateService {
   /** 貼上：偏移 12pt；目前選著容器（或其子元素）時貼進該容器 */
   paste() {
     if (!this.clipboard) return;
-    this.record();
+    if (!this.record()) return;
     const copy = cloneWithNewIds(this.clipboard);
     const sel = this.selected();
     const target = sel
@@ -662,7 +755,7 @@ export class EditorStateService {
   /** 貼在指定座標（右鍵空白畫布用；頂層、目前節） */
   pasteAt(x: number, y: number) {
     if (!this.clipboard) return;
-    this.record();
+    if (!this.record()) return;
     const copy = cloneWithNewIds(this.clipboard);
     copy.x = Math.round(Math.max(0, x));
     copy.y = Math.round(Math.max(0, y));
@@ -713,7 +806,7 @@ export class EditorStateService {
       if (children) this.patchElement(parent.id, { children } as Partial<ContainerElement>);
       return;
     }
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => this.mapLists(t, els => reorder(els) ?? els));
     this.dirty.set(true);
   }
@@ -738,7 +831,7 @@ export class EditorStateService {
     const elAbs = this.absPosOf(id);
     const hostAbs = this.absPosOf(containerId);
     if (!elAbs || !hostAbs) return;
-    this.record();
+    if (!this.record()) return;
     // 目標容器可能是巢狀 list（座標相對外層）→ 用絕對座標鏈換算相對位置
     const moved = {
       ...el,
@@ -763,7 +856,7 @@ export class EditorStateService {
   duplicateElement(id: string) {
     const el = this.findElement(id);
     if (!el) return;
-    this.record();
+    if (!this.record()) return;
     const copy = cloneWithNewIds(el);
     copy.x += 12;
     copy.y += 12;
@@ -969,7 +1062,8 @@ export class EditorStateService {
     if (!t || !b) return;
     const cells = t.cells.map((row, r) => row.map((cell, c) =>
       r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2 ? { ...cell, ...patch } : cell));
-    this.patchElement(tableId, { cells } as Partial<TableElement>);
+    // 受限模式：只有「改可填 text 格的 value」放行（判定用原始 patch，不是展開後的 cells）
+    this.applyElementPatch(tableId, { cells } as Partial<TableElement>, this.isFillableCellPatch(tableId, patch));
   }
 
   /**
@@ -1215,7 +1309,7 @@ export class EditorStateService {
     this.template().validation ?? { enabled: false, fields: [] });
 
   private patchValidation(patch: Partial<ValidationSpec>) {
-    this.record();
+    if (!this.record()) return;
     this.template.update(t => ({
       ...t,
       validation: { ...(t.validation ?? { enabled: false, fields: [] }), ...patch },

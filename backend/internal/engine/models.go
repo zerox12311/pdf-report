@@ -125,8 +125,10 @@ type Element struct {
 
 	// Hidden 設計者手動隱藏：不畫但保留版面空間（與條件顯示同閘門）。
 	// Locked 純編輯器概念（畫布不可選/拖），引擎忽略。
-	Hidden bool `json:"hidden"`
-	Locked bool `json:"locked"`
+	// Fillable 嵌入填寫模式可改此元素內容（授權概念，強制在 httpapi/values.go），引擎忽略。
+	Hidden   bool `json:"hidden"`
+	Locked   bool `json:"locked"`
+	Fillable bool `json:"fillable"`
 
 	// text / placeholder 外框與底色（BorderColor/BorderWidth/FillColor 與 table/rect 共用欄位）
 	Padding  float64 `json:"padding"`  // 文字內距（pt）
@@ -211,6 +213,8 @@ type TableCell struct {
 	Value  string `json:"value"`
 	Key    string `json:"key"`
 	Sample string `json:"sample"`
+	// Fillable 嵌入填寫模式可改此格（授權概念，強制在 httpapi/values.go），引擎忽略。
+	Fillable bool `json:"fillable"`
 	Align  string `json:"align"`
 	VAlign string `json:"vAlign"` // 垂直對齊 top|middle|bottom（空 = middle）
 	Bold   bool   `json:"bold"`

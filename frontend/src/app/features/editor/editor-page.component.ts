@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { ELEMENT_META, TemplateElement, emptyTemplate, isChildHost } from '../../core/models/template.model';
+import { ELEMENT_META, TemplateElement, collectFillableValues, emptyTemplate, isChildHost } from '../../core/models/template.model';
 import { FontService } from '../../core/services/font.service';
+import { EmbedContextService } from '../../core/services/embed-context.service';
 import { EmbedTokenService } from '../../core/services/embed-token.service';
 import { HostBridgeService } from '../../core/services/host-bridge.service';
 import { ModalService } from '../../core/services/modal.service';
@@ -31,17 +32,23 @@ interface PaletteItem {
   template: `
     <div class="editor">
       <header>
-        @if (!embedded) {
+        @if (!embedded && !state.restricted()) {
           <a [routerLink]="backLink" class="back">← {{ (newProjectId ?? templateProjectId()) ? '專案' : '控制台' }}</a>
         }
-        <input class="name" [ngModel]="state.template().name" (ngModelChange)="state.setName($event)" />
+        <!-- 受限模式唯讀：PATCH /values 不送 name，可改的話等於靜默丟失使用者的修改 -->
+        <input class="name" [ngModel]="state.template().name" (ngModelChange)="state.setName($event)"
+          [readOnly]="state.restricted()" />
         <div class="right">
-          @if (!embedded) {
+          @if (!embedded && !state.restricted()) {
             <button class="link" (click)="showIntegration.set(true)" title="iframe 嵌入與渲染 API 說明">🔗 連接</button>
           }
-          <button class="save" (click)="save()" [disabled]="saving()">
-            {{ saving() ? '儲存中…' : state.dirty() ? '儲存 *' : '儲存' }}
-          </button>
+          @if (state.viewMode()) {
+            <span class="viewonly" title="此連結為唯讀模式">👁 唯讀</span>
+          } @else {
+            <button class="save" (click)="save()" [disabled]="saving()">
+              {{ saving() ? '儲存中…' : state.dirty() ? '儲存 *' : '儲存' }}
+            </button>
+          }
         </div>
       </header>
       @if (showIntegration()) {
@@ -52,6 +59,8 @@ interface PaletteItem {
       <div class="body">
         <!-- 左側：元件 + 大綱（Jasper 的 Palette / Outline） -->
         <aside class="left">
+          <!-- 受限模式（嵌入 fill/view）：不能新增元件，元件盤整個不出現 -->
+          @if (!state.restricted()) {
           <div class="panel-title">元件</div>
           <div class="palette">
             @for (group of paletteGroups; track group.name) {
@@ -67,8 +76,15 @@ interface PaletteItem {
             }
             <input #imageInput type="file" accept="image/png,image/jpeg" hidden (change)="onImagePicked($event)" />
           </div>
-          <div class="panel-title">大綱</div>
+          }
+          @if (state.fillMode()) {
+            <div class="fill-tip">✏️ 填寫模式：只能修改<b>綠色虛線</b>標示的欄位，版面已鎖定。</div>
+          }
+          <div class="panel-title">{{ state.fillMode() ? '待填欄位' : '大綱' }}</div>
           <div class="outline">
+            @if (state.fillMode() && outlineGroups().length === 0) {
+              <div class="empty-band">此表單沒有開放填寫的欄位，請聯絡樣板設計者。</div>
+            }
             @for (group of outlineGroups(); track group.name; let gi = $index) {
               <div class="band-name" [class.drop-target]="dropBand() === gi"
                 (dragover)="onBandDragOver($event, gi)" (dragleave)="dropBand.set(null)"
@@ -81,7 +97,7 @@ interface PaletteItem {
                   [class.drop-target]="dropTargetId() === item.el.id"
                   [class.node-hidden]="item.el.hidden"
                   [style.paddingLeft.px]="6 + item.depth * 16"
-                  [draggable]="!item.el.locked"
+                  [draggable]="!item.el.locked && !state.restricted()"
                   (dragstart)="onOutlineDragStart($event, item.el.id)"
                   (dragend)="clearOutlineDrag()"
                   (dragover)="onOutlineDragOver($event, item.el)"
@@ -90,12 +106,14 @@ interface PaletteItem {
                   (click)="revealEl(item.el.id)">
                   <span class="icon">{{ item.icon }}</span>
                   <span class="label">{{ item.label }}</span>
-                  <button class="del icon-hide" [class.on]="item.el.hidden" [title]="item.el.hidden ? '顯示' : '隱藏'"
-                    (click)="toggleHidden($event, item.el.id)">{{ item.el.hidden ? '🚫' : '👁' }}</button>
-                  <button class="del icon-lock" [class.on]="item.el.locked" [title]="item.el.locked ? '解鎖' : '鎖定'"
-                    (click)="toggleLocked($event, item.el.id)">🔒</button>
-                  <button class="del" title="複製" (click)="dupEl($event, item.el.id)">⧉</button>
-                  <button class="del" title="刪除" (click)="removeEl($event, item.el.id)">✕</button>
+                  @if (!state.restricted()) {
+                    <button class="del icon-hide" [class.on]="item.el.hidden" [title]="item.el.hidden ? '顯示' : '隱藏'"
+                      (click)="toggleHidden($event, item.el.id)">{{ item.el.hidden ? '🚫' : '👁' }}</button>
+                    <button class="del icon-lock" [class.on]="item.el.locked" [title]="item.el.locked ? '解鎖' : '鎖定'"
+                      (click)="toggleLocked($event, item.el.id)">🔒</button>
+                    <button class="del" title="複製" (click)="dupEl($event, item.el.id)">⧉</button>
+                    <button class="del" title="刪除" (click)="removeEl($event, item.el.id)">✕</button>
+                  }
                 </div>
               }
             }
@@ -130,16 +148,18 @@ interface PaletteItem {
                   <span class="navnum">{{ i + 1 }}</span>
                   <span class="navkind">{{ s.kind === 'flow' ? '▤' : '◽' }}</span>
                   <span class="navname">{{ s.name }}</span>
-                  @if (state.template().sections.length > 1) {
+                  @if (state.template().sections.length > 1 && !state.restricted()) {
                     <button class="navdel" title="刪除此節" (click)="removeSectionFromNav($event, s.id, s.name)">✕</button>
                   }
                 </div>
               }
             </div>
-            <div class="navadd">
-              <button (click)="state.addSection('flow')" title="新增內容節（有頁首/頁尾 band、自動分頁）">＋節</button>
-              <button (click)="state.addSection('single')" title="新增獨立頁（如封面/封底）">＋獨立頁</button>
-            </div>
+            @if (!state.restricted()) {
+              <div class="navadd">
+                <button (click)="state.addSection('flow')" title="新增內容節（有頁首/頁尾 band、自動分頁）">＋節</button>
+                <button (click)="state.addSection('single')" title="新增獨立頁（如封面/封底）">＋獨立頁</button>
+              </div>
+            }
           </div>
         </div>
 
@@ -147,7 +167,7 @@ interface PaletteItem {
         <main class="center">
           <div class="tabbar">
             <button [class.on]="tab() === 'design'" (click)="switchTab('design')">設計</button>
-            @if (!embedded) {
+            @if (!embedded && !state.restricted()) {
               <button [class.on]="tab() === 'json'" (click)="switchTab('json')">樣板JSON</button>
             }
             <button [class.on]="tab() === 'preview'" (click)="switchTab('preview')">預覽</button>
@@ -179,7 +199,7 @@ interface PaletteItem {
                 <button class="zbtn" (click)="zoomBy(0.1)">＋</button>
               </div>
             }
-            @if (!embedded) {
+            @if (!embedded && !state.restricted()) {
               <button class="tab-right" [class.on]="tab() === 'validation'" (click)="switchTab('validation')"
                 title="輸入資料驗證（schema）">✓ 驗證</button>
             }
@@ -203,11 +223,15 @@ interface PaletteItem {
         <!-- 右側：屬性 / 資料 -->
         @if (tab() === 'design') {
           <aside class="rpanel">
-            <div class="rtabs">
-              <button [class.on]="rightTab() === 'props'" (click)="rightTab.set('props')">屬性</button>
-              <button [class.on]="rightTab() === 'data'" (click)="rightTab.set('data')">資料</button>
-            </div>
-            @if (rightTab() === 'props') { <app-properties-panel /> } @else { <app-data-panel /> }
+            <!-- 受限模式不給「資料」分頁：拖 key 生成元件會被守衛擋掉（死 UI），
+                 而且它會把樣板所有資料綁定 key 攤給填單者看 -->
+            @if (!state.restricted()) {
+              <div class="rtabs">
+                <button [class.on]="rightTab() === 'props'" (click)="rightTab.set('props')">屬性</button>
+                <button [class.on]="rightTab() === 'data'" (click)="rightTab.set('data')">資料</button>
+              </div>
+            }
+            @if (rightTab() === 'props' || state.restricted()) { <app-properties-panel /> } @else { <app-data-panel /> }
           </aside>
         }
       </div>
@@ -231,6 +255,10 @@ interface PaletteItem {
     /* 左側欄 */
     .left { width: 190px; flex-shrink: 0; border-right: 1px solid #cfd6df; background: #f4f6f9;
       display: flex; flex-direction: column; overflow-y: auto; }
+    .viewonly { color: #94a3b8; font-size: 13px; padding: 6px 10px; border: 1px solid #475569;
+      border-radius: 6px; }
+    .fill-tip { margin: 10px 8px; padding: 8px 10px; background: #f0fdf4; border: 1px solid #bbf7d0;
+      border-radius: 8px; color: #15803d; font-size: 12px; line-height: 1.5; }
     .panel-title { font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: .06em;
       padding: 8px 10px 4px; text-transform: uppercase; }
     .palette { display: flex; flex-direction: column; padding: 0 8px 8px; gap: 3px; }
@@ -472,10 +500,23 @@ export class EditorPageComponent {
         }
       };
       for (const item of g.items) pushWithKids(item);
-      g.items = withChildren;
+      // 填寫模式：大綱＝「待填欄位清單」，只留改得到的（含有可填儲存格的表格也留，
+      // 否則表單型樣板的可填格全在表格裡、大綱會整個空掉）。空的 band 分組不顯示。
+      g.items = this.state.fillMode() ? withChildren.filter(i => this.hasFillable(i.el)) : withChildren;
     }
-    return groups;
+    return this.state.fillMode() ? groups.filter(g => g.items.length > 0) : groups;
   });
+
+  /** 該元素本身可填，或（表格）內含可填的 text 儲存格。 */
+  private hasFillable(el: TemplateElement): boolean {
+    // 只有 text 元素的 fillable 有效（與後端白名單一致）——否則改過型別的殘留
+    // fillable（例如 placeholder）會被列進待填清單，標籤還會把綁定 key 印出來
+    if (el.type === 'text' && el.fillable) return true;
+    if (el.type === 'table') {
+      return el.cells.some(row => row.some(c => c.kind === 'text' && c.fillable));
+    }
+    return false;
+  }
 
   private iconOf(el: TemplateElement): string {
     return ELEMENT_META[el.type].icon;
@@ -500,6 +541,7 @@ export class EditorPageComponent {
 
   private bridge = inject(HostBridgeService);
   private embedToken = inject(EmbedTokenService);
+  private embedCtx = inject(EmbedContextService);
 
   private fonts = inject(FontService);
 
@@ -562,6 +604,11 @@ export class EditorPageComponent {
 
   /** 載入字型與（既有樣板時）樣板內容。 */
   private loadInitial(id: string | null) {
+    // 先問後端本憑證的嵌入模式與能力（與後端強制同源），據此鎖 UI
+    void this.embedCtx.refresh().then(ctx => {
+      this.state.fillMode.set(ctx.mode === 'fill');
+      this.state.viewMode.set(ctx.mode === 'view');
+    });
     void this.fonts.refresh();
     if (id && id !== 'new') {
       this.api.getWithProject(id).then(({ doc, projectId }) => {
@@ -753,9 +800,25 @@ export class EditorPageComponent {
   }
 
   async save() {
+    if (this.state.viewMode()) return; // 唯讀模式沒有儲存
     this.saving.set(true);
     try {
       const t = this.state.template();
+      // 填寫模式：只送被標記可填的欄位值（走窄 API，後端只認這些）
+      if (this.state.fillMode() && t.id) {
+        const values = collectFillableValues(t);
+        if (Object.keys(values).length === 0) {
+          // 設計者沒開放任何欄位：講人話，不要把後端的「values 不可為空」丟給填單者
+          void this.modal.alert({ title: '沒有可填欄位', message: '這份表單目前沒有開放填寫的欄位，請聯絡樣板設計者。' });
+          return;
+        }
+        await this.api.patchValues(t.id, values);
+        // 不用 state.load()：那會清空 undo、取消選取、跳回第一節。
+        // 送出的就是畫面上的值，DB 已與畫面一致，只要把「未存」標記清掉。
+        this.state.dirty.set(false);
+        this.bridge.notify('template-saved', t.id);
+        return;
+      }
       const saved = t.id ? await this.api.update(t) : await this.api.create(t, this.newProjectId);
       this.state.load(saved);
       if (!t.id) {

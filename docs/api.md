@@ -19,6 +19,23 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 - 列樣板：user 依成員過濾、apikey 該專案、**embed 不可（403）**
 - adhoc render 預覽／assets／fonts／validate：三來源任一皆可
 
+## 速率限制
+
+會爆破、燒 CPU、製造列鎖爭用或會建資料的端點掛了令牌桶（`internal/httpapi/ratelimit.go`）。超限 → **429**「請求過於頻繁，請稍後再試」＋ `Retry-After`（秒）。
+
+| 端點 | 計數維度 | burst | 補充速率 |
+|---|---|--:|---|
+| `POST /api/auth/login` | 來源 IP | 20 | 1 次 / 6s |
+| `POST /api/templates/:id/render`、`POST /api/templates/render` | 身分 | 30 | 1 次 / 1s |
+| `PATCH /api/templates/:id/values` | **樣板 id** | 20 | 1 次 / 200ms |
+| `POST /api/embed-token` | 身分 | 30 | 1 次 / 2s |
+| `POST /api/assets`、`POST /api/fonts` | 身分 | 20 | 1 次 / 3s |
+
+- 「身分」= 登入使用者 id／API key 的專案／embed token 的 template，各自獨立：一個宿主打爆自己的額度不影響別人。
+- 填值以**樣板**為維度而非身分：爭用的是那一列的鎖，換 token 繞不過去。
+- 讀取類端點（清單、取樣板、取圖片/字型）不限流。
+- **單實例限定**：桶在記憶體內、隨 router 實例建立。多副本部署時每個副本各有一套，實際上限是副本數的倍數；要精確需改用共用計數器。
+
 ## 認證（控制台）
 
 | Method | Path | 說明 |
@@ -68,11 +85,13 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 
 | Method | Path | 說明 |
 |---|---|---|
-| POST | `/api/embed-token` | `Authorization: Bearer <API key>`；body `{templateId}` 換既有／`{}` 便利捷徑（在 key 的專案建空樣板＋回 token）→ `{token, templateId, expiresAt}` |
+| POST | `/api/embed-token` | `Authorization: Bearer <API key>`；body `{templateId, mode}` 換既有／`{mode}` 便利捷徑（在 key 的專案建空樣板＋回 token）→ `{token, templateId, mode, expiresAt}` |
+| GET | `/api/embed/context` | 目前憑證的嵌入模式與能力 `{kind, mode, templateId, capabilities}`（前端據此畫 UI，與後端強制同源）；非 embed 身分視同 design |
 
 - `templateId` 須屬 key 綁的專案，否則 403；不存在 404。
-- token 為短效 JWT（HS256，預設 30 分鐘），claims 綁 tenant/project/template。
+- token 為短效 JWT（HS256，預設 30 分鐘），claims 綁 tenant/project/template **與權限模式 mode**。
 - 需 API key 身分（session/embed token 打 → 401）。
+- **mode**（`design`｜`fill`｜`view`）是**宿主後端的政策決定**，不可由宿主前端傳入。**未帶 → design；不認得的值 → 400**（不做寬容解析，避免拼錯默默升權）。能力對照與 fillable 標記見 [embed.md](embed.md)。
 
 宿主整合完整流程見 [embed.md](embed.md)。
 
@@ -83,8 +102,11 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 | GET | `/api/templates` | 清單 `[{id, name, updatedAt}]` |
 | POST | `/api/templates` | 新建（body = 樣板 JSON；伺服器配 id）→ 回完整樣板。選填 `?projectId=<id>` 歸入該專案（見「專案」節），未帶落預設專案 |
 | GET | `/api/templates/:id` | 取得樣板 JSON（原樣）；回應帶 `X-Project-Id` header＝所屬專案（編輯器「返回」用，不放進 body 以保 raw passthrough） |
-| PUT | `/api/templates/:id` | 覆寫 → 回完整樣板 |
-| DELETE | `/api/templates/:id` | 刪除（204） |
+| PUT | `/api/templates/:id` | 覆寫 → 回完整樣板（embed 需 `design` 模式，否則 403） |
+| PATCH | `/api/templates/:id/values` | **填寫模式窄介面**：body `{"values":{"<elementId>":"新值","<tableId>#2,3":"新值"}}`，只覆寫被標記 `fillable` 的 text 元素／text 儲存格，其餘結構原地不動。未標記 → 403、找不到欄位/定址錯 → 400、樣板不存在 → 404 |
+
+**寫入的並行控制**：`PATCH /values` 是伺服器端的 read-modify-write，整段在單一交易內以 `SELECT … FOR UPDATE` 鎖住該列——否則設計者的 PUT 落在讀與寫之間會被整份覆寫回捲。`PUT` 的更新同樣進交易。兩者都設等鎖上限（`store.LockWaitTimeout`，預設 3s），**等不到鎖 → 409**「樣板正在被其他請求修改，請稍後再試」，不無界卡住。同一張樣板的併發寫入因此是序列化的：改**不同欄位**不會互相清掉，改**同一欄位**是 last-write-wins。設計者的 PUT 沒有版本檢查（無樂觀鎖），會覆蓋期間的填寫內容——方向上如此設計（設計者為權威）。
+| DELETE | `/api/templates/:id` | 刪除（204）；**embed token 一律 403**（要刪走控制台或 API key） |
 
 body 上限 10MB；非 JSON 物件 → 400「樣板 JSON 解析失敗（body 需為樣板 JSON 物件）」；找不到 → 404。
 

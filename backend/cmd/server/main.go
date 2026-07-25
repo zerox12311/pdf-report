@@ -56,15 +56,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// SESSION_SECRET 未設 → session cookie 用不安全的 dev 預設簽章、可被偽造。
-	// 資料端點已上鎖、認證即身分，正式部署（WEB_ROOT 非空 = 有 serve 前端）必須設定，否則拒啟動。
+	// SESSION_SECRET 同時簽 session cookie 與 embed token，未設就會退回原始碼裡的 dev 常數：
+	// 任何知道它的人可偽造 embed token 讀寫任意樣板（繞過專案授權）、偽造登入 session。
+	// **一律拒啟動**（不再只擋 WEB_ROOT 非空的部署；純 API 模式同樣是正式型態）。
 	webRoot := os.Getenv("WEB_ROOT")
 	sessionSecret := os.Getenv("SESSION_SECRET")
 	if sessionSecret == "" {
-		if webRoot != "" {
-			log.Fatal("SESSION_SECRET 未設定：正式部署必須設定（否則登入 session 可被偽造 → 全面淪陷）")
-		}
-		log.Printf("警告：SESSION_SECRET 未設定，session 使用不安全的 dev 預設；正式部署務必設定")
+		log.Fatal("SESSION_SECRET 未設定：必須設定（否則登入 session 與 embed token 可被偽造）。" +
+			`開發時可用：SESSION_SECRET=dev-secret`)
 	}
 
 	eng := engine.NewEngine(fontsDir, assets.EngineSource())

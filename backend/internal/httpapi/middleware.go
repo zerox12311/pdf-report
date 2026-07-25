@@ -43,6 +43,7 @@ type principal struct {
 	role       string // user
 	projectID  string // apikey（key 綁的專案）／embed（template 所屬專案）
 	templateID string // embed（鎖定的那張）
+	mode       string // embed（權限模式 design|fill|view，見 capability.go）
 }
 
 // setPrincipal 設身分，並塞相容用的 tenant/user/role 鍵。
@@ -114,7 +115,10 @@ func withAuth(users *store.UserStore, keys *store.APIKeyStore, secret string) gi
 				abortUnauthorized(c, "無效或過期的 token")
 				return
 			}
-			setPrincipal(c, principal{kind: principalEmbed, tenantID: claims.Tenant, projectID: claims.ProjectID, templateID: claims.TemplateID})
+			setPrincipal(c, principal{
+				kind: principalEmbed, tenantID: claims.Tenant, projectID: claims.ProjectID,
+				templateID: claims.TemplateID, mode: normalizeMode(claims.Mode),
+			})
 			c.Next()
 			return
 		}
@@ -211,7 +215,10 @@ func authorizeTemplate(c *gin.Context, projects *store.ProjectStore, tmplProject
 	case principalAPIKey:
 		return principalOf(c).projectID == tmplProjectID || forbidTemplate(c)
 	case principalEmbed:
-		return principalOf(c).templateID == templateID || forbidTemplate(c)
+		// 同時比對 template 與其所屬專案：對合法 token 恆真（mint 時已驗），
+		// 但能擋住偽造 token（須同時猜中兩個 id）與「樣板被搬到別的專案」後的殘留授權。
+		p := principalOf(c)
+		return (p.templateID == templateID && p.projectID == tmplProjectID) || forbidTemplate(c)
 	}
 	return forbidTemplate(c)
 }

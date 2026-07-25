@@ -105,6 +105,9 @@
     .editor-toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
     .editor-toolbar .tp-name { font-weight: 700; font-size: 14px; }
     .editor-toolbar .grow { flex: 1; }
+    .modes { display: flex; gap: 10px; font-size: 12.5px; color: var(--muted); align-items: center;
+      border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; }
+    .modes label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
     /* 編輯器高度：直接指定固定值（寬度由 grid 自動算）。要更高就改這個數字。 */
     iframe.editor { width: 100%; height: 760px; border: 0; display: block; border-radius: 0 0 14px 14px; background: #fff; }
     .placeholder { display: grid; place-items: center; height: 760px; color: var(--muted); font-size: 14px; text-align: center; }
@@ -198,6 +201,11 @@
               <button class="icon-btn" onclick="toggleList()" title="展開/收合報表列表">☰</button>
               <span class="tp-name" id="editorName">尚未選擇報表</span>
               <span class="grow"></span>
+              <div class="modes" title="開啟報表時要給哪種權限（正式環境由宿主後端依使用者角色決定）">
+                <label><input type="radio" name="mode" value="design" checked onchange="onModeChange()" /> 設計</label>
+                <label><input type="radio" name="mode" value="fill" onchange="onModeChange()" /> 填寫</label>
+                <label><input type="radio" name="mode" value="view" onchange="onModeChange()" /> 唯讀</label>
+              </div>
               <button class="btn ghost" id="pdfBtn" onclick="openPdfDrawer()" disabled>📄 產生 PDF</button>
             </div>
             <div id="editorHost">
@@ -305,8 +313,14 @@
     }
 
     // ---- 換 embed token ----
+    // mode 是**宿主後端**決定的政策（此 demo 為了展示放在畫面上；正式環境由後端依使用者角色決定）
+    function currentMode() {
+      const el = document.querySelector('input[name="mode"]:checked');
+      return el ? el.value : 'design';
+    }
+
     async function mintToken(templateId /* 省略 = 建新空的 */) {
-      const body = templateId ? JSON.stringify({ templateId }) : '{}';
+      const body = JSON.stringify(templateId ? { templateId, mode: currentMode() } : { mode: currentMode() });
       const r = await fetch(BASE + '/api/embed-token', {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + API_KEY, 'Content-Type': 'application/json' },
@@ -333,6 +347,11 @@
         mountEditor(id, res.token, name);
         loadReports(); // 更新選取高亮
       } catch (e) { toast(e.message); }
+    }
+
+    // 切換模式 → 用新模式重換 token 並重載 iframe（token 的 mode 是簽在裡面的，不能改）
+    function onModeChange() {
+      if (currentId) openReport(currentId, currentName);
     }
 
     // ---- 收合/展開「我的報表」列表（收起來編輯器就佔滿，看正常比例）----

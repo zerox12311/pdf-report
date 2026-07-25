@@ -136,6 +136,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                         [style.backgroundColor]="cell.fillColor || null"
                         [style.verticalAlign]="cell.vAlign || null"
                         [class.ph]="cell.kind === 'placeholder'"
+                        [class.cell-fillable]="cell.kind === 'text' && cell.fillable"
                         [class.cell-selected]="el.id === state.selectedId() && isCellSelected(r, c)"
                         [class.drop-cell]="(dropCell()?.r === r && dropCell()?.c === c) || isElementDropCell(el, r, c)"
                         (pointerdown)="onCellDown(el, r, c, $event)"
@@ -212,6 +213,8 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
     .text-box { width: 100%; height: 100%; overflow: hidden; white-space: pre-wrap; word-break: break-all;
       font-family: 'Noto Sans TC', sans-serif; user-select: none; box-sizing: border-box; }
     .ph { background: rgba(255, 224, 130, .45); outline: 1px dashed #d19a00; }
+    /* 可填儲存格（填寫模式可改）：與元素層級的 .fillable-mark 同色系 */
+    .cell-fillable { outline: 1.5px dashed #16a34a; outline-offset: -1px; background: rgba(22, 163, 74, .06); }
     .img-box { width: 100%; height: 100%; pointer-events: none; }
     .img-empty { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
       background: #f1f3f5; color: #999; font-size: 12px; border: 1px dashed #bbb; box-sizing: border-box; }
@@ -431,6 +434,8 @@ export class CanvasElementComponent {
   startSelfEdit(ev: Event) {
     ev.stopPropagation();
     const el = this.el();
+    // 受限模式（嵌入 fill/view）：只有被標記可填的 text 元素能編輯內容
+    if (!this.state.canEditElementContent(el)) return;
     if (el.id !== this.state.selectedId()) this.state.select(el.id);
     this.cancelEdit = false;
     this.selfEditing.set(true);
@@ -579,6 +584,8 @@ export class CanvasElementComponent {
   onCellDbl(el: TableElement, r: number, c: number, ev: Event) {
     ev.stopPropagation();
     ({ r, c } = this.resolveCellOrigin(el, r, c)); // 點到被合併蓋住的格 → 導向其主格
+    // 受限模式：只有被標記可填的 text 格能編輯（含 kind 檢查，避免改過格型的 fillable 殘留）
+    if (!this.state.canEditCell(el.cells[r]?.[c])) return;
     if (el.id !== this.state.selectedId()) this.state.select(el.id);
     this.state.selectedCell.set({ row: r, col: c });
     this.state.selectedCellRange.set(null);
@@ -604,11 +611,7 @@ export class CanvasElementComponent {
       this.cancelEdit = false;
       return;
     }
-    const cells = el.cells.map((row, ri) => row.map((cell, ci) => {
-      if (ri !== r || ci !== c) return cell;
-      return cell.kind === 'text' ? { ...cell, value } : { ...cell, key: value };
-    }));
-    this.state.patchElement(el.id, { cells } as Partial<TableElement>);
+    this.state.setCellContent(el.id, r, c, value);
   }
 
   /** 表格已選取時點儲存格 → 選中該格；Shift+點選 = 框出範圍（合併用） */
@@ -622,6 +625,13 @@ export class CanvasElementComponent {
     if (pe?.button === 2) return;
     pe?.stopPropagation(); // 不讓表格進入移動拖曳
     this.state.select(el.id);
+    // 受限模式（嵌入 fill/view）：只做單格選取。範圍選取的用途是批次改樣式／合併，
+    // 這裡都用不到；留著反而會讓「填一格」變成寫入整個範圍（洗掉其他格的值）。
+    if (this.state.restricted()) {
+      this.state.selectedCell.set({ row, col });
+      this.state.selectedCellRange.set(null);
+      return;
+    }
     const anchor = this.state.selectedCell();
     if (pe?.shiftKey && anchor) {
       this.state.selectedCellRange.set({ r1: anchor.row, c1: anchor.col, r2: row, c2: col });

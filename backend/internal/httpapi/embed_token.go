@@ -20,27 +20,30 @@ func resolveSecret(s string) string {
 	return s
 }
 
-// embedClaims embed token 的內容：綁租戶＋專案＋單一 template。
+// embedClaims embed token 的內容：綁租戶＋專案＋單一 template，並帶權限模式。
+// Mode 是「宿主後端換 token 時決定的政策」，放在簽章保護的 claim 裡 —— 前端無法竄改。
 type embedClaims struct {
 	Tenant     string `json:"ten"`
 	ProjectID  string `json:"pid"`
 	TemplateID string `json:"tid"`
+	Mode       string `json:"mod,omitempty"` // design|fill|view；空值 → design（向後相容舊 token）
 	jwt.RegisteredClaims
 }
 
 // signEmbedToken 簽一張 HS256 embed token（用 sessionSecret 當金鑰），存活 embedTokenTTL。
-func signEmbedToken(secret, tenant, projectID, templateID string) (token string, expiresAt time.Time, err error) {
+func signEmbedToken(secret, tenant, projectID, templateID, mode string) (token string, expiresAt time.Time, err error) {
 	expiresAt = time.Now().Add(embedTokenTTL)
-	token, err = signEmbedTokenExp(secret, tenant, projectID, templateID, expiresAt)
+	token, err = signEmbedTokenExp(secret, tenant, projectID, templateID, mode, expiresAt)
 	return token, expiresAt, err
 }
 
 // signEmbedTokenExp 指定到期時間簽 token（測試可傳過去時間造過期 token）。
-func signEmbedTokenExp(secret, tenant, projectID, templateID string, exp time.Time) (string, error) {
+func signEmbedTokenExp(secret, tenant, projectID, templateID, mode string, exp time.Time) (string, error) {
 	claims := embedClaims{
 		Tenant:     tenant,
 		ProjectID:  projectID,
 		TemplateID: templateID,
+		Mode:       normalizeMode(mode),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -58,7 +61,8 @@ func parseEmbedToken(tokenStr, secret string) (embedClaims, error) {
 			return nil, errors.New("unexpected signing method")
 		}
 		return []byte(resolveSecret(secret)), nil
-	}, jwt.WithValidMethods([]string{"HS256"}))
+		// exp 必填：撤銷機制完全依賴短 TTL，沒有 exp 的 token 等於永久有效
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil {
 		return embedClaims{}, err
 	}

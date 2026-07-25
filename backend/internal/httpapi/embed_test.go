@@ -143,7 +143,7 @@ func TestEmbedTokenFlow(t *testing.T) {
 // embed token 過期 → 401。
 func TestEmbedTokenExpired(t *testing.T) {
 	// 直接簽一張已過期的 token（繞過端點，用 newTestServer 的 "test-secret"）
-	expired, err := signEmbedTokenExp("test-secret", "default", "default", "sometemplate", time.Now().Add(-time.Hour))
+	expired, err := signEmbedTokenExp("test-secret", "default", "default", "sometemplate", modeDesign, time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

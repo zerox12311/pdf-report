@@ -854,4 +854,197 @@ describe('EditorStateService', () => {
     state.removeValidationField(0);
     expect(state.validation().fields.length).toBe(0);
   });
+  it('canEditElement：設計模式全可、填寫模式只有 fillable、唯讀一律否', () => {
+    const s = new EditorStateService();
+    const plain = { fillable: false } as { fillable?: boolean };
+    const open = { fillable: true } as { fillable?: boolean };
+
+    // 設計模式（預設）
+    expect(s.canEditElement(plain)).toBe(true);
+    expect(s.canEditElement(open)).toBe(true);
+    expect(s.restricted()).toBe(false);
+
+    // 填寫模式：只有被標記的可編輯
+    s.fillMode.set(true);
+    expect(s.restricted()).toBe(true);
+    expect(s.canEditElement(plain)).toBe(false);
+    expect(s.canEditElement(open)).toBe(true);
+    expect(s.canEditElement(null)).toBe(false);
+
+    // 唯讀：一律不可
+    s.fillMode.set(false);
+    s.viewMode.set(true);
+    expect(s.restricted()).toBe(true);
+    expect(s.canEditElement(open)).toBe(false);
+  });
+
+  describe('受限模式（嵌入 fill/view）的變更守衛', () => {
+    /** 建一張含可填文字＋不可填文字＋含可填格表格的樣板，回傳 state 與元素 id。 */
+    function setup() {
+      const s = new EditorStateService();
+      s.addElement(textEl({ content: '可改', fillable: true }));
+      const openId = s.selectedId()!;
+      s.addElement(textEl({ content: '鎖住' }));
+      const lockId = s.selectedId()!;
+      s.addElement({
+        type: 'table', x: 0, y: 200, width: 200, height: 40,
+        columnWidths: [100, 100], rowHeights: [20, 20],
+        borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 2,
+        cells: [
+          [{ kind: 'text', value: 'A', key: '', sample: '', align: 'left', bold: false, fillable: true },
+           { kind: 'text', value: 'B', key: '', sample: '', align: 'left', bold: false }],
+          [{ kind: 'text', value: 'C', key: '', sample: '', align: 'left', bold: false, fillable: true },
+           { kind: 'text', value: 'D', key: '', sample: '', align: 'left', bold: false }],
+        ],
+      } as Omit<TableElement, 'id'>);
+      const tableId = s.selectedId()!;
+      return { s, openId, lockId, tableId };
+    }
+    const contentOf = (s: EditorStateService, id: string) =>
+      (s.findElement(id) as TextElement).content;
+    const cellsOf = (s: EditorStateService, id: string) =>
+      (s.findElement(id) as TableElement).cells;
+
+    it('填寫模式：可改「可填文字」的 content，改不了不可填的', () => {
+      const { s, openId, lockId } = setup();
+      s.fillMode.set(true);
+      s.patchElement(openId, { content: '新值' });
+      s.patchElement(lockId, { content: '駭' });
+      expect(contentOf(s, openId)).toBe('新值');
+      expect(contentOf(s, lockId)).toBe('鎖住');
+    });
+
+    it('填寫模式：即使是可填元素，也只放行 content（夾帶版面欄位一律擋）', () => {
+      const { s, openId } = setup();
+      s.fillMode.set(true);
+      s.patchElement(openId, { content: '新值', x: 999 } as Partial<TextElement>);
+      expect(contentOf(s, openId)).toBe('可改');
+      expect(s.findElement(openId)!.x).toBe(10);
+    });
+
+    it('填寫模式：不能改 fillable 自己（提權）', () => {
+      const { s, lockId } = setup();
+      s.fillMode.set(true);
+      s.patchElement(lockId, { fillable: true } as Partial<TextElement>);
+      expect(s.findElement(lockId)!.fillable).toBeFalsy();
+    });
+
+    it('填寫模式：結構性操作全部擋掉（新增／刪除／複製／圖層／節）', () => {
+      const { s, openId } = setup();
+      const before = s.template().sections[0].elements.length;
+      s.fillMode.set(true);
+      s.addElement(textEl());
+      s.removeElement(openId);
+      s.duplicateElement(openId);
+      s.moveLayer(openId, 'front');
+      s.toggleLocked(openId);
+      s.toggleHidden(openId);
+      s.addSection('flow');
+      s.patchPage({ width: 100 });
+      s.setName('改名');
+      expect(s.template().sections[0].elements.length).toBe(before);
+      expect(s.template().sections.length).toBe(1);
+      expect(s.findElement(openId)!.locked).toBeFalsy();
+      expect(s.template().page.width).not.toBe(100);
+    });
+
+    it('填寫模式：setCellContent 只寫指定那一格（不受選取範圍影響）', () => {
+      const { s, tableId } = setup();
+      s.fillMode.set(true);
+      // 故意造出「多格選取範圍」——單格寫入不該被它影響
+      s.selectedCell.set({ row: 0, col: 0 });
+      s.selectedCellRange.set({ r1: 0, c1: 0, r2: 1, c2: 0 });
+      s.setCellContent(tableId, 0, 0, '只改這格');
+      const cells = cellsOf(s, tableId);
+      expect(cells[0][0].value).toBe('只改這格');
+      expect(cells[1][0].value).toBe('C'); // 同範圍內的另一格不可被波及
+    });
+
+    it('填寫模式：不可填的儲存格改不動', () => {
+      const { s, tableId } = setup();
+      s.fillMode.set(true);
+      s.setCellContent(tableId, 0, 1, '駭');
+      expect(cellsOf(s, tableId)[0][1].value).toBe('B');
+    });
+
+    it('填寫模式：patchSelectedCells 只有「整個範圍都可填且只改 value」才放行', () => {
+      const { s, tableId } = setup();
+      s.fillMode.set(true);
+      s.select(tableId);
+      // 範圍含不可填格（0,1）→ 擋
+      s.selectedCell.set({ row: 0, col: 0 });
+      s.selectedCellRange.set({ r1: 0, c1: 0, r2: 0, c2: 1 });
+      s.patchSelectedCells(tableId, { value: '駭' });
+      expect(cellsOf(s, tableId)[0][0].value).toBe('A');
+      // 改樣式（非 value）→ 擋
+      s.selectedCellRange.set(null);
+      s.selectedCell.set({ row: 0, col: 0 });
+      s.patchSelectedCells(tableId, { bold: true });
+      expect(cellsOf(s, tableId)[0][0].bold).toBe(false);
+    });
+
+    it('填寫模式：改過格型的 fillable 殘留不可編輯（只認 kind=text）', () => {
+      const { s, tableId } = setup();
+      // 模擬「設計者先勾可填、後把格子改成資料欄位」——fillable 會殘留
+      const t = s.findElement(tableId) as TableElement;
+      const cells = t.cells.map(r => r.map(c => ({ ...c })));
+      cells[0][0] = { ...cells[0][0], kind: 'placeholder', key: 'secret.key', fillable: true };
+      s.patchElement(tableId, { cells } as Partial<TableElement>);
+      s.fillMode.set(true);
+
+      expect(s.canEditCell(cellsOf(s, tableId)[0][0])).toBe(false);
+      s.setCellContent(tableId, 0, 0, '駭');
+      expect(cellsOf(s, tableId)[0][0].key).toBe('secret.key'); // 綁定 key 不可被覆寫
+    });
+
+    it('填寫模式：canEditElementContent 只放行 text 元素（非 text 即使標了 fillable 也不行）', () => {
+      const s = new EditorStateService();
+      s.addElement({
+        type: 'barcode', x: 0, y: 0, width: 80, height: 30,
+        symbology: 'code128', content: 'ABC', key: '', sample: '', showText: false, fillable: true,
+      } as never);
+      const id = s.selectedId()!;
+      s.fillMode.set(true);
+      expect(s.canEditElementContent(s.findElement(id))).toBe(false);
+      expect(s.canEditElementContent(null)).toBe(false);
+    });
+
+    it('唯讀模式：連可填欄位的內容都改不了', () => {
+      const { s, openId, tableId } = setup();
+      s.viewMode.set(true);
+      s.patchElement(openId, { content: '駭' });
+      s.setCellContent(tableId, 0, 0, '駭');
+      expect(contentOf(s, openId)).toBe('可改');
+      expect(cellsOf(s, tableId)[0][0].value).toBe('A');
+    });
+
+    it('受限模式不開右鍵選單', () => {
+      const { s } = setup();
+      s.fillMode.set(true);
+      s.openContextMenu(10, 10, [{ label: '刪除', run: () => {} }]);
+      expect(s.contextMenu()).toBeNull();
+    });
+
+    it('設計模式：任何儲存格都能編輯（canEditCell 不可誤擋 placeholder 格）', () => {
+      const { s, tableId } = setup();
+      const t = s.findElement(tableId) as TableElement;
+      const cells = t.cells.map(r => r.map(c => ({ ...c })));
+      cells[0][1] = { ...cells[0][1], kind: 'placeholder', key: 'cust.name' };
+      s.patchElement(tableId, { cells } as Partial<TableElement>);
+      // 設計模式下 text 與 placeholder 格都可編輯（畫布雙擊走這個判定）
+      expect(s.canEditCell(cellsOf(s, tableId)[0][0])).toBe(true);
+      expect(s.canEditCell(cellsOf(s, tableId)[0][1])).toBe(true);
+      expect(s.canEditCell(null)).toBe(false);
+    });
+
+    it('設計模式不受影響（守衛只作用於受限模式）', () => {
+      const { s, openId, lockId, tableId } = setup();
+      s.patchElement(lockId, { content: '設計者可改' });
+      s.patchElement(openId, { x: 50 } as Partial<TextElement>);
+      s.setCellContent(tableId, 0, 1, '設計者可改格');
+      expect(contentOf(s, lockId)).toBe('設計者可改');
+      expect(s.findElement(openId)!.x).toBe(50);
+      expect(cellsOf(s, tableId)[0][1].value).toBe('設計者可改格');
+    });
+  });
 });

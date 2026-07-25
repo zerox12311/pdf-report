@@ -4,6 +4,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,11 +15,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"pdftemplate/internal/db"
 )
+
+// ErrLocked 等不到列鎖（同一張樣板正被另一個寫入交易持有）。呼叫端應回 409 讓客戶端重試，
+// 而不是讓請求無限期卡著——「渲染錯誤不靜默」同樣適用於寫入路徑。
+var ErrLocked = errors.New("樣板正在被其他請求修改，請稍後再試")
+
+// LockWaitTimeout 交易內等列鎖的上限。填寫模式的 PATCH 會序列化同一張樣板的寫入，
+// 設計者的存檔不該因此無界等待。var 而非 const：測試調短它才不必真的等 3 秒。
+var LockWaitTimeout = "3s"
+
+// beginLocked 開一段有等鎖上限的交易前置：SET LOCAL 只在本交易有效，不污染連線池裡的連線。
+func beginLocked(tx *gorm.DB) error {
+	return tx.Exec("SET LOCAL lock_timeout TO '" + LockWaitTimeout + "'").Error
+}
+
+// lockedAs 把 Postgres 的 lock_timeout（SQLSTATE 55P03）轉成 ErrLocked，其餘原樣傳回。
+func lockedAs(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+		return ErrLocked
+	}
+	return err
+}
 
 // writeFileAtomic 先寫同目錄 temp 檔再 rename（同一 filesystem 的 rename 是原子的），
 // 避免讀取端看到寫到一半的檔案。
@@ -86,10 +111,8 @@ func NewTemplateStore(g *gorm.DB) *TemplateStore {
 // 數字用 json.Number 保留原始字面（passthrough 不損毀精度）。
 // projectID 為所屬專案（空 → DefaultProjectID）；僅在建立時寫入，更新時不動既有專案歸屬。
 func (s *TemplateStore) Save(tenantID, projectID string, raw []byte, forceID string) (string, []byte, error) {
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
-	dec.UseNumber()
-	var doc map[string]any
-	if err := dec.Decode(&doc); err != nil {
+	doc, err := DecodeDoc(raw)
+	if err != nil {
 		return "", nil, errors.New("樣板 JSON 解析失敗（body 需為樣板 JSON 物件）")
 	}
 	if projectID == "" {
@@ -110,23 +133,90 @@ func (s *TemplateStore) Save(tenantID, projectID string, raw []byte, forceID str
 
 	// upsert by (id, tenant)：既有 → 只更新 name/doc/updated_at（保留原 project_id、created_at）；
 	// 不存在 → 建立。改用明確 find → Updates/Create（FirstOrCreate+Assign 在 found 分支不會發 UPDATE，會漏存）。
-	var existing db.Template
-	findErr := s.g.Select("id").Where("id = ? AND tenant_id = ?", id, tenantID).First(&existing).Error
-	switch {
-	case findErr == nil:
-		if err := s.g.Model(&db.Template{}).Where("id = ? AND tenant_id = ?", id, tenantID).
-			Updates(map[string]any{"name": name, "doc": datatypes.JSON(out), "updated_at": now}).Error; err != nil {
-			return "", nil, err
+	// 整段包在交易內並設等鎖上限：這個 UPDATE 會撞上 PatchDoc 持有的列鎖，等不到就回 ErrLocked（409），
+	// 不讓設計者的存檔無界卡住。
+	err = s.g.Transaction(func(tx *gorm.DB) error {
+		if err := beginLocked(tx); err != nil {
+			return err
 		}
-	case errors.Is(findErr, gorm.ErrRecordNotFound):
-		row := db.Template{ID: id, TenantID: tenantID, ProjectID: projectID, Name: name, Doc: datatypes.JSON(out), CreatedAt: now, UpdatedAt: now}
-		if err := s.g.Create(&row).Error; err != nil {
-			return "", nil, err
+		var existing db.Template
+		findErr := tx.Select("id").Where("id = ? AND tenant_id = ?", id, tenantID).First(&existing).Error
+		switch {
+		case findErr == nil:
+			return lockedAs(tx.Model(&db.Template{}).Where("id = ? AND tenant_id = ?", id, tenantID).
+				Updates(map[string]any{"name": name, "doc": datatypes.JSON(out), "updated_at": now}).Error)
+		case errors.Is(findErr, gorm.ErrRecordNotFound):
+			row := db.Template{ID: id, TenantID: tenantID, ProjectID: projectID, Name: name, Doc: datatypes.JSON(out), CreatedAt: now, UpdatedAt: now}
+			return lockedAs(tx.Create(&row).Error)
+		default:
+			return lockedAs(findErr)
 		}
-	default:
-		return "", nil, findErr
+	})
+	if err != nil {
+		return "", nil, err
 	}
 	return id, out, nil
+}
+
+// PatchDoc 在**單一交易內**讀取→套用→寫回，並以 SELECT … FOR UPDATE 鎖住該列。
+//
+// 為什麼需要：填寫模式的 PATCH /values 是伺服器端的 read-modify-write（讀出整份 doc、
+// 改一個字串、整份寫回）。沒有鎖的話，設計者的 PUT 只要落在讀與寫之間就會被整份覆寫
+// 回捲 —— 設計者收到 200 但改動消失，甚至「剛撤銷的 fillable」會被還原（等於收不回權限）。
+//
+// mutate 回傳的錯誤原樣往外傳（呼叫端據此分類 403/400），此時交易 rollback、不寫入。
+func (s *TemplateStore) PatchDoc(tenantID, id string, mutate func(doc map[string]any) error) ([]byte, error) {
+	if !SafeID(id) {
+		return nil, os.ErrNotExist
+	}
+	var out []byte
+	err := s.g.Transaction(func(tx *gorm.DB) error {
+		if err := beginLocked(tx); err != nil {
+			return err
+		}
+		var row db.Template
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).First(&row).Error; err != nil {
+			return notFoundAs(lockedAs(err))
+		}
+		doc, err := DecodeDoc(row.Doc)
+		if err != nil {
+			return err
+		}
+		if err := mutate(doc); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		doc["id"] = id
+		doc["updatedAt"] = now.Format(time.RFC3339)
+		raw, err := json.Marshal(doc)
+		if err != nil {
+			return err
+		}
+		// 只更新內容與時間：name/project_id 不由填值路徑改動
+		if err := tx.Model(&db.Template{}).Where("id = ? AND tenant_id = ?", id, tenantID).
+			Updates(map[string]any{"doc": datatypes.JSON(raw), "updated_at": now}).Error; err != nil {
+			return err
+		}
+		out = raw
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DecodeDoc 解析樣板 JSON 成 map；數字用 json.Number 保留原始字面（金額不因浮點失真）。
+// 儲存與填值路徑共用這一份——之前有三份相同實作，任一份漏掉 UseNumber 都不會被測試抓到。
+func DecodeDoc(raw []byte) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
 }
 
 func (s *TemplateStore) Get(tenantID, id string) ([]byte, error) {

@@ -86,6 +86,11 @@ export class TemplateApiService {
     return this.run(firstValueFrom(this.http.put<TemplateDoc>(`/api/templates/${doc.id}`, doc)));
   }
 
+  /** 填寫模式儲存：只送被標記可填的欄位值（後端只認這些，其餘結構改不到）。 */
+  patchValues(id: string, values: Record<string, string>): Promise<TemplateDoc> {
+    return this.run(firstValueFrom(this.http.patch<TemplateDoc>(`/api/templates/${id}/values`, { values })));
+  }
+
   delete(id: string): Promise<void> {
     return this.run(firstValueFrom(this.http.delete<void>(`/api/templates/${id}`)));
   }

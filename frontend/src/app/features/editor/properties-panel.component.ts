@@ -17,7 +17,31 @@ import { ScrubDirective } from './scrub.directive';
   imports: [FormsModule, TextStyleFormComponent, PagePropertiesComponent, ScrubDirective],
   template: `
     <div class="panel">
-      @if (state.selected(); as el) {
+      <!-- 受限模式（嵌入 fill/view）：屬性面板只留「填內容」。
+           版面/樣式/頁面（紙張、方向、邊界、浮水印）一律不顯示 —— 這些改了會毀掉整份版面配置，
+           後端與 state chokepoint 本來就會擋，這裡不顯示才不會讓人白拖半天。 -->
+      @if (state.restricted()) {
+        @if (state.selected(); as el) {
+          @if (fillEditableCell(el); as cell) {
+            <h3>填寫欄位 <span class="type-tag">儲存格</span></h3>
+            <label class="full">內容
+              <!-- 走單格通道：用 patchSelectedCells 會把整個選取範圍一起覆寫，洗掉其他格的值 -->
+              <textarea rows="3" [ngModel]="cell.value" (ngModelChange)="setFillCell(el, $event)"></textarea>
+            </label>
+          } @else if (el.type === 'text' && state.canEditElementContent(el)) {
+            <h3>填寫欄位 <span class="type-tag">文字</span></h3>
+            <label class="full">內容
+              <textarea rows="4" [ngModel]="el.content" (ngModelChange)="patch(el, { content: $event })"></textarea>
+            </label>
+          } @else {
+            <div class="hint">此欄位不開放修改。</div>
+          }
+        } @else {
+          <div class="hint">
+            {{ state.viewMode() ? '唯讀檢視：內容不可修改。' : '點選畫布上綠色虛線標示的欄位即可填寫。' }}
+          </div>
+        }
+      } @else if (state.selected(); as el) {
         <h3>屬性 <span class="type-tag">{{ typeName(el.type) }}</span>
           <span class="band-tag" [title]="'依 Y 座標判定；移動元素跨過虛線會換區'">{{ bandOf(el) }}</span></h3>
 
@@ -44,6 +68,12 @@ import { ScrubDirective } from './scrub.directive';
               <textarea rows="3" [ngModel]="el.content" (ngModelChange)="patch(el, { content: $event })"></textarea>
             </label>
             <div class="hint" ngNonBindable>可混排資料：<b>{{customer.name}}</b>、<b>{{total|comma}}</b>（格式：comma/twUpper/rocDate/rocDateLong）、<b>{{$page}}</b>/<b>{{$sum(items.amount)}}</b> 等引擎 key 皆可。</div>
+            <!-- 這裡已在「非受限」分支內（見上方 @if (state.restricted())），不需再判斷一次 -->
+            <label class="chk full">
+              <input type="checkbox" [ngModel]="!!el.fillable" (ngModelChange)="patchAllSelected(el, { fillable: $event })" />
+              允許在<b>填寫模式</b>修改
+            </label>
+            <div class="hint">勾選後，嵌入的填寫模式（mode=fill）使用者只能改這些欄位的文字，其餘一律動不了（後端強制）。多選時可一次勾起來。</div>
             <app-text-style-form [el]="el" />
           }
           @case ('placeholder') {
@@ -353,6 +383,11 @@ import { ScrubDirective } from './scrub.directive';
                     <div class="hint">也可以直接把元件盤的「圖片」拖到儲存格上。key 綁定時渲染資料的值需為圖片 URL（重複列每列可不同圖）。圖片以等比縮放置入格內。</div>
                   } @else if (cell.kind === 'text') {
                     <label class="full">文字 <input [ngModel]="cell.value" (ngModelChange)="patchCell(el, { value: $event })" /></label>
+                    <label class="chk full">
+                      <input type="checkbox" [ngModel]="!!cell.fillable"
+                        (ngModelChange)="patchCellStyle(el, { fillable: $event || undefined })" />
+                      允許在<b>填寫模式</b>修改此格
+                    </label>
                   } @else {
                     <label class="full">key <input [ngModel]="cell.key" (ngModelChange)="patchCell(el, { key: $event })" placeholder="例：items[0].name" /></label>
                     <div class="hint">重複列內用相對路徑（name、qty）；序號 $row；小計 $gsum(欄位)/$gcount；總計 $sum(items.欄位)。</div>
@@ -539,6 +574,10 @@ import { ScrubDirective } from './scrub.directive';
     .chip { width: 56px !important; }
     .cell-editor { border: 1px solid #dbe3f5; background: #eef3ff; border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
     .hint { color: #999; font-size: 12px; }
+    /* 可填標記勾選（填寫模式權限）：綠色呼應畫布上的可填標示 */
+    .chk { display: flex; flex-direction: row; align-items: center; gap: 6px; cursor: pointer;
+      background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 6px 8px; color: #15803d; }
+    .chk input { width: auto; margin: 0; }
     .actions { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
     .action { background: #e2e8f0; color: #1e293b; border: none; border-radius: 6px; padding: 8px; cursor: pointer; }
     .action:hover { background: #cbd5e1; }
@@ -581,6 +620,32 @@ export class PropertiesPanelComponent {
 
   patch(el: TemplateElement, patch: ElementPatch) {
     this.state.patchElement(el.id, patch);
+  }
+
+  /**
+   * 受限模式用：目前選取的儲存格若是「可填的 text 格」就回傳它，否則 null。
+   * 有選取範圍（多格）時一律不給編輯 —— 否則面板只顯示錨點的值，打字卻會影響其他格。
+   */
+  fillEditableCell(el: TemplateElement): TableCell | null {
+    if (el.type !== 'table' || this.state.viewMode()) return null;
+    if (this.state.selectedCellRange()) return null;
+    const sel = this.state.selectedCell();
+    const cell = sel ? el.cells[sel.row]?.[sel.col] : null;
+    return this.state.canEditCell(cell) ? cell : null;
+  }
+
+  /** 受限模式填寫儲存格：只寫目前選取的那一格。 */
+  setFillCell(el: TemplateElement, value: string) {
+    const sel = this.state.selectedCell();
+    if (!sel) return;
+    this.state.setCellContent(el.id, sel.row, sel.col, value);
+  }
+
+  /** 套用到目前所有選取的元素（多選時批次設定，例如一次把數個文字標成可填）。 */
+  patchAllSelected(el: TemplateElement, patch: ElementPatch) {
+    const ids = this.state.selectedIds();
+    const targets = ids.length > 1 && ids.includes(el.id) ? ids : [el.id];
+    targets.forEach(id => this.state.patchElement(id, patch));
   }
 
   /** 寬/高 scrub：表格的寬高是欄寬/列高的衍生值，不直接改 */

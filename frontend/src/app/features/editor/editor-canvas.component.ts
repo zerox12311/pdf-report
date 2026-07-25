@@ -158,7 +158,8 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                       >
                         <app-canvas-element [el]="gc" />
                         @if (gc.locked) { <div class="lock-badge" title="已鎖定">🔒</div> }
-                        @if (gc.id === state.selectedId()) {
+                        @if (showsFillable(gc)) { <div class="fillable-mark" title="填寫模式可修改此欄位"></div> }
+                        @if (gc.id === state.selectedId() && !state.restricted()) {
                           <div class="resize-handle" (pointerdown)="onPointerDown($event, gc, 'resize', child, 'se')"></div>
                           <div class="resize-e" (pointerdown)="onPointerDown($event, gc, 'resize', child, 'e')"></div>
                           <div class="resize-s" (pointerdown)="onPointerDown($event, gc, 'resize', child, 's')"></div>
@@ -169,7 +170,8 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                     <app-canvas-element [el]="child" />
                   }
                   @if (child.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
-                  @if (child.id === state.selectedId()) {
+                  @if (showsFillable(child)) { <div class="fillable-mark" title="填寫模式可修改此欄位"></div> }
+                  @if (child.id === state.selectedId() && !state.restricted()) {
                     <div class="resize-handle" (pointerdown)="onPointerDown($event, child, 'resize', el, 'se')"></div>
                     <div class="resize-e" (pointerdown)="onPointerDown($event, child, 'resize', el, 'e')"></div>
                     <div class="resize-s" (pointerdown)="onPointerDown($event, child, 'resize', el, 's')"></div>
@@ -184,16 +186,18 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
               <app-canvas-element [el]="el" />
             }
             @if (el.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
+            <!-- 可填標示：設計者一眼看出哪些欄位開放給填寫模式；填寫模式下也用它標出可改處 -->
+            @if (showsFillable(el)) { <div class="fillable-mark" title="填寫模式可修改此欄位"></div> }
             <!-- 圓角把手（Figma 式）：矩形選取時四角各一，拖曳調整（四角一起變） -->
             @if (el.type === 'rect' && (el.shape ?? 'rect') === 'rect' && el.id === state.selectedId()
-                 && state.selectedIds().length <= 1 && !el.locked) {
+                 && state.selectedIds().length <= 1 && !el.locked && !state.restricted()) {
               @for (corner of cornerHandles(el); track corner.key) {
                 <div class="radius-handle" [style.left.px]="corner.x" [style.top.px]="corner.y"
                   [title]="'拖曳調整圓角（目前 ' + corner.r + ' pt）'"
                   (pointerdown)="onRadiusDown($event, el, corner.key)"></div>
               }
             }
-            @if (el.id === state.selectedId() && state.selectedIds().length <= 1) {
+            @if (el.id === state.selectedId() && state.selectedIds().length <= 1 && !state.restricted()) {
               <!-- 旋轉感應區（Figma 式）：四角外側的透明區，hover 顯示旋轉游標、拖曳繞中心旋轉（Shift 吸附 15°）；不顯示常駐按鈕 -->
               <div class="rot-zone rz-tl" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
               <div class="rot-zone rz-tr" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
@@ -273,6 +277,9 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
       line-height: 1; padding: 1px 2px; background: #fff7ed; border: 1px solid #ea580c;
       border-radius: 4px; opacity: .85; pointer-events: none; }
     .el.el-locked:hover .lock-badge { opacity: 1; }
+    /* 可填欄位標示（填寫模式可改）：綠色虛線框，不吃事件、不影響版面 */
+    .fillable-mark { position: absolute; inset: -2px; z-index: 4; pointer-events: none;
+      border: 1.5px dashed #16a34a; border-radius: 3px; }
     .el.multi { outline: 1.5px solid #7c3aed; }
     .marquee { position: absolute; z-index: 30; pointer-events: none;
       border: 1px solid #7c3aed; background: rgba(124, 58, 237, .1); }
@@ -394,6 +401,15 @@ export class EditorCanvasComponent {
 
   elHeight(el: TemplateElement): number {
     return el.type === 'line' && Math.abs(el.height) < 4 ? 4 : el.height;
+  }
+
+  /**
+   * 是否顯示「可填」綠框。必須跟後端白名單同條件（只有 text 元素能填），
+   * 否則殘留 fillable 的非 text 元素（例如從 JSON 分頁改過 type）會標成可填，
+   * 使用者點下去卻只拿到 403。
+   */
+  showsFillable(el: TemplateElement): boolean {
+    return !!el.fillable && el.type === 'text';
   }
 
   constructor() {
@@ -890,6 +906,16 @@ export class EditorCanvasComponent {
   onPointerDown(e: PointerEvent, el: TemplateElement, mode: 'move' | 'resize', parent: ChildHostElement | null = null, dir: 'se' | 'e' | 's' = 'se') {
     // 鎖定元素：畫布上完全穿透（不選/不拖），只能從大綱管理；事件冒泡到畫布空白 → 取消選取
     if (el.locked) return;
+    // 受限模式（嵌入 fill/view）：不可動版面。填寫模式只讓可填欄位「被選取」以便編輯內容，
+    // 其餘元素完全穿透；縮放一律不給（真正的擋在後端，這裡只是體驗）。
+    if (this.state.restricted()) {
+      if (mode === 'resize' || !this.state.canEditElement(el)) return;
+      e.stopPropagation();
+      e.preventDefault();
+      this.elementPicked.emit();
+      this.state.select(el.id);
+      return;
+    }
     e.stopPropagation();
     e.preventDefault();
     this.elementPicked.emit(); // 使用者實際點選畫布元素 → 父層切回「屬性」分頁

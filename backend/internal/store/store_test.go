@@ -1,10 +1,18 @@
 package store
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"pdftemplate/internal/db"
 	"pdftemplate/internal/testdb"
@@ -157,5 +165,201 @@ func TestImportLegacy(t *testing.T) {
 	}
 	if l, _ := fonts.List(db.DefaultTenantID); len(l) != 1 {
 		t.Error("重跑不應重複匯入")
+	}
+}
+
+func TestPatchDocDB(t *testing.T) {
+	g := testdb.Open(t)
+	s := NewTemplateStore(g)
+	const tid = db.DefaultTenantID
+
+	id, _, err := s.Save(tid, "", []byte(`{"name":"n","v":1,"keep":{"deep":"x"}}`), "")
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// 套用成功：只動指定欄位，其餘（含巢狀）原樣保留
+	out, err := s.PatchDoc(tid, id, func(doc map[string]any) error {
+		doc["name"] = "patched"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	if !strings.Contains(string(out), `"patched"`) || !strings.Contains(string(out), `"deep":"x"`) {
+		t.Errorf("patch result: %s", out)
+	}
+	back, _ := s.Get(tid, id)
+	if !strings.Contains(string(back), `"patched"`) {
+		t.Errorf("未落 DB: %s", back)
+	}
+
+	// mutate 回錯 → 交易 rollback，DB 不變（錯誤原樣傳回供 handler 分類）
+	sentinel := errors.New("nope")
+	if _, err := s.PatchDoc(tid, id, func(doc map[string]any) error {
+		doc["name"] = "should-not-persist"
+		return sentinel
+	}); !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want sentinel", err)
+	}
+	back, _ = s.Get(tid, id)
+	if strings.Contains(string(back), "should-not-persist") {
+		t.Error("mutate 失敗時不該寫入")
+	}
+
+	// 不存在 / 不合法 id → os.ErrNotExist
+	for _, bad := range []string{"ghost", "a/b"} {
+		if _, err := s.PatchDoc(tid, bad, func(map[string]any) error { return nil }); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("PatchDoc(%q) = %v, want ErrNotExist", bad, err)
+		}
+	}
+
+	// 並行 PatchDoc：列鎖序列化，每筆都不可遺失（無鎖時後者會覆蓋前者）
+	id2, _, _ := s.Save(tid, "", []byte(`{"name":"c","n":0}`), "")
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(k int) {
+			defer wg.Done()
+			_, _ = s.PatchDoc(tid, id2, func(doc map[string]any) error {
+				doc["f"+strconv.Itoa(k)] = "v"
+				return nil
+			})
+		}(i)
+	}
+	wg.Wait()
+	final, _ := s.Get(tid, id2)
+	doc, err := DecodeDoc(final)
+	if err != nil {
+		t.Fatalf("decode final: %v", err)
+	}
+	for i := 0; i < 8; i++ {
+		if doc["f"+strconv.Itoa(i)] != "v" {
+			t.Errorf("並行寫入遺失 f%d：%s", i, final)
+		}
+	}
+}
+
+// TestPatchDocLockTimeout 等不到列鎖 → ErrLocked（而不是無限期卡住）。
+// 沒有這個上限的話，填寫者持續 PATCH 會讓設計者的存檔一直排隊。
+func TestPatchDocLockTimeout(t *testing.T) {
+	g := testdb.Open(t)
+	s := NewTemplateStore(g)
+	const tid = db.DefaultTenantID
+
+	id, _, err := s.Save(tid, "", []byte(`{"name":"n"}`), "")
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	old := LockWaitTimeout
+	LockWaitTimeout = "150ms"
+	defer func() { LockWaitTimeout = old }()
+
+	// 另一個交易先抓住該列的鎖並持有，直到本測試放行
+	held := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = g.Transaction(func(tx *gorm.DB) error {
+			var row db.Template
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND tenant_id = ?", id, tid).First(&row).Error; err != nil {
+				return err
+			}
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+
+	start := time.Now()
+	_, err = s.PatchDoc(tid, id, func(doc map[string]any) error {
+		doc["name"] = "blocked"
+		return nil
+	})
+	elapsed := time.Since(start)
+	close(release)
+	<-done
+
+	if !errors.Is(err, ErrLocked) {
+		t.Fatalf("等鎖逾時應回 ErrLocked，得到 %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("等太久（%v）：lock_timeout 未生效", elapsed)
+	}
+	// 逾時的那次不得留下任何寫入
+	back, _ := s.Get(tid, id)
+	if strings.Contains(string(back), "blocked") {
+		t.Errorf("逾時仍寫入: %s", back)
+	}
+
+	// 鎖放掉後同樣的呼叫要成功（桶/連線沒被逾時弄壞）
+	if _, err := s.PatchDoc(tid, id, func(doc map[string]any) error {
+		doc["name"] = "after"
+		return nil
+	}); err != nil {
+		t.Fatalf("鎖釋放後仍失敗: %v", err)
+	}
+}
+
+// TestSaveLockTimeout 設計者的存檔撞上填值持有的列鎖時，也是回 ErrLocked（→ 409），不無界等待。
+func TestSaveLockTimeout(t *testing.T) {
+	g := testdb.Open(t)
+	s := NewTemplateStore(g)
+	const tid = db.DefaultTenantID
+
+	id, _, err := s.Save(tid, "", []byte(`{"name":"n"}`), "")
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	old := LockWaitTimeout
+	LockWaitTimeout = "150ms"
+	defer func() { LockWaitTimeout = old }()
+
+	held := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = g.Transaction(func(tx *gorm.DB) error {
+			var row db.Template
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND tenant_id = ?", id, tid).First(&row).Error; err != nil {
+				return err
+			}
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+
+	_, _, err = s.Save(tid, "", []byte(`{"name":"designer"}`), id)
+	close(release)
+	<-done
+
+	if !errors.Is(err, ErrLocked) {
+		t.Fatalf("Save 等鎖逾時應回 ErrLocked，得到 %v", err)
+	}
+}
+
+// TestDecodeDocKeepsNumberLiterals 金額字面不得被浮點改寫（Save 與 PatchDoc 共用這一份解析）。
+func TestDecodeDocKeepsNumberLiterals(t *testing.T) {
+	doc, err := DecodeDoc([]byte(`{"w":595.28,"h":841.89,"big":12345678901234567890,"amt":1.10}`))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{"595.28", "841.89", "12345678901234567890", "1.10"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("數字字面 %s 被改寫: %s", want, out)
+		}
 	}
 }
