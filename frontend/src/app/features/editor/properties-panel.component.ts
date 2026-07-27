@@ -82,21 +82,6 @@ import { ScrubDirective } from './scrub.directive';
             <div class="hint">勾選後，嵌入的填寫模式（mode=fill）使用者只能改這些欄位的文字，其餘一律動不了（後端強制）。多選時可一次勾起來。</div>
             <app-text-style-form [el]="el" />
           }
-          @case ('placeholder') {
-            <label class="full">資料 key（渲染時由後端資料填入）
-              <input [ngModel]="el.key" (ngModelChange)="patch(el, { key: $event })" placeholder="例：customer.name" />
-            </label>
-            <div class="hint">支援路徑（customer.name、items[0].qty）與函式：$sum(items.amount)、$count(items)、$avg(…)、$page、$pages。</div>
-            <label class="full">範例值
-              <input [ngModel]="el.sample" (ngModelChange)="patch(el, { sample: $event })" />
-            </label>
-            <label class="full">格式（數值）
-              <select [ngModel]="el.format ?? ''" (ngModelChange)="patch(el, { format: $event })">
-                @for (f of formats; track f.value) { <option [value]="f.value">{{ f.label }}</option> }
-              </select>
-            </label>
-            <app-text-style-form [el]="el" />
-          }
           @case ('barcode') {
             <label class="full">條碼類型
               <select [ngModel]="el.symbology" (ngModelChange)="patch(el, { symbology: $event })">
@@ -149,8 +134,11 @@ import { ScrubDirective } from './scrub.directive';
               <input [ngModel]="el.key" (ngModelChange)="patch(el, { key: $event })" placeholder="例：orders（巢狀時用 lines）" />
             </label>
             <div class="grid2">
-              <label [appScrub]="el.gap ?? 0" [scrubMin]="0" (scrubChange)="patch(el, { gap: $event })">筆間距（pt）
-                <input type="number" step="1" min="0" [ngModel]="el.gap ?? 0" (ngModelChange)="patch(el, { gap: numMin(num($event), 0) })" /></label>
+              <label [appScrub]="el.gap ?? 0" [scrubMin]="0" (scrubChange)="patch(el, { gap: $event })"
+                (scrubStart)="state.gapPreview.set(el.id)" (scrubEnd)="state.gapPreview.set(null)">筆間距（pt）
+                <input type="number" step="1" min="0" [ngModel]="el.gap ?? 0" (ngModelChange)="patch(el, { gap: numMin(num($event), 0) })"
+                  (focus)="state.gapPreview.set(el.id)" (blur)="state.gapPreview.set(null)" /></label>
+              <div class="hint">調整時畫布會出現半透明的第 2、3 筆示意，看得出每筆的落點。</div>
               <label>無資料範例筆數
                 <input type="number" step="1" min="1" [ngModel]="el.sampleCount ?? 1" (ngModelChange)="patch(el, { sampleCount: numMin(num($event), 1) })" /></label>
             </div>
@@ -338,7 +326,6 @@ import { ScrubDirective } from './scrub.directive';
                   <label class="full">類型
                     <select [ngModel]="cell.kind" (ngModelChange)="patchCell(el, { kind: $event })">
                       <option value="text">靜態文字</option>
-                      <option value="placeholder">資料欄位</option>
                       <option value="image">圖片</option>
                       <option value="barcode">條碼</option>
                     </select>
@@ -389,19 +376,11 @@ import { ScrubDirective } from './scrub.directive';
                     <div class="hint">也可以直接把元件盤的「圖片」拖到儲存格上。key 綁定時渲染資料的值需為圖片 URL（重複列每列可不同圖）。圖片以等比縮放置入格內。</div>
                   } @else if (cell.kind === 'text') {
                     <label class="full">文字 <input [ngModel]="cell.value" (ngModelChange)="patchCell(el, { value: $event })" /></label>
+                    <div class="hint">可混排資料：{{ '{' }}{{ '{' }}name{{ '}' }}{{ '}' }}、{{ '{' }}{{ '{' }}amt|comma{{ '}' }}{{ '}' }}——重複列內用相對路徑；序號 $row；小計 $gsum(欄位)/$gcount；總計 $sum(items.欄位)。</div>
                     <label class="chk full">
                       <input type="checkbox" [ngModel]="!!cell.fillable"
                         (ngModelChange)="patchCellStyle(el, { fillable: $event || undefined })" />
                       允許在<b>填寫模式</b>修改此格
-                    </label>
-                  } @else {
-                    <label class="full">key <input [ngModel]="cell.key" (ngModelChange)="patchCell(el, { key: $event })" placeholder="例：items[0].name" /></label>
-                    <div class="hint">重複列內用相對路徑（name、qty）；序號 $row；小計 $gsum(欄位)/$gcount；總計 $sum(items.欄位)。</div>
-                    <label class="full">範例值 <input [ngModel]="cell.sample" (ngModelChange)="patchCell(el, { sample: $event })" /></label>
-                    <label class="full">格式（數值）
-                      <select [ngModel]="cell.format ?? ''" (ngModelChange)="patchCell(el, { format: $event })">
-                        @for (f of formats; track f.value) { <option [value]="f.value">{{ f.label }}</option> }
-                      </select>
                     </label>
                   }
                 }
@@ -419,6 +398,7 @@ import { ScrubDirective } from './scrub.directive';
                   </label>
                 </div>
                 <label class="row"><input type="checkbox" [ngModel]="cell.bold" (ngModelChange)="patchCellStyle(el, { bold: $event })" /> 粗體</label>
+                <label class="row"><input type="checkbox" [ngModel]="!!cell.italic" (ngModelChange)="patchCellStyle(el, { italic: $event })" /> 斜體</label>
                 <label class="row">
                   <input type="checkbox" [ngModel]="cell.wrap ?? false"
                     (ngModelChange)="patchCellStyle(el, { wrap: $event || undefined })" /> 自動換行（列高自動延伸）
@@ -724,7 +704,7 @@ export class PropertiesPanelComponent {
   patchCell(el: TableElement, patch: Partial<TableCell>) {
     const sc = this.state.selectedCell();
     if (!sc) return;
-    if (patch.kind !== undefined && patch.kind !== 'text' && patch.kind !== 'placeholder' && patch.kind !== 'image') return; // 防呆
+    if (patch.kind !== undefined && patch.kind !== 'text' && patch.kind !== 'image' && patch.kind !== 'barcode') return; // 防呆
 
     const cells = el.cells.map((row, r) =>
       row.map((cell, c) => (r === sc.row && c === sc.col ? { ...cell, ...patch } : cell)));

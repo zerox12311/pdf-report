@@ -1,6 +1,16 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
 import { CellBorders, FontFamily, RectElement, TableCell, TableElement, TemplateElement, cornerRadiiOf, coveredCells, fontCss } from '../../core/models/template.model';
 import { formatValue } from '../../core/utils/format-value';
+import { RichSpan, parseRichText, serializeRichText } from '../../core/utils/rich-text';
+
+/** CSS 色值正規化為 #rrggbb 小寫（rgb(...) / #hex3 / #hex6）；認不得回空字串 */
+function normalizeCssColor(c: string): string {
+  const m = c.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+  if (m) return '#' + [m[1], m[2], m[3]].map(n => (+n).toString(16).padStart(2, '0')).join('');
+  if (/^#[0-9a-fA-F]{6}$/.test(c)) return c.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(c)) return '#' + [...c.slice(1)].map(ch => ch + ch).join('').toLowerCase();
+  return '';
+}
 import { ModalService } from '../../core/services/modal.service';
 import { ContextMenuItem, EditorStateService } from './editor-state.service';
 import { DataKeyPayload, paletteToCellPatch } from './element-factory';
@@ -14,47 +24,40 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
       @case ('text') {
         @if (textEl(); as el) {
           @if (selfEditing()) {
-            <textarea class="inline-edit" [value]="el.content"
+            <!-- Word 式就地編輯：選取後用工具列上粗體/斜體/顏色；存檔序列化成 [b][i][c=#..] 行內標記 -->
+            <div class="rich-toolbar" (pointerdown)="$event.preventDefault(); $event.stopPropagation()">
+              <button type="button" title="粗體（⌘/Ctrl+B）" (click)="fmtCmd('bold')"><b>B</b></button>
+              <button type="button" title="斜體（⌘/Ctrl+I）" (click)="fmtCmd('italic')"><i>I</i></button>
+              <span class="sep"></span>
+              @for (c of RICH_COLORS; track c) {
+                <button type="button" class="swatch" [style.background]="c" [title]="'文字顏色 ' + c"
+                  (click)="fmtColor(c)"></button>
+              }
+              <span class="sep"></span>
+              <button type="button" title="清除選取範圍的樣式" (click)="fmtCmd('removeFormat')">⌫</button>
+            </div>
+            <div class="inline-edit rich-edit" contenteditable="true"
               [style.fontSize.px]="el.fontSize * z()" [style.lineHeight]="el.lineHeight"
               [style.color]="el.color" [style.fontFamily]="fontCssOf(el.fontFamily)"
               [style.textAlign]="el.align" [style.fontWeight]="el.bold ? 700 : 400"
+              [style.fontStyle]="el.italic ? 'italic' : null"
               [style.textDecoration]="el.underline ? 'underline' : null"
               (pointerdown)="$event.stopPropagation()" (dblclick)="$event.stopPropagation()"
               (keydown)="onSelfEditKey($event, true)"
-              (blur)="commitSelfEdit($any($event.target).value)"></textarea>
+              (blur)="commitRichEdit($event)"></div>
           } @else {
             <div class="text-box" [style.fontSize.px]="el.fontSize * z()"
               [style.lineHeight]="el.lineHeight" [style.color]="el.color"
               [style.fontFamily]="fontCssOf(el.fontFamily)"
               [style.textAlign]="el.align" [style.fontWeight]="el.bold ? 700 : 400"
+              [style.fontStyle]="el.italic ? 'italic' : null"
               [style.textDecoration]="el.underline ? 'underline' : null"
               [style.border]="boxBorder(el)" [style.background]="el.fillColor ?? 'transparent'"
               [style.padding.px]="(el.padding ?? 0) * z()"
               (dblclick)="startSelfEdit($event)"
-            >{{ displayText(el.content) }}</div>
-          }
-        }
-      }
-      @case ('placeholder') {
-        @if (placeholderEl(); as el) {
-          @if (selfEditing()) {
-            <input class="inline-edit" [value]="el.key" placeholder="資料 key（例：customer.name）"
-              [style.fontSize.px]="el.fontSize * z()" [style.color]="el.color"
-              [style.fontFamily]="fontCssOf(el.fontFamily)" [style.textAlign]="el.align"
-              (pointerdown)="$event.stopPropagation()" (dblclick)="$event.stopPropagation()"
-              (keydown)="onSelfEditKey($event, false)"
-              (blur)="commitSelfEdit($any($event.target).value)" />
-          } @else {
-            <div class="text-box ph" [style.fontSize.px]="el.fontSize * z()"
-              [style.lineHeight]="el.lineHeight" [style.color]="el.color"
-              [style.fontFamily]="fontCssOf(el.fontFamily)"
-              [style.textAlign]="el.align" [style.fontWeight]="el.bold ? 700 : 400"
-              [style.textDecoration]="el.underline ? 'underline' : null"
-              [style.border]="boxBorder(el)"
-              [style.padding.px]="(el.padding ?? 0) * z()"
-              [title]="phLabel(el.key) + '——雙擊編輯變數綁定'"
-              (dblclick)="startSelfEdit($event)"
-            >{{ phDisplay(el.key, el.sample, el.format) }}</div>
+            >@for (sp of richSpans(el.content); track $index) {<span
+                [style.color]="sp.color || null" [style.fontWeight]="sp.bold ? 700 : null"
+                [style.fontStyle]="sp.italic ? 'italic' : null">@for (g of displaySegs(sp.text); track $index) {@if (g.tok) {<span class="tok">{{ g.text }}</span>} @else {{{ g.text }}}}</span>}</div>
           }
         }
       }
@@ -131,11 +134,11 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                         [style.padding.px]="el.cellPadding * z()"
                         [style.textAlign]="cell.align"
                         [style.fontWeight]="cell.bold ? 700 : 400"
+                        [style.fontStyle]="cell.italic ? 'italic' : null"
                         [style.fontSize.px]="cell.fontSize ? cell.fontSize * z() : null"
                         [style.color]="cell.color || null"
                         [style.backgroundColor]="cell.fillColor || null"
                         [style.verticalAlign]="cell.vAlign || null"
-                        [class.ph]="cell.kind === 'placeholder'"
                         [class.cell-fillable]="showsFillableCell(cell)"
                         [class.cell-selected]="el.id === state.selectedId() && isCellSelected(r, c)"
                         [class.drop-cell]="(dropCell()?.r === r && dropCell()?.c === c) || isElementDropCell(el, r, c)"
@@ -167,13 +170,19 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                           <span class="cell-img-empty">{{ cell.key ? '🔗 ' + cell.key : '（未選圖片）' }}</span>
                         }
                       } @else if (editingCell()?.r === r && editingCell()?.c === c) {
-                        <input class="cell-edit"
-                          [value]="cell.kind === 'text' ? cell.value : cell.key"
-                          [placeholder]="cell.kind === 'placeholder' ? '資料 key' : ''"
-                          (pointerdown)="$event.stopPropagation()"
-                          (dblclick)="$event.stopPropagation()"
-                          (keydown)="onCellEditKey($event)"
-                          (blur)="commitCellEdit(el, r, c, $any($event.target).value)" />
+                        @if (cell.kind === 'text' && !state.restricted()) {
+                          <!-- Word 式儲存格編輯（工具列在 td 外層：td overflow:hidden 會裁掉浮出的內容） -->
+                          <div class="cell-edit rich-edit cell-rich" contenteditable="true"
+                            (pointerdown)="$event.stopPropagation()" (dblclick)="$event.stopPropagation()"
+                            (keydown)="onCellEditKey($event)"
+                            (blur)="commitCellRich(el, r, c, $event)"></div>
+                        } @else {
+                          <input class="cell-edit" [value]="cell.value"
+                            (pointerdown)="$event.stopPropagation()"
+                            (dblclick)="$event.stopPropagation()"
+                            (keydown)="onCellEditKey($event)"
+                            (blur)="commitCellEdit(el, r, c, $any($event.target).value)" />
+                        }
                       } @else if (cell.kind === 'barcode') {
                         <!-- 條碼示意：absolute 貼齊內距，不撐開畫布列高（同圖片格的解法） -->
                         <span class="cell-barcode" [style.inset.px]="el.cellPadding * z()">
@@ -188,13 +197,36 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                         <!-- 換行示意：absolute 貼齊內距，不撐開畫布列高（實際列高由引擎算） -->
                         <span class="cell-wrap-text" [style.inset.px]="el.cellPadding * z()"
                           [style.justifyContent]="cell.vAlign === 'top' ? 'flex-start' : cell.vAlign === 'bottom' ? 'flex-end' : 'center'"
-                          >{{ cell.kind === 'placeholder' ? cellDisplay(el, r, cell) : cell.value }}</span>
-                      } @else {{{ cell.kind === 'placeholder' ? cellDisplay(el, r, cell) : cell.value }}}</td>
+                          >@for (sp of richSpans(cell.value); track $index) {<span
+                            [style.color]="sp.color || null" [style.fontWeight]="sp.bold ? 700 : null"
+                            [style.fontStyle]="sp.italic ? 'italic' : null">@for (g of cellSegs(el, r, sp.text); track $index) {@if (g.tok) {<span class="tok">{{ g.text }}</span>} @else {{{ g.text }}}}</span>}</span>
+                      } @else {@for (sp of richSpans(cell.value); track $index) {<span
+                        [style.color]="sp.color || null" [style.fontWeight]="sp.bold ? 700 : null"
+                        [style.fontStyle]="sp.italic ? 'italic' : null">@for (g of cellSegs(el, r, sp.text); track $index) {@if (g.tok) {<span class="tok">{{ g.text }}</span>} @else {{{ g.text }}}}</span>}}</td>
                     }
                   }
                 </tr>
               }
             </table>
+            @if (editingCell(); as ec) {
+              <!-- 儲存格富文字工具列：掛在表格包裝層、以格座標定位（不放 td 內，避免被 overflow 裁掉） -->
+              @if (el.cells[ec.r]?.[ec.c]?.kind === 'text' && !state.restricted()) {
+                <div class="rich-toolbar cell-toolbar"
+                  [style.left.px]="cellLeft(el, ec.c) * z()"
+                  [style.top.px]="cellTop(el, ec.r) * z() - 34"
+                  (pointerdown)="$event.preventDefault(); $event.stopPropagation()">
+                  <button type="button" title="粗體（⌘/Ctrl+B）" (click)="fmtCmd('bold')"><b>B</b></button>
+                  <button type="button" title="斜體（⌘/Ctrl+I）" (click)="fmtCmd('italic')"><i>I</i></button>
+                  <span class="sep"></span>
+                  @for (cc of RICH_COLORS; track cc) {
+                    <button type="button" class="swatch" [style.background]="cc" [title]="'文字顏色 ' + cc"
+                      (click)="fmtColor(cc)"></button>
+                  }
+                  <span class="sep"></span>
+                  <button type="button" title="清除選取範圍的樣式" (click)="fmtCmd('removeFormat')">⌫</button>
+                </div>
+              }
+            }
             @if (isTableSelected(el)) {
               @for (d of colDividers(el); track d.i) {
                 <div class="col-div" [style.left.px]="d.px" (pointerdown)="onDividerDown($event, el, 'col', d.i)"></div>
@@ -213,6 +245,8 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
     .text-box { width: 100%; height: 100%; overflow: hidden; white-space: pre-wrap; word-break: break-all;
       font-family: 'Noto Sans TC', sans-serif; user-select: none; box-sizing: border-box; }
     .ph { background: rgba(255, 224, 130, .45); outline: 1px dashed #d19a00; }
+    /* 插值 token 黃底：取代舊「資料欄位」元件的黃底提示，標出畫面上動態的部分 */
+    .tok { background: rgba(255, 224, 130, .35); border-radius: 2px; }
     /* 可填儲存格（填寫模式可改）：與元素層級的 .fillable-mark 同色系 */
     .cell-fillable { outline: 1.5px dashed #16a34a; outline-offset: -1px; background: rgba(22, 163, 74, .06); }
     .img-box { width: 100%; height: 100%; pointer-events: none; }
@@ -249,6 +283,19 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
     .inline-edit { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
       border: 1.5px solid #2563eb; border-radius: 2px; padding: 1px 3px; background: #fff; outline: none;
       resize: none; font-family: inherit; }
+    .rich-edit { overflow: auto; white-space: pre-wrap; word-break: break-all; }
+    .cell-rich { display: block; position: relative; min-height: 1.2em; text-align: inherit; }
+    .cell-toolbar { z-index: 20; }
+    .rich-toolbar { position: absolute; top: -34px; left: 0; z-index: 60; display: flex; gap: 2px;
+      align-items: center; background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 3px 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); white-space: nowrap; }
+    .rich-toolbar button { min-width: 22px; height: 22px; padding: 0 4px; border: 1px solid transparent;
+      background: none; border-radius: 4px; cursor: pointer; font-size: 12px; line-height: 1; }
+    .rich-toolbar button:hover { background: #eff6ff; border-color: #bfdbfe; }
+    .rich-toolbar button.on { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
+    .rich-toolbar .swatch { width: 16px; height: 16px; min-width: 16px; padding: 0;
+      border: 1px solid #cbd5e1; border-radius: 3px; }
+    .rich-toolbar .sep { width: 1px; height: 16px; background: #e2e8f0; margin: 0 2px; }
     .bc-edit { position: static; height: auto; font-size: 11px; }
     .tbl-wrap { position: relative; width: 100%; height: 100%; }
     .col-div { position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px; cursor: col-resize; z-index: 7; }
@@ -269,7 +316,6 @@ export class CanvasElementComponent {
 
   // 依型別窄化的 computed：模板綁定回到 strictTemplates 檢查之下
   textEl = computed(() => { const e = this.el(); return e.type === 'text' ? e : null; });
-  placeholderEl = computed(() => { const e = this.el(); return e.type === 'placeholder' ? e : null; });
   imageEl = computed(() => { const e = this.el(); return e.type === 'image' ? e : null; });
   rectEl = computed(() => { const e = this.el(); return e.type === 'rect' ? e : null; });
   lineEl = computed(() => { const e = this.el(); return e.type === 'line' ? e : null; });
@@ -288,32 +334,6 @@ export class CanvasElementComponent {
 
   phLabel(key: string): string {
     return '{{' + key + '}}';
-  }
-
-  /**
-   * 佔位欄位在畫布上顯示什麼：優先用「資料」分頁貼的實際資料（與文字元素的 {{插值}} 用同一份），
-   * 該 key 取不到值才退回設計期 sample，都沒有就顯示 key 標籤。
-   *
-   * 之前只看 sample，於是同一份貼上的資料「文字元素吃得到、資料欄位吃不到」，
-   * 同一張畫布兩套規則，使用者會以為自己 key 打錯。
-   * （正式渲染缺 key 是留空＋警告、不以 sample 冒充；設計期則以看得懂為主。）
-   */
-  phDisplay(key: string, sample: string, format: Parameters<typeof formatValue>[1]): string {
-    const v = this.resolvePath(this.sampleData(), key);
-    if (v !== undefined && v !== null && typeof v !== 'object') return this.formatted(String(v), format);
-    return sample ? this.formatted(sample, format) : this.phLabel(key);
-  }
-
-  /**
-   * 表格儲存格的畫布顯示值。重複列（與群組首/尾列）的 key 是**相對**於綁定陣列的，
-   * 直接拿去查整份資料當然查不到，於是永遠只看得到設計期範例值——畫布看起來跟
-   * 實際輸出對不上。這裡補上陣列前綴，用**第一筆**資料呈現。
-   *
-   * 畫布刻意只畫一列（設計面板不是輸出預覽，比照 JasperReports 的 detail band）；
-   * 展開幾列、跨頁怎麼切，看預覽分頁的真實 PDF。
-   */
-  cellDisplay(el: TableElement, row: number, cell: TableCell): string {
-    return this.phDisplay(this.effectiveCellKey(el, row, cell.key), cell.sample, cell.format);
   }
 
   /** 重複列/群組列的相對 key → `陣列[0].key`；其餘原樣。 */
@@ -406,16 +426,47 @@ export class CanvasElementComponent {
     return el.assetId ? '/api/assets/' + el.assetId : null;
   }
 
-  /** 文字行內插值的畫布預覽：資料 key 以範例資料代入；$ 引擎函式與缺 key 保留 token 提示 */
-  displayText(content: string): string {
-    if (!content.includes('{{')) return content;
+  /** 行內標記 → 樣式段（先解析標記再插值，與引擎順序一致；無標記回傳單一無樣式段） */
+  richSpans(content: string): RichSpan[] {
+    return parseRichText(content);
+  }
+
+  /**
+   * 文字行內插值的畫布預覽段：資料 key 以範例資料代入、$ 引擎函式與缺 key 保留 token 提示；
+   * 插值段標記 tok=true（畫布上黃底，取代舊「資料欄位」元件的黃底提示——一眼看出哪裡是動態的）。
+   */
+  displaySegs(content: string): { text: string; tok: boolean }[] {
+    return this.segsOf(content, k => k);
+  }
+
+  /** 表格儲存格版本：重複列（與群組首/尾列）的相對 key 補上陣列前綴、以第一筆資料呈現。 */
+  cellSegs(el: TableElement, row: number, text: string): { text: string; tok: boolean }[] {
+    return this.segsOf(text, k => this.effectiveCellKey(el, row, k));
+  }
+
+  private static readonly INTERP_RE = /\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g;
+
+  private segsOf(content: string, mapKey: (key: string) => string): { text: string; tok: boolean }[] {
+    if (!content.includes('{{')) return content ? [{ text: content, tok: false }] : [];
+    const raw = this.state.rawTokenView(); // 顯示變數原文模式：不代入，只標黃底
     const data = this.sampleData();
-    return content.replace(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g, (m, key: string, fmt?: string) => {
-      if (key.startsWith('$')) return m; // $page/$sum 等由引擎計算，畫布保留 token
-      const cur = this.resolvePath(data, key);
-      if (cur == null || typeof cur === 'object') return m; // 找不到 → 保留 token（看得出沒綁到）
-      return formatValue(String(cur), (fmt ?? '') as Parameters<typeof formatValue>[1]);
-    });
+    const re = new RegExp(CanvasElementComponent.INTERP_RE.source, 'g');
+    const out: { text: string; tok: boolean }[] = [];
+    let last = 0;
+    for (let m = re.exec(content); m; m = re.exec(content)) {
+      if (m.index > last) out.push({ text: content.slice(last, m.index), tok: false });
+      let text = m[0]; // $ 函式與缺 key：保留 token（看得出沒綁到）
+      if (!raw && !m[1].startsWith('$')) {
+        const cur = this.resolvePath(data, mapKey(m[1]));
+        if (cur !== undefined && cur !== null && typeof cur !== 'object') {
+          text = formatValue(String(cur), (m[2] ?? '') as Parameters<typeof formatValue>[1]);
+        }
+      }
+      out.push({ text, tok: true });
+      last = m.index + m[0].length;
+    }
+    if (last < content.length) out.push({ text: content.slice(last), tok: false });
+    return out;
   }
 
   fontCssOf(family: FontFamily | undefined): string {
@@ -484,7 +535,8 @@ export class CanvasElementComponent {
     if (el.id !== this.state.selectedId()) this.state.select(el.id);
     this.cancelEdit = false;
     this.selfEditing.set(true);
-    this.focusEditor('.inline-edit');
+    if (el.type === 'text') this.focusRichEditor((el as { content: string }).content);
+    else this.focusEditor('.inline-edit');
   }
 
   onSelfEditKey(ev: KeyboardEvent, multiline: boolean) {
@@ -510,12 +562,132 @@ export class CanvasElementComponent {
     }
     const el = this.el();
     switch (el.type) {
-      case 'text': this.state.patchElement(el.id, { content: value }); break;
-      case 'placeholder': this.state.patchElement(el.id, { key: value }); break;
       case 'barcode':
         this.state.patchElement(el.id, el.key ? { sample: value } : { content: value });
         break;
     }
+  }
+
+  // ---- text 元素的 Word 式就地編輯（contenteditable＋選取工具列，序列化成行內標記） ----
+
+  /** 工具列色票（Word 式常用色；任意色值可在屬性面板的內容欄手寫 [c=#..] 標記） */
+  readonly RICH_COLORS = ['#000000', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#db2777', '#64748b'];
+
+  /** 對目前選取套用格式（contenteditable 原生指令；⌘B/⌘I 快捷鍵瀏覽器內建） */
+  fmtCmd(cmd: 'bold' | 'italic' | 'removeFormat') {
+    document.execCommand(cmd, false);
+  }
+
+  fmtColor(color: string) {
+    document.execCommand('styleWithCSS', false, 'true');
+    document.execCommand('foreColor', false, color);
+  }
+
+  commitRichEdit(ev: FocusEvent) {
+    const editor = ev.target as HTMLElement;
+    this.selfEditing.set(false);
+    if (this.cancelEdit) {
+      this.cancelEdit = false;
+      return;
+    }
+    const el = this.el();
+    const t = el.type === 'text' ? (el as { bold: boolean; italic?: boolean; color: string }) : null;
+    this.state.patchElement(el.id, this.serializeRichDom(editor, t?.bold ?? false, t?.italic ?? false, t?.color ?? ''));
+  }
+
+  /** 等 contenteditable 出現後：以現有標記填入樣式 DOM、聚焦、全選（OnPush 下等渲染，重試數次） */
+  private focusRichEditor(content: string) {
+    const tryIt = (attempts: number) => {
+      const div = document.querySelector<HTMLElement>('.rich-edit[contenteditable]');
+      if (div) {
+        this.populateRichEditor(div, content);
+        div.focus();
+        const range = document.createRange();
+        range.selectNodeContents(div);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      } else if (attempts > 0) {
+        setTimeout(() => tryIt(attempts - 1), 30);
+      }
+    };
+    tryIt(5);
+  }
+
+  /** content 的行內標記 → contenteditable 初始 DOM（span 帶 inline 樣式、\n → <br>） */
+  private populateRichEditor(div: HTMLElement, content: string) {
+    div.textContent = '';
+    for (const sp of parseRichText(content)) {
+      sp.text.split('\n').forEach((part, idx) => {
+        if (idx > 0) div.appendChild(document.createElement('br'));
+        if (!part) return;
+        if (!sp.bold && !sp.italic && !sp.color) {
+          div.appendChild(document.createTextNode(part));
+          return;
+        }
+        const s = document.createElement('span');
+        if (sp.bold) s.style.fontWeight = '700';
+        if (sp.italic) s.style.fontStyle = 'italic';
+        if (sp.color) s.style.color = sp.color;
+        s.textContent = part;
+        div.appendChild(s);
+      });
+    }
+  }
+
+  /**
+   * contenteditable DOM → 行內標記＋層級粗體/斜體（文字元素與表格儲存格共用）。
+   * 走訪文字節點收集生效中的粗/斜/色（含 baseBold/baseItalic 的繼承；與 baseColor 相同視為未上色）。
+   * 引擎語意是 層級樣式 || span 樣式（無法表達「局部取消」），所以 Word 式的
+   * 「整段粗/斜」收斂回層級欄位、「部分」則層級欄位關掉、下放到各段的 [b]/[i] 標記。
+   */
+  private serializeRichDom(root: HTMLElement, baseBold: boolean, baseItalic: boolean, baseColor: string): { content: string; bold: boolean; italic: boolean } {
+    const elColor = baseColor.toLowerCase();
+    const elBold = baseBold;
+    const spans: RichSpan[] = [];
+    const push = (text: string, bold: boolean, italic: boolean, color: string) => {
+      if (!text) return;
+      if (color && color === elColor) color = '';
+      const last = spans[spans.length - 1];
+      if (last && last.bold === bold && last.italic === italic && last.color === color) last.text += text;
+      else spans.push({ text, bold, italic, color });
+    };
+    const walk = (node: Node, bold: boolean, italic: boolean, color: string) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        push(node.textContent ?? '', bold, italic, color);
+        return;
+      }
+      if (!(node instanceof HTMLElement)) return;
+      if (node.tagName === 'BR') {
+        push('\n', bold, italic, color);
+        return;
+      }
+      let b = bold, i = italic, c = color;
+      if (node.tagName === 'B' || node.tagName === 'STRONG') b = true;
+      if (node.tagName === 'I' || node.tagName === 'EM') i = true;
+      const fw = node.style.fontWeight;
+      if (fw) b = fw === 'bold' || parseInt(fw, 10) >= 600;
+      const fs = node.style.fontStyle;
+      if (fs) i = fs === 'italic' || fs === 'oblique';
+      const rawColor = node.style.color || (node.tagName === 'FONT' ? node.getAttribute('color') ?? '' : '');
+      const norm = normalizeCssColor(rawColor);
+      if (norm) c = norm;
+      // 換行（Enter）產生的區塊節點：進入前補 \n
+      const isBlock = node.tagName === 'DIV' || node.tagName === 'P';
+      if (isBlock && spans.length && !spans[spans.length - 1].text.endsWith('\n')) push('\n', b, i, c);
+      node.childNodes.forEach(ch => walk(ch, b, i, c));
+    };
+    root.childNodes.forEach(ch => walk(ch, elBold, baseItalic, ''));
+    const textSpans = spans.filter(sp => sp.text.trim() !== '');
+    const allBold = textSpans.length > 0 && textSpans.every(sp => sp.bold);
+    if (allBold) spans.forEach(sp => (sp.bold = false));
+    const allItalic = textSpans.length > 0 && textSpans.every(sp => sp.italic);
+    if (allItalic) spans.forEach(sp => (sp.italic = false));
+    return {
+      content: serializeRichText(spans),
+      bold: textSpans.length ? allBold : elBold,
+      italic: textSpans.length ? allItalic : baseItalic,
+    };
   }
 
   /** 聚焦剛出現的編輯框（OnPush 下等渲染，重試數次） */
@@ -636,7 +808,35 @@ export class CanvasElementComponent {
     this.state.selectedCellRange.set(null);
     this.cancelEdit = false;
     this.editingCell.set({ r, c });
-    this.focusEditor('.cell-edit');
+    const cell = el.cells[r]?.[c];
+    // 設計模式的 text 格走 Word 式富文字編輯；其餘（placeholder key、fill 模式）維持純文字輸入
+    if (cell?.kind === 'text' && !this.state.restricted()) this.focusRichEditor(cell.value);
+    else this.focusEditor('.cell-edit');
+  }
+
+  /** 儲存格左上角在表格內的座標（pt；工具列定位用） */
+  cellLeft(el: TableElement, c: number): number {
+    let x = 0;
+    for (let i = 0; i < c && i < el.columnWidths.length; i++) x += el.columnWidths[i];
+    return x;
+  }
+
+  cellTop(el: TableElement, r: number): number {
+    let y = 0;
+    for (let i = 0; i < r && i < el.rowHeights.length; i++) y += el.rowHeights[i];
+    return y;
+  }
+
+  commitCellRich(el: TableElement, r: number, c: number, ev: FocusEvent) {
+    const editor = ev.target as HTMLElement;
+    this.editingCell.set(null);
+    if (this.cancelEdit) {
+      this.cancelEdit = false;
+      return;
+    }
+    const cell = el.cells[r]?.[c];
+    const { content, bold, italic } = this.serializeRichDom(editor, cell?.bold ?? false, cell?.italic ?? false, cell?.color || '#000000');
+    this.state.setCellRich(el.id, r, c, content, bold, italic);
   }
 
   onCellEditKey(ev: KeyboardEvent) {

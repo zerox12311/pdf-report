@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ValidationFieldType } from '../../core/models/template.model';
+import { JsonEditorComponent } from '../../shared/json-editor.component';
 import { TemplateApiService, ValidationResult } from '../../core/services/template-api.service';
 import { EditorStateService } from './editor-state.service';
 
@@ -12,7 +13,7 @@ import { EditorStateService } from './editor-state.service';
 @Component({
   selector: 'app-validation-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, JsonEditorComponent],
   template: `
     <div class="page">
       <div class="col">
@@ -77,7 +78,8 @@ import { EditorStateService } from './editor-state.service';
           <button class="secondary" (click)="fillSample()" [title]="sampleSourceHint()">用範例資料填入</button>
         </div>
         <div class="hint">貼一段 <b>data</b> JSON，按驗證當場檢查（不渲染）。測試會忽略上方總開關，一律套用目前規則。</div>
-        <textarea [(ngModel)]="testData" spellcheck="false" placeholder='{ "school": { "name": "…" }, "items": [ … ] }'></textarea>
+        <app-json-editor [value]="testData()" (valueChange)="testData.set($event)"
+          placeholderText='{ "school": { "name": "…" }, "items": [ … ] }' />
         <button class="primary" (click)="runTest()" [disabled]="testing()">{{ testing() ? '驗證中…' : '驗證' }}</button>
         @if (testError(); as e) { <div class="err">{{ e }}</div> }
         @if (result(); as r) {
@@ -138,7 +140,7 @@ import { EditorStateService } from './editor-state.service';
     .empty { font-size: 13px; color: #6b7280; padding: 24px; text-align: center; background: #f9fafb; border-radius: 6px; border: 1px dashed #d1d5db; }
 
     .col-head { font-size: 13px; font-weight: 700; color: #1f2937; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .test textarea { flex: 1; min-height: 200px; font-family: monospace; font-size: 12px; border: 1px solid #ccc; border-radius: 6px; padding: 8px; resize: none; }
+    .test app-json-editor { flex: 1; min-height: 200px; }
     .primary { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 10px; cursor: pointer; font-size: 14px; }
     .primary:disabled { opacity: .6; }
     .err { color: #dc2626; font-size: 12px; white-space: pre-wrap; }

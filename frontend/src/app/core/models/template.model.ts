@@ -191,6 +191,8 @@ export interface TextStyle {
   align: 'left' | 'center' | 'right';
   lineHeight: number;  // 倍數
   bold: boolean;
+  /** 整個元素斜體（假斜體字型變體；text 亦可用 [i] 標記做局部） */
+  italic?: boolean;
   /** 底線（text/placeholder；引擎原生渲染） */
   underline?: boolean;
   /** 外框與底色（選填） */
@@ -302,6 +304,8 @@ export interface TableCell {
   /** 垂直對齊（未設 = middle）；與 align 組成九點對齊 */
   vAlign?: 'top' | 'middle' | 'bottom';
   bold: boolean;
+  /** 整格斜體（text 格亦可用 [i] 標記做局部） */
+  italic?: boolean;
   format?: ValueFormat;
   /** 合併儲存格：向右/向下合併的格數（<=1 或未設 = 不合併；被蓋住的格子不顯示） */
   colSpan?: number;
@@ -509,11 +513,32 @@ function normalizeValidation(v: Partial<ValidationSpec> | null | undefined): Val
 /** 確保 container/list 元素帶 children 陣列、table 元素帶可渲染的維度
  *  （手改樣板 JSON 缺欄位時防呆；遞迴巢狀 list）。
  *  只補缺的欄位、其餘原樣保留（維持 raw passthrough）。 */
+/** key＋格式 → 插值 token（資料欄位遷移用） */
+function bindingToken(key: string | undefined, format?: string): string {
+  if (!key) return '';
+  return format ? `{{${key}|${format}}}` : `{{${key}}}`;
+}
+
+/**
+ * 資料欄位（placeholder）收斂：統一遷移成 text＋`{{key|format}}`（2026-07 拍板，
+ * 只保留「文字」一種綁定介面）。引擎仍渲染舊格式（宿主可能直接送舊 JSON）；
+ * 編輯器載入即遷移、存檔後落新格式。sample 不再保留（畫布預覽改吃資料面板的範例資料）。
+ */
+function migratePlaceholderCell(cell: TableCell): TableCell {
+  if (cell.kind !== 'placeholder') return cell;
+  const { format, ...rest } = cell;
+  return { ...rest, kind: 'text', value: bindingToken(cell.key, format), key: '', sample: '' };
+}
+
 function ensureChildren(els: unknown): TemplateElement[] {
   if (!Array.isArray(els)) return [];
   return els.map(e => {
     if (!e || typeof e !== 'object') return e;
     const type = (e as TemplateElement).type;
+    if (type === 'placeholder') {
+      const { key, sample, format, ...rest } = e as PlaceholderElement;
+      return { ...rest, type: 'text', content: bindingToken(key, format) } as TemplateElement;
+    }
     if (type === 'container' || type === 'list') {
       return { ...e, children: ensureChildren((e as { children?: unknown }).children) };
     }
@@ -542,7 +567,10 @@ function sizeArray(v: unknown): number[] | null {
 function ensureTable(el: TableElement): TableElement {
   const widths = sizeArray(el.columnWidths);
   const heights = sizeArray(el.rowHeights);
-  const src = Array.isArray(el.cells) ? el.cells : null;
+  const rawSrc = Array.isArray(el.cells) ? el.cells : null;
+  // 資料欄位格遷移（見 migratePlaceholderCell）
+  const hadPh = !!rawSrc?.some(r => Array.isArray(r) && r.some(c => c && (c as TableCell).kind === 'placeholder'));
+  const src = hadPh ? rawSrc!.map(r => (Array.isArray(r) ? r.map(migratePlaceholderCell) : r)) : rawSrc;
 
   const cols = widths?.length ?? src?.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0) ?? 0;
   const rows = heights?.length ?? src?.length ?? 0;
@@ -551,7 +579,7 @@ function ensureTable(el: TableElement): TableElement {
 
   const cellsOk = !!src && src.length >= rowCount
     && src.every(r => Array.isArray(r) && r.length >= colCount);
-  if (widths && heights && cellsOk) return el;
+  if (widths && heights && cellsOk) return hadPh ? { ...el, cells: src as TableCell[][] } : el;
 
   // 缺尺寸 → 以元素本身的寬高均分（寬高也不可用時退回單格預設值）
   const totalW = typeof el.width === 'number' && el.width > 0 ? el.width : colCount * 80;

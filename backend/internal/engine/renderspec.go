@@ -217,6 +217,10 @@ type ExpandedRow struct {
 	Height float64
 	Cells  []TableCell
 	Texts  []string
+	// Rich text 儲存格的行內樣式段（與 Cells 對齊；整列 nil = 無標記）。
+	// 展開期就解析＋逐段插值：資料值裡的中括號只會是字面文字，無法注入樣式。
+	// 有值的格 Texts 放剝除標記後的純文字。
+	Rich [][]Span
 }
 
 var gAggRe = regexp.MustCompile(`^\$g(sum|avg)\((.+)\)$`)
@@ -352,13 +356,51 @@ func tableRowCells(t *Element, r int) []TableCell {
 	return nil
 }
 
+// isTextCell text 儲存格（Kind 空值同義，與 cellText 的 default 分支一致）。
+func isTextCell(cell TableCell) bool {
+	return cell.Kind == "" || cell.Kind == "text"
+}
+
+// cellRichSpans text 儲存格的行內樣式段：有標記時先解析、逐段插值（與文字元素同順序，
+// 資料值無法注入樣式）；無標記回 nil。
+func cellRichSpans(cell TableCell, ctx, root any, rowNum int, group []any, warn WarnFunc) []Span {
+	if !isTextCell(cell) || !HasRichMarkup(cell.Value) {
+		return nil
+	}
+	spans := ParseRichText(cell.Value)
+	for i := range spans {
+		spans[i].Text = interpolateText(spans[i].Text, func(key string) string {
+			return resolveCellKey(key, ctx, root, rowNum, group, warn)
+		})
+	}
+	return spans
+}
+
+// joinSpanText spans 的純文字串接（Texts 欄位放這個，消費端不需再剝標記）。
+func joinSpanText(spans []Span) string {
+	var b strings.Builder
+	for _, sp := range spans {
+		b.WriteString(sp.Text)
+	}
+	return b.String()
+}
+
 func makeRow(t *Element, r int, ctx, root any, rowNum int, group []any, warn WarnFunc) ExpandedRow {
 	cells := tableRowCells(t, r)
 	texts := make([]string, len(cells))
+	var rich [][]Span
 	for c, cell := range cells {
+		if spans := cellRichSpans(cell, ctx, root, rowNum, group, warn); spans != nil {
+			if rich == nil {
+				rich = make([][]Span, len(cells))
+			}
+			rich[c] = spans
+			texts[c] = joinSpanText(spans)
+			continue
+		}
 		texts[c] = cellText(cell, ctx, root, rowNum, group, warn)
 	}
-	return ExpandedRow{t.RowHeights[r], cells, texts}
+	return ExpandedRow{Height: t.RowHeights[r], Cells: cells, Texts: texts, Rich: rich}
 }
 
 // groupRowIdx 取群組首/尾列索引；未設定或不在範圍回 -1。
@@ -449,7 +491,18 @@ func ExpandTableWarn(t *Element, data any, warn WarnFunc) []ExpandedRow {
 					texts[c] = cell.Value
 				}
 			}
-			rows = append(rows, ExpandedRow{t.RowHeights[r], cells, texts})
+			// 缺陣列的範例列不做插值（與上方一致），但 text 格的標記照樣解析
+			var rich [][]Span
+			for c, cell := range cells {
+				if isTextCell(cell) && HasRichMarkup(cell.Value) {
+					if rich == nil {
+						rich = make([][]Span, len(cells))
+					}
+					rich[c] = ParseRichText(cell.Value)
+					texts[c] = joinSpanText(rich[c])
+				}
+			}
+			rows = append(rows, ExpandedRow{Height: t.RowHeights[r], Cells: cells, Texts: texts, Rich: rich})
 			continue
 		}
 

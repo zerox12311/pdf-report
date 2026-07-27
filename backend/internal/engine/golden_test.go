@@ -110,6 +110,26 @@ var goldenCases = []struct {
 			{"orderNo":"A008","buyer":"蔡文昌","lines":[{"name":"燈泡","qty":40},{"name":"燈座","qty":40},{"name":"電池","qty":100},{"name":"延長線","qty":5}]}
 		]}}`,
 	},
+	{
+		// 行內標記（[b][i][c=#..]）：插值上色、粗斜混排＋autoGrow 換行、置中對齊
+		name: "richtext-inline-styles",
+		template: `{"name":"r","page":{"width":595.28,"height":841.89,"headerHeight":0,"footerHeight":0},
+			"elements":[
+				{"type":"text","id":"t1","x":40,"y":40,"width":320,"height":24,"content":"應繳金額 [c=#dc2626][b]{{amount|comma}}[/b][/c] 元整","fontSize":14,"color":"#000000","align":"left","lineHeight":1.2,"bold":false},
+				{"type":"text","id":"t2","x":40,"y":80,"width":200,"height":20,"content":"[i]斜體備註[/i]與[b][i]粗斜疊加[/i]只粗[/b]混排自動換行測試一二三四五六七八九十","fontSize":12,"color":"#334155","align":"left","lineHeight":1.3,"bold":false,"autoGrow":true},
+				{"type":"text","id":"t3","x":40,"y":180,"width":320,"height":20,"content":"置中含[c=#2563eb]藍色片段[/c]的一行","fontSize":12,"color":"#000000","align":"center","lineHeight":1.2,"bold":false},
+				{"type":"text","id":"t4","x":40,"y":210,"width":320,"height":20,"content":"靠右含[b]粗體片段[/b]的一行","fontSize":12,"color":"#000000","align":"right","lineHeight":1.2,"bold":false,"underline":true},
+				{"type":"table","id":"tb","x":40,"y":250,"width":320,"height":66,"columnWidths":[170,150],"rowHeights":[22,22,22],
+					"borderColor":"#000000","borderWidth":0.8,"fontSize":11,"cellPadding":4,
+					"repeat":{"enabled":true,"key":"rows","rowIndex":1},
+					"cells":[
+						[{"kind":"text","value":"[c=#2563eb]品名[/c]","align":"center","bold":true},{"kind":"text","value":"金額","align":"center","bold":true}],
+						[{"kind":"text","value":"{{name}}（[i]含稅[/i]）"},{"kind":"text","value":"[c=#dc2626][b]{{amt|comma}}[/b][/c] 元","align":"right"}],
+						[{"kind":"text","value":"合計 [b]{{$sum(rows.amt)|comma}}[/b] 元，[i]斜體換行測試一二三四五六七八[/i]","wrap":true},{"kind":"text","value":"單行[c=#16a34a]截斷[/c]測試一二三四五六七八九十"}]
+					]}
+			]}`,
+		data: `{"data":{"amount":"12345","rows":[{"name":"檢驗費","amt":"1200"},{"name":"材料費","amt":"3450"}]}}`,
+	},
 }
 
 func TestGoldenPDF(t *testing.T) {

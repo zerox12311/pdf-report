@@ -36,6 +36,17 @@
 
 `comma` 千分位｜`twUpper` 金額國字大寫（壹拾…元整，銀行慣例）｜`rocDate` 民國年（114/07/20）｜`rocDateLong` 民國年長式（民國114年7月20日）。
 
+### 行內樣式標記（richtext.go；前端鏡像 rich-text.ts）——text 元素與 text 儲存格
+
+`[b]粗體[/b]`、`[i]斜體[/i]`、`[c=#rrggbb]顏色[/c]`，可巢狀（內層優先）；只認得這三種小寫標記，其他中括號內容一律當一般文字（不需跳脫）。標記**先解析、後插值**：`{{key}}` 可放在樣式段內，但資料值裡的中括號只會是字面文字（資料無法注入樣式）。
+
+- 語意：粗體/斜體 = 元素/儲存格層級欄位（`bold`／`italic`）**或** span `[b]`／`[i]`（疊加）；顏色 = span 色**覆蓋**元素 `color`／儲存格逐格色。底線仍是元素層級。placeholder（**舊格式**，見下）值來自資料、不解析標記。
+- 斷行/autoGrow 量測走 span-aware 路徑（`WrapSpans`，逐段以各自字型量寬——粗體較寬）；行高、baseline、對齊幾何與純文字一致，對齊以整行各段寬度總和計算。
+- **text 儲存格**：展開期（`ExpandedRow.Rich`）就解析＋逐段插值（吃重複列相對 key／$ 函式），繪製走 `drawRichCell`——wrap 格 span-aware 換行＋列高量測、單行格 span-aware 截斷加 …（省略號沿用截斷點樣式）。含標記即觸發逐格繪製路徑。
+- 無標記的元素/表格走原本純文字路徑（golden byte 不變）。
+- placeholder（元素與儲存格）**不**解析標記（值來自資料）。
+- **placeholder 是舊格式**：編輯器已收斂成 text＋`{{key|format}}`（載入舊樣板自動遷移）；引擎的 placeholder 路徑**保留**——宿主可能直接 POST 舊格式樣板到 render API。
+
 ## 表格
 
 - 欄寬/列高逐一指定（pt）；框線色寬（寬 0 = 不畫格線）；表格層級字型/字級/內距。
@@ -43,20 +54,20 @@
 - **群組**：`groupBy`（相鄰相同值分組，資料需先排序）＋群組首列/尾列（每組各插一次；相對 key 以該組第一筆解析）。
 - **跨頁分片**：每片重畫表頭列（= 重複列之前、扣掉群組首尾列的列）。
 - **儲存格能力**：
-  - 類型：text（含插值）／placeholder（key＋sample＋format；**sample 僅供設計期畫布預覽，正式渲染缺 key → 留空並警告，不以 sample 冒充真資料**；與插值行為一致）／image（contain 縮進內距矩形）／barcode（symbology＋showText；內容 = key 綁定或 value 靜態值，與條碼元素同一套繪製）
-  - text/placeholder 支援 underline（gopdf 原生底線，套在 regular/bold 字型上，style 字串 "U"）；粗體走 -bold 字型檔。無 italic 字型檔故不支援斜體。
+  - 類型：text（含插值；編輯器唯一的文字綁定介面）／placeholder（**舊格式**：key＋sample＋format，引擎保留渲染路徑；注意其缺 key 時退回 sample，與插值「留空＋警告」不同——新樣板不再產生此類型）／image（contain 縮進內距矩形）／barcode（symbology＋showText；內容 = key 綁定或 value 靜態值，與條碼元素同一套繪製）
+  - 儲存格支援 underline（gopdf 原生底線，套在 regular/bold 字型上，style 字串 "U"）；粗體走 -bold 字型檔。text 儲存格支援行內樣式標記（含 `[i]` 斜體，見「資料語法」節）；儲存格無獨立的底線/斜體欄位。
   - **旋轉**：`rotation`（度，順時針）繞元素中心旋轉，以 gopdf `Rotate`/`RotateReset`（q/Q，可巢狀）包住繪製（共用 `withRotation`）；引擎傳 `-rotation`（gopdf 正角為逆時針，取負以對齊前端畫布 CSS 的順時針）。一般元素走 drawElement、**重複列表格走 fragment 路徑，兩條都套旋轉**（繞各分片框中心）。版面仍以未旋轉框計算。
   - 合併：colSpan/rowSpan（被蓋住的格不畫）
-  - 樣式：逐格字級/文字色/**背景色 fillColor**（底色先畫、框線內容蓋上）/粗體
+  - 樣式：逐格字級/文字色/**背景色 fillColor**（底色先畫、框線內容蓋上）/粗體/斜體（`italic` 整格，走假斜體字型變體；僅斜體不觸發逐格路徑，快速路徑亦支援）
   - 對齊：align 左/中/右 × vAlign 上/中/下（未設 = 置中）
   - **逐格框線 borders**：top/right/bottom/left（nil = 四邊都畫；共用線任一側有開就畫）＋ diagDown ╲/diagUp ╱ 斜線
   - **自動換行 wrap**：greedy 換行（中文逐字/英文按詞），列高 = max(設計列高, 行數×1.2×字級＋2×內距)，只增不減；列高在版面計算階段以真實字型量測，位移/分頁/繪製一致。未開 wrap = 單行超寬裁切加「…」
-- **快速路徑**：無合併/逐格樣式/框線/換行/圖片的表格走整條格線快速路徑（輸出與舊版 byte 相同）；任一進階能力觸發逐格繪製。
+- **快速路徑**：無合併/逐格樣式/框線/換行/圖片/行內標記的表格走整條格線快速路徑（輸出與舊版 byte 相同）；任一進階能力觸發逐格繪製。
 
 ## 其他元素
 
 - **矩形/線條**：線型（實線/虛線/點線）；矩形支援 shape=ellipse（橢圓/圓）與圓角——`cornerRadius`（四角相同）或 `cornerRadii{tl,tr,br,bl}`（四角獨立，優先於前者；半徑 0 的角為直角）。圓角/橢圓用多邊形近似繪製（可填色+描邊+虛線），無圓角的直角矩形走原快速路徑（golden 不變）。
-- **文字/資料欄位**：greedy 換行、對齊、行高、外框/底色/內距；autoGrow 內容超高時撐高並推移下方元素（band 內只長高自身）。
+- **文字**：greedy 換行、對齊、行高、外框/底色/內距；autoGrow 內容超高時撐高並推移下方元素（band 內只長高自身）；行內樣式標記（見「資料語法」節）。placeholder 元素為舊格式（引擎保留渲染路徑，行為同 text＋單一 key；編輯器載入即遷移）。
 - **圖片**：三種來源，優先序 **key（動態綁定）> url（固定連結）> assetId（已上傳）**。key 綁定時渲染資料中的值 = 圖片 URL（fallback sample）；url 為靜態連結，兩者都由引擎渲染時抓取嵌入。防護：僅 http/https、逾時 5 秒、上限 10MB、內容嗅探必須 PNG/JPEG；同一次渲染同 URL 只抓一次（快取含失敗）。抓取失敗發警告不擋渲染（strict 模式回 422）。表格圖片儲存格同樣支援三種來源（重複列相對 key 在展開時解析，每列可不同圖）。注意：URL 由渲染資料指定，引擎會向其發出請求——部署時信任邊界在呼叫方（宿主後端）。
 - **條碼**：code128/code39/ean13/qr（boombuler/barcode）；key 綁定 fallback sample，或 content 靜態值；1D 可加人讀文字。
 - **容器**：子元素相對座標、跨頁 keep-together（整組移到下一頁）、內部 repeat/autoGrow 推移後容器自動撐高。
@@ -71,7 +82,7 @@
 
 ## 字型
 
-內建 sans/serif/mono（Noto TC，Big5 常用字 subset，與前端同 TTF）；使用者匯入字型以 id 為字型名動態註冊，壞檔跳過並警告。註冊固定排序（決定性）。
+內建 sans/serif/mono（Noto TC，Big5 常用字 subset，與前端同 TTF），每家族四變體：regular／bold／**italic／bolditalic**。CJK 沒有真斜體檔，斜體變體由 `backend/fonts/gen_oblique.py`（fonttools）對正體/粗體做 12° 斜切預先產生（假斜體，同 Word 做法；斜切不改變字寬，量測與正體共用）。**斜體變體只在樣板用到斜體（`[i]` 標記或元素/儲存格 `italic` 欄位）時才註冊**——註冊即寫入 PDF 字型物件，無條件註冊會改變所有既有樣板的輸出 byte。使用者匯入字型以 id 為字型名動態註冊（無粗/斜變體，沿用同檔），壞檔跳過並警告。註冊固定排序（決定性）。
 
 ## 錯誤與警告
 

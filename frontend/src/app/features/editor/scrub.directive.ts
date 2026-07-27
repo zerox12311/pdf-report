@@ -23,6 +23,9 @@ export class ScrubDirective {
   scrubMin = input<number | undefined>(undefined);
   scrubMax = input<number | undefined>(undefined);
   scrubChange = output<number>();
+  /** 拖曳開始/結束（呼叫端可在拖曳期間顯示輔助預覽，如重複區塊的筆間距示意） */
+  scrubStart = output<void>();
+  scrubEnd = output<void>();
 
   private host = inject(ElementRef).nativeElement as HTMLElement;
   private cleanup: (() => void) | null = null;
@@ -38,6 +41,7 @@ export class ScrubDirective {
     e.preventDefault();
 
     const start = this.value();
+    this.scrubStart.emit();
     const step = this.scrubStep();
     let acc = 0; // 累積的指標位移（px）
     // 指標鎖定：游標消失、movementX 不受視窗邊界限制 → 可無限往同方向拖
@@ -59,6 +63,7 @@ export class ScrubDirective {
       window.removeEventListener('pointerup', onUp);
       if (document.pointerLockElement === this.host) document.exitPointerLock?.();
       this.cleanup = null;
+      this.scrubEnd.emit();
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);

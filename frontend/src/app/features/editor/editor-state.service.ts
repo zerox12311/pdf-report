@@ -93,6 +93,22 @@ export class EditorStateService {
     this.applyElementPatch(tableId, { cells } as Partial<TableElement>, allowed);
   }
 
+  /**
+   * text 儲存格的富文字提交（value＋粗體一起寫）——設計模式限定。
+   * 受限（fill）模式不走這裡：後端白名單只允許改 value，粗體是樣式。
+   */
+  setCellRich(tableId: string, row: number, col: number, value: string, bold: boolean, italic: boolean) {
+    if (this.restricted()) return;
+    const t = this.tableOf(tableId);
+    const cell = t?.cells[row]?.[col];
+    if (!t || !cell || cell.kind !== 'text') return;
+    const cells = t.cells.map((r, ri) => r.map((c, ci) => {
+      if (ri !== row || ci !== col) return c;
+      return { ...c, value, bold, italic };
+    }));
+    this.applyElementPatch(tableId, { cells } as Partial<TableElement>, true);
+  }
+
   /** 受限模式下 patchSelectedCells 是否放行：只改 value，且選取範圍內每一格都是可填的 text 格。 */
   private isFillableCellPatch(tableId: string, patch: Partial<TableCell>): boolean {
     const keys = Object.keys(patch);
@@ -111,6 +127,13 @@ export class EditorStateService {
   }
   /** 預覽分頁的資料 JSON（跨分頁切換保留；存檔時併回文件的 sampleData） */
   readonly previewData = signal('');
+
+  /** 畫布顯示變數原文：true = 不代入範例資料、直接顯示 {{key}}（一眼看出哪裡是變數）。工具列切換。 */
+  readonly rawTokenView = signal(false);
+
+  /** 筆間距預覽：調整重複區塊的 gap 時（scrub 拖曳或輸入框聚焦），
+   *  畫布為該 list 畫出半透明的第 2、3 筆示意，看得出每筆會落在哪。存 list 元素 id。 */
+  readonly gapPreview = signal<string | null>(null);
 
   /** 改設計期測試資料：同時標記未存檔，否則使用者貼完 JSON 直接離開會默默丟掉。 */
   setPreviewData(v: string) {

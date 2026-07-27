@@ -220,6 +220,25 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             }
           </div>
         }
+        <!-- 筆間距預覽：調整重複區塊 gap 時，畫出半透明的第 2、3 筆示意（不可互動） -->
+        @if (gapPreviewEl(); as gl) {
+          @for (i of [1, 2]; track i) {
+            <div class="el ghost-record"
+              [style.left.px]="gl.x * z()"
+              [style.top.px]="modelToVisualY(gl.y + i * (gl.height + (gl.gap ?? 0)))"
+              [style.width.px]="gl.width * z()"
+              [style.height.px]="gl.height * z()">
+              <div class="list-box"><div class="list-tag">第 {{ i + 1 }} 筆</div></div>
+              @for (child of gl.children ?? []; track child.id) {
+                <div class="el child"
+                  [style.left.px]="child.x * z()" [style.top.px]="child.y * z()"
+                  [style.width.px]="child.width * z()" [style.height.px]="elHeight(child) * z()">
+                  @if (child.type !== 'list') { <app-canvas-element [el]="child" /> }
+                </div>
+              }
+            </div>
+          }
+        }
       </div>
     </div>
   `,
@@ -309,6 +328,9 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
     /* 巢狀明細（第二層）：換色以與外層區分 */
     .list-box.nested { border-color: #0d9488; background: rgba(13, 148, 136, .06); }
     .list-box.nested .list-tag { color: #0f766e; background: rgba(204, 251, 241, .95); }
+    /* 筆間距預覽的示意筆：半透明、不可互動 */
+    .ghost-record { opacity: .38; pointer-events: none; z-index: 8; }
+    .ghost-record .list-box { border-style: dashed; }
     .resize-handle { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px;
       background: #2563eb; border: 2px solid #fff; border-radius: 50%; cursor: nwse-resize; z-index: 6; }
     /* 旋轉感應區：四角外側透明區，hover 才把游標換成旋轉箭頭（不顯示常駐按鈕；同 Figma）。
@@ -341,6 +363,14 @@ export class EditorCanvasComponent {
   elementPicked = output<void>();
 
   /** 目前節的有效頁面（節可覆寫紙張；single 節無 band） */
+  /** 筆間距預覽目標：gapPreview 指到的 list 元素（不存在或非 list 回 null） */
+  gapPreviewEl = computed(() => {
+    const id = this.state.gapPreview();
+    if (!id) return null;
+    const el = this.state.findElement(id);
+    return el?.type === 'list' ? el : null;
+  });
+
   page = computed(() => this.state.activePage());
   pageW = computed(() => this.page().width);
   pageH = computed(() => this.page().height);

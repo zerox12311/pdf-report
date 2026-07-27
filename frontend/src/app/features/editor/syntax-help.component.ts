@@ -22,7 +22,7 @@ const GROUPS: { name: string; entries: SyntaxEntry[] }[] = [
       {
         code: '{{key|格式}}',
         title: '插值加格式',
-        detail: '在 key 後面加 | 與格式名稱，即可套用下方「格式」區列出的任一種。資料欄位元件也可以在屬性面板的格式下拉選同樣的格式。',
+        detail: '在 key 後面加 | 與格式名稱，即可套用下方「格式」區列出的任一種。',
         example: '金額：{{total|comma}}',
       },
     ],
@@ -53,6 +53,29 @@ const GROUPS: { name: string; entries: SyntaxEntry[] }[] = [
       { code: '$gsum(欄位)', title: '群組小計', detail: '放在群組尾列的儲存格。', example: '{{$gsum(amount)}}' },
       { code: '$gcount', title: '群組筆數', detail: '放在群組首列或尾列的儲存格。', example: '{{$gcount}}' },
       { code: '$gavg(欄位)', title: '群組平均', detail: '放在群組尾列的儲存格。', example: '{{$gavg(amount)}}' },
+    ],
+  },
+  {
+    name: '行內樣式（文字元件與表格文字格）',
+    entries: [
+      {
+        code: '[b]…[/b]',
+        title: '部分文字粗體',
+        detail: '通常不用手寫：雙擊文字元件或表格文字格後選取一段，用浮動工具列的 B 上粗體即可。可與 [i]、[c=#…] 巢狀混用；插值 token 可以放在標記內。',
+        example: '合計 [b]{{total|comma}}[/b] 元',
+      },
+      {
+        code: '[i]…[/i]',
+        title: '部分文字斜體',
+        detail: '通常不用手寫：雙擊文字元件或表格文字格後選取一段，用浮動工具列的 I 上斜體即可。中文字型以假斜體（12° 斜切）呈現，同 Word 做法；匯入字型無斜體變體時以正體呈現。',
+        example: '[i]備註：逾期另計違約金[/i]',
+      },
+      {
+        code: '[c=#rrggbb]…[/c]',
+        title: '部分文字變色',
+        detail: '工具列色票提供常用 9 色；其他色值在屬性面板的內容欄（或儲存格值）手寫這個標記即可（六位十六進位色碼）。巢狀時內層優先。',
+        example: '應繳金額 [c=#dc2626]{{amount|comma}}[/c] 元',
+      },
     ],
   },
 ];

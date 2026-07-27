@@ -1,8 +1,8 @@
 import { BarcodeSymbology, NewTemplateElement, TableCell, TemplateElement, emptyCell, newId } from '../../core/models/template.model';
 
-/** 元件盤可新增的元素動作 */
+/** 元件盤可新增的元素動作（資料綁定統一用文字的 {{key}} 插值，不再有獨立的資料欄位元件） */
 export type PaletteAction =
-  | 'text' | 'placeholder' | 'image' | 'table' | 'rect' | 'line' | 'barcode' | 'cvs3' | 'container' | 'list';
+  | 'text' | 'image' | 'table' | 'rect' | 'line' | 'barcode' | 'cvs3' | 'container' | 'list';
 
 /** 元件盤「條碼」的預設值（新元素與拖進儲存格共用，避免兩處 drift） */
 const BARCODE_DEFAULTS = {
@@ -61,11 +61,6 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
         type: 'text', x: 40, y: baseY, width: 200, height: 24,
         content: '文字內容', fontSize: 14, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
       }];
-    case 'placeholder':
-      return [{
-        type: 'placeholder', x: 40, y: baseY + 30, width: 160, height: 20,
-        key: 'field1', sample: '範例值', fontSize: 12, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
-      }];
     case 'image':
       // 佔位圖片：來源（上傳檔案或綁定圖片 URL）之後在屬性面板設定
       return [{
@@ -116,12 +111,12 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
         title: '區塊', borderWidth: 1, borderColor: '#94a3b8', fillColor: null, children: [],
       }];
     case 'list':
-      // 重複區塊：綁陣列 key，內含一筆的自由版面。預設放一個相對 key 的資料欄位起手。
+      // 重複區塊：綁陣列 key，內含一筆的自由版面。預設放一個相對 key 的插值文字起手。
       return [{
         type: 'list', x: 40, y: baseY, width: 320, height: 28, key: 'items', gap: 4,
         children: [{
-          id: newId(), type: 'placeholder', x: 8, y: 5, width: 160, height: 18,
-          key: 'name', sample: '範例', fontSize: 12, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
+          id: newId(), type: 'text', x: 8, y: 5, width: 160, height: 18,
+          content: '{{name}}', fontSize: 12, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
         }],
       }];
   }
@@ -135,11 +130,11 @@ export interface DataKeyPayload {
   fields?: { key: string; sample: string }[];
 }
 
-/** 從資料 key 生成資料欄位元素（拖曳資料分頁的 scalar 節點） */
-export function placeholderFromData(key: string, sample: string): NewTemplateElement {
+/** 從資料 key 生成插值文字元素（拖曳資料分頁的 scalar 節點） */
+export function placeholderFromData(key: string, _sample: string): NewTemplateElement {
   return {
-    type: 'placeholder', x: 0, y: 0, width: 140, height: 18,
-    key, sample: sample || '範例',
+    type: 'text', x: 0, y: 0, width: 140, height: 18,
+    content: `{{${key}}}`,
     fontSize: 12, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
   };
 }
@@ -156,7 +151,7 @@ export function tableFromArray(key: string, fields: { key: string; sample: strin
     repeat: { enabled: true, key, rowIndex: 1 },
     cells: [
       cols.map(f => ({ ...emptyCell(), value: f.key, align: 'center' as const, bold: true })),
-      cols.map(f => ({ ...emptyCell(), kind: 'placeholder' as const, key: f.key, sample: f.sample })),
+      cols.map(f => ({ ...emptyCell(), value: `{{${f.key}}}` })),
     ],
   };
 }

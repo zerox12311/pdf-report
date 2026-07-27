@@ -144,6 +144,7 @@ type Element struct {
 	Align      string  `json:"align"` // left | center | right
 	LineHeight float64 `json:"lineHeight"`
 	Bold       bool    `json:"bold"`
+	Italic     bool    `json:"italic"`    // 整個元素斜體（假斜體字型變體；text 亦可用 [i] 標記做局部）
 	Underline  bool    `json:"underline"` // text/placeholder 底線（gopdf 原生渲染）
 	Format     string  `json:"format"`    // placeholder 格式化：comma | twUpper | 空 = 原樣
 
@@ -218,6 +219,7 @@ type TableCell struct {
 	Align  string `json:"align"`
 	VAlign string `json:"vAlign"` // 垂直對齊 top|middle|bottom（空 = middle）
 	Bold   bool   `json:"bold"`
+	Italic bool   `json:"italic"` // 整格斜體（text 格亦可用 [i] 標記做局部）
 	Format string `json:"format"` // placeholder 格式化：comma | twUpper | 空 = 原樣
 
 	ColSpan  int     `json:"colSpan"`  // 合併儲存格：向右合併欄數（<=1 = 不合併）

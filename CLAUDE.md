@@ -51,7 +51,7 @@ docker compose up -d --build                                  # 完整 demo（�
 - **Golden 測試**：`internal/engine/golden_test.go` 對 `testdata/golden/*.pdf` 做 **byte 比對**。引擎重構後 golden 必須全過；視覺相同但 byte 改變的變更要走「舊路徑保留」策略（例：表格無合併時走整條格線快速路徑）。重新產生：`go test ./internal/engine/ -run TestGoldenPDF -update-golden`（先目視確認輸出）。
 - **渲染決定性**：同輸入必須產出 byte 相同的 PDF（字型註冊固定排序等）。不要在引擎內引入 map 迭代順序或時間依賴。
 - **httpapi `New` 維持 100% 覆蓋**（`go tool cover -func`），新 endpoint 要補齊所有分支的測試。
-- **格式化雙實作**：`internal/engine/format.go`（權威）↔ `frontend/src/app/core/utils/format-value.ts`（畫布預覽鏡像），改一邊必改另一邊＋兩邊測試（format_test.go / format-value.spec.ts）。
+- **格式化雙實作**：`internal/engine/format.go`（權威）↔ `frontend/src/app/core/utils/format-value.ts`（畫布預覽鏡像），改一邊必改另一邊＋兩邊測試（format_test.go / format-value.spec.ts）。**行內樣式標記同理**：`internal/engine/richtext.go` ↔ `core/utils/rich-text.ts`（`[b][i][c=#rrggbb]`，richtext_test.go / rich-text.spec.ts）。
 - **EditorStateService 必須可 `new` 建構**（specs 直接 `new EditorStateService()`，內部不得用 `inject()`）。
 - **改過 Angular 樣板就要跑 `npx ng build --configuration production`**：`tsc --noEmit` **不檢查樣板**，karma 的 spec 也沒有實例化 editor-canvas／editor-page，所以「型別乾淨＋單元測試全過」可能還是**建置失敗**（實際踩過：`@if (el.autoGrow)` 對 `ImageElement` 不存在，tsc 與 82 個測試全過但 ng build 直接 ERROR）。樣板裡要用只存在於部分元素型別的欄位，走 component 方法收斂型別（例：`growsOnOverflow(el)`）。
 - 渲染錯誤不靜默：資料缺 key → 警告（`X-Render-Warnings` header）；`?strict=1` → 422。壞 JSON body → 400。這是財務單據產品的硬要求。

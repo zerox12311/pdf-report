@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { JsonEditorComponent } from '../../shared/json-editor.component';
 import { EditorStateService } from './editor-state.service';
 import { DataKeyPayload } from './element-factory';
 import { SyntaxHelpComponent } from './syntax-help.component';
@@ -20,14 +21,14 @@ interface DataNode {
 @Component({
   selector: 'app-data-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, SyntaxHelpComponent],
+  imports: [FormsModule, SyntaxHelpComponent, JsonEditorComponent],
   template: `
     <div class="panel">
       <h3>資料</h3>
       <div class="hint">貼上後端預計 POST 過來的 <b>data</b> JSON（預覽分頁用同一份）。從下方清單把欄位<b>拖到畫布</b>生成元件；<b>拖到表格的儲存格上</b>則直接把該格變成資料欄位（拖進重複列會自動轉相對 key）。</div>
       <button class="fill" (click)="fillSample()">用畫布現有欄位產生範例資料</button>
-      <textarea spellcheck="false" placeholder='{"customer":{"name":"王小明"},"items":[{"name":"商品A","qty":1}]}'
-        [ngModel]="state.previewData()" (ngModelChange)="state.setPreviewData($event)"></textarea>
+      <app-json-editor [value]="state.previewData()" (valueChange)="state.setPreviewData($event)"
+        placeholderText='{"customer":{"name":"王小明"},"items":[{"name":"商品A","qty":1}]}' />
       @if (parsed().error; as err) {
         <div class="error">{{ err }}</div>
       }
@@ -61,6 +62,7 @@ interface DataNode {
     .fill { font: inherit; padding: 5px 10px; border: 1px solid #93b4f8; background: #eff6ff;
       color: #1d4ed8; border-radius: 5px; cursor: pointer; }
     .fill:hover { background: #dbeafe; }
+    app-json-editor { height: 220px; flex-shrink: 0; }
     textarea { font-family: monospace; font-size: 11px; min-height: 140px; border: 1px solid #ccc;
       border-radius: 6px; padding: 8px; resize: vertical; }
     .error { color: #dc2626; font-size: 12px; }

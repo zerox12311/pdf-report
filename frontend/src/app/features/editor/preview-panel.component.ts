@@ -2,13 +2,14 @@ import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, inject, signal 
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { TemplateApiService } from '../../core/services/template-api.service';
+import { JsonEditorComponent } from '../../shared/json-editor.component';
 import { EditorStateService } from './editor-state.service';
 
 /** 預覽分頁（Jasper 的 Preview tab）：資料 JSON + 後端引擎渲染結果 */
 @Component({
   selector: 'app-preview-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, JsonEditorComponent],
   template: `
     <div class="layout">
       <div class="data-col">
@@ -16,7 +17,7 @@ import { EditorStateService } from './editor-state.service';
           <span>資料 JSON</span>
           <button (click)="resetSampleData()">用範例值重建</button>
         </div>
-        <textarea [(ngModel)]="dataJson" spellcheck="false"></textarea>
+        <app-json-editor [value]="state.previewData()" (valueChange)="state.setPreviewData($event)" />
         <button class="primary" (click)="render()" [disabled]="loading()">
           {{ loading() ? '產生中…' : '重新產生 PDF' }}
         </button>
@@ -39,7 +40,7 @@ import { EditorStateService } from './editor-state.service';
     :host { display: block; flex: 1; min-height: 0; background: #eef1f5; }
     .layout { display: flex; gap: 10px; height: 100%; padding: 10px; box-sizing: border-box; }
     .data-col { width: 270px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
-    .data-col textarea { flex: 1; font-family: monospace; font-size: 12px; border: 1px solid #ccc; border-radius: 6px; padding: 8px; resize: none; }
+    .data-col app-json-editor { flex: 1; min-height: 0; }
     .pdf-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     .col-head { font-size: 13px; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center; }
     .col-head button {
@@ -63,7 +64,7 @@ import { EditorStateService } from './editor-state.service';
   `,
 })
 export class PreviewPanelComponent implements OnInit {
-  private state = inject(EditorStateService);
+  readonly state = inject(EditorStateService);
   private api = inject(TemplateApiService);
   private sanitizer = inject(DomSanitizer);
 

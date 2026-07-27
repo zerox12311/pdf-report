@@ -43,11 +43,25 @@ import (
 //   - 其他元素：整個放不下就搬到下一頁（keep-together）；其後元素依位移順推。
 //   - placeholder key "$page"（目前頁碼）/ "$pages"（總頁數）由引擎解析。
 
-// fontFiles 字型家族 → TTF 檔名（fonts 目錄下）；家族名與前端 fontFamily 值對應
-var fontFiles = map[string][2]string{
-	"sans":  {"NotoSansTC-Regular.ttf", "NotoSansTC-Bold.ttf"},   // 黑體（預設）
-	"serif": {"NotoSerifTC-Regular.ttf", "NotoSerifTC-Bold.ttf"}, // 明體
-	"mono":  {"NotoSansMono-Regular.ttf", "NotoSansMono-Bold.ttf"}, // 等寬（英數）
+// fontFiles 字型家族 → TTF 檔名（fonts 目錄下，依序 regular/bold/italic/bolditalic）；
+// 家族名與前端 fontFamily 值對應。斜體檔是 gen_oblique.py 產生的 12° 假斜體（CJK 無真斜體）。
+var fontFiles = map[string][4]string{
+	"sans":  {"NotoSansTC-Regular.ttf", "NotoSansTC-Bold.ttf", "NotoSansTC-Italic.ttf", "NotoSansTC-BoldItalic.ttf"},       // 黑體（預設）
+	"serif": {"NotoSerifTC-Regular.ttf", "NotoSerifTC-Bold.ttf", "NotoSerifTC-Italic.ttf", "NotoSerifTC-BoldItalic.ttf"},   // 明體
+	"mono":  {"NotoSansMono-Regular.ttf", "NotoSansMono-Bold.ttf", "NotoSansMono-Italic.ttf", "NotoSansMono-BoldItalic.ttf"}, // 等寬（英數）
+}
+
+// fontVariant 家族名加上樣式後綴（與 fontFiles 檔案順序對應的註冊名）。
+func fontVariant(family string, bold, italic bool) string {
+	switch {
+	case bold && italic:
+		return family + "-bolditalic"
+	case bold:
+		return family + "-bold"
+	case italic:
+		return family + "-italic"
+	}
+	return family
 }
 
 // 版面常數（pt）
@@ -126,9 +140,10 @@ func (e *Engine) loadUserFonts() map[string][]byte {
 // loadFonts 把全部 TTF 讀進記憶體（只做一次）；失敗保留錯誤，之後每次渲染回報同樣錯誤。
 func (e *Engine) loadFonts() {
 	e.fontOnce.Do(func() {
-		e.fontData = make(map[string][]byte, len(fontFiles)*2)
+		e.fontData = make(map[string][]byte, len(fontFiles)*4)
 		for family, files := range fontFiles {
-			for i, name := range []string{family, family + "-bold"} {
+			names := []string{family, family + "-bold", family + "-italic", family + "-bolditalic"}
+			for i, name := range names {
 				data, err := os.ReadFile(filepath.Join(e.fontsDir, files[i]))
 				if err != nil {
 					e.fontErr = fmt.Errorf("載入字型 %s 失敗: %w", name, err)
@@ -213,7 +228,7 @@ func (c *drawCtx) applyWrapHeights(t *Element, rows []ExpandedRow) {
 			if cell.FontSize > 0 {
 				fs = cell.FontSize
 			}
-			if err := c.setFont(t.FontFamily, fs, cell.Bold, false); err != nil {
+			if err := c.setFont(t.FontFamily, fs, cell.Bold, cell.Italic, false); err != nil {
 				continue
 			}
 			cs := max(1, cell.ColSpan)
@@ -221,8 +236,14 @@ func (c *drawCtx) applyWrapHeights(t *Element, rows []ExpandedRow) {
 			for i := ci; i < min(ci+cs, len(t.ColumnWidths)); i++ {
 				w += t.ColumnWidths[i]
 			}
-			lines := WrapText(row.Texts[ci], w-2*t.CellPadding, c.measure)
-			needed := float64(len(lines))*cellLineHeight*fs + 2*t.CellPadding
+			var lineCount int
+			if row.Rich != nil && ci < len(row.Rich) && row.Rich[ci] != nil {
+				// 行內樣式標記：與繪製同一套 span-aware 斷行，行數才會一致
+				lineCount = len(WrapSpans(row.Rich[ci], w-2*t.CellPadding, c.cellSpanMeasure(t.FontFamily, fs, cell.Bold, cell.Italic)))
+			} else {
+				lineCount = len(WrapText(row.Texts[ci], w-2*t.CellPadding, c.measure))
+			}
+			needed := float64(lineCount)*cellLineHeight*fs + 2*t.CellPadding
 			if needed > row.Height {
 				row.Height = needed
 			}
@@ -378,16 +399,22 @@ func (l *layout) applyGrowth(meas *drawCtx) {
 		if !el.AutoGrow || (el.Type != "text" && el.Type != "placeholder") {
 			return 0
 		}
-		text := meas.interpolate(el.Content)
-		if el.Type == "placeholder" {
-			// 缺 key 留空（不用設計期 sample 冒充真資料）；與 869 繪製處必須一致，否則 autoGrow 量測高度對不上
-			text = formatValue(meas.resolveKey(el.Key, ""), el.Format)
+		var lineCount int
+		if el.Type == "text" && HasRichMarkup(el.Content) {
+			// 含行內標記：與 drawRichTextBlock 同一套斷行，行數才會一致
+			lineCount = len(meas.wrapRichSpans(el, meas.richSpans(el)))
+		} else {
+			text := meas.interpolate(el.Content)
+			if el.Type == "placeholder" {
+				// 缺 key 留空（不用設計期 sample 冒充真資料）；與繪製處必須一致，否則 autoGrow 量測高度對不上
+				text = formatValue(meas.resolveKey(el.Key, ""), el.Format)
+			}
+			if err := meas.setFont(el.FontFamily, el.FontSize, el.Bold, el.Italic, el.Underline); err != nil {
+				return 0
+			}
+			lineCount = len(WrapText(text, el.Width-2*el.Padding, meas.measure))
 		}
-		if err := meas.setFont(el.FontFamily, el.FontSize, el.Bold, el.Underline); err != nil {
-			return 0
-		}
-		lines := WrapText(text, el.Width-2*el.Padding, meas.measure)
-		needed := textBlockHeight(len(lines), el)
+		needed := textBlockHeight(lineCount, el)
 		if needed <= el.Height {
 			return 0
 		}
@@ -780,13 +807,25 @@ func (e *Engine) Render(doc *TemplateDoc, data any) ([]byte, []string, error) {
 	pdf := &gopdf.GoPdf{}
 	pdf.Start(gopdf.Config{PageSize: base, Unit: gopdf.UnitPT})
 	pdf.SetMargins(0, 0, 0, 0)
-	// 固定順序註冊：確保同輸入產出 byte 相同的 PDF（golden 測試與快取的前提）
+	// 固定順序註冊：確保同輸入產出 byte 相同的 PDF（golden 測試與快取的前提）。
+	// 斜體變體只在樣板用到 [i] 標記時註冊：註冊即寫入 PDF 字型物件，
+	// 無條件註冊會改變所有既有樣板的輸出 byte。
+	needItalic := false
+	for _, sl := range layouts {
+		if docHasItalicMarkup(sl.doc) {
+			needItalic = true
+			break
+		}
+	}
 	fontNames := make([]string, 0, len(e.fontData))
 	for name := range e.fontData {
 		fontNames = append(fontNames, name)
 	}
 	sort.Strings(fontNames)
 	for _, name := range fontNames {
+		if !needItalic && strings.HasSuffix(name, "italic") {
+			continue
+		}
 		if err := pdf.AddTTFFontData(name, e.fontData[name]); err != nil {
 			return nil, nil, fmt.Errorf("註冊字型 %s 失敗: %w", name, err)
 		}
@@ -897,29 +936,22 @@ func parseColor(hex string) (uint8, uint8, uint8) {
 	return uint8(r), uint8(g), uint8(b)
 }
 
-func (c *drawCtx) setFont(family string, size float64, bold, underline bool) error {
-	// gopdf 樣式字串：底線（U）為原生裝飾，套在 regular/bold 字型上；粗體另走 -bold 字型檔
+func (c *drawCtx) setFont(family string, size float64, bold, italic, underline bool) error {
+	// gopdf 樣式字串：底線（U）為原生裝飾；粗體/斜體另走變體字型檔（斜體為 gen_oblique.py 假斜體）
 	style := ""
 	if underline {
 		style = "U"
 	}
 	if _, ok := fontFiles[family]; ok {
-		if bold {
-			family += "-bold"
-		}
-		return c.pdf.SetFont(family, style, size)
+		return c.pdf.SetFont(fontVariant(family, bold, italic), style, size)
 	}
-	// 使用者匯入字型（以字型 id 為家族名；無粗體變體，粗體沿用同檔）
+	// 使用者匯入字型（以字型 id 為家族名；無粗體/斜體變體，沿用同檔）
 	if family != "" {
 		if err := c.pdf.SetFont(family, style, size); err == nil {
 			return nil
 		}
 	}
-	f := "sans"
-	if bold {
-		f += "-bold"
-	}
-	return c.pdf.SetFont(f, style, size)
+	return c.pdf.SetFont(fontVariant("sans", bold, italic), style, size)
 }
 
 func (c *drawCtx) measure(s string) float64 {
@@ -1022,6 +1054,9 @@ func (c *drawCtx) drawElement(el *Element, y float64) error {
 	}
 	switch el.Type {
 	case "text":
+		if HasRichMarkup(el.Content) {
+			return c.drawRichTextBlock(el, y)
+		}
 		return c.drawTextBlock(el, c.interpolate(el.Content), y)
 	case "placeholder":
 		// 缺 key 留空（不用設計期 sample 冒充真資料）；與 315 量測處一致
@@ -1074,7 +1109,7 @@ func (c *drawCtx) drawContainer(el *Element, y float64) error {
 		c.pdf.RectFromUpperLeftWithStyle(el.X, y, el.Width, el.Height, style)
 	}
 	if el.Title != "" {
-		if err := c.setFont("sans", 9, true, false); err != nil {
+		if err := c.setFont("sans", 9, true, false, false); err != nil {
 			return err
 		}
 		c.pdf.SetTextColor(51, 65, 85)
@@ -1093,25 +1128,30 @@ func (c *drawCtx) drawContainer(el *Element, y float64) error {
 	return nil
 }
 
-func (c *drawCtx) drawTextBlock(el *Element, text string, y float64) error {
-	// 外框 / 底色（BorderColor/BorderWidth/FillColor 與其他元素型別共用欄位）
-	if el.FillColor != nil || el.BorderWidth > 0 {
-		style := ""
-		if el.BorderWidth > 0 {
-			r, g, b := parseColor(el.BorderColor)
-			c.pdf.SetStrokeColor(r, g, b)
-			c.pdf.SetLineWidth(el.BorderWidth)
-			style += "D"
-		}
-		if el.FillColor != nil {
-			r, g, b := parseColor(*el.FillColor)
-			c.pdf.SetFillColor(r, g, b)
-			style += "F"
-		}
-		c.pdf.RectFromUpperLeftWithStyle(el.X, y, el.Width, el.Height, style)
+// drawTextBox 文字元素的外框 / 底色（BorderColor/BorderWidth/FillColor 與其他元素型別共用欄位）
+func (c *drawCtx) drawTextBox(el *Element, y float64) {
+	if el.FillColor == nil && el.BorderWidth <= 0 {
+		return
 	}
+	style := ""
+	if el.BorderWidth > 0 {
+		r, g, b := parseColor(el.BorderColor)
+		c.pdf.SetStrokeColor(r, g, b)
+		c.pdf.SetLineWidth(el.BorderWidth)
+		style += "D"
+	}
+	if el.FillColor != nil {
+		r, g, b := parseColor(*el.FillColor)
+		c.pdf.SetFillColor(r, g, b)
+		style += "F"
+	}
+	c.pdf.RectFromUpperLeftWithStyle(el.X, y, el.Width, el.Height, style)
+}
 
-	if err := c.setFont(el.FontFamily, el.FontSize, el.Bold, el.Underline); err != nil {
+func (c *drawCtx) drawTextBlock(el *Element, text string, y float64) error {
+	c.drawTextBox(el, y)
+
+	if err := c.setFont(el.FontFamily, el.FontSize, el.Bold, el.Italic, el.Underline); err != nil {
 		return err
 	}
 	r, g, b := parseColor(el.Color)
@@ -1134,6 +1174,70 @@ func (c *drawCtx) drawTextBlock(el *Element, text string, y float64) error {
 			if err := c.pdf.Text(line); err != nil {
 				return err
 			}
+		}
+		baseline += el.LineHeight * el.FontSize
+	}
+	return nil
+}
+
+// richSpans 解析文字元素的行內標記並逐段插值。
+// 先解析標記再插值：資料值裡的中括號只會是字面文字，無法注入樣式。
+func (c *drawCtx) richSpans(el *Element) []Span {
+	spans := ParseRichText(el.Content)
+	for i := range spans {
+		spans[i].Text = c.interpolate(spans[i].Text)
+	}
+	return spans
+}
+
+// wrapRichSpans 依元素字型設定做 span-aware 斷行（[b] 與元素粗體疊加；斜體與正體同寬）。
+func (c *drawCtx) wrapRichSpans(el *Element, spans []Span) [][]StyledRun {
+	return WrapSpans(spans, el.Width-2*el.Padding, func(s string, bold, italic bool) float64 {
+		if err := c.setFont(el.FontFamily, el.FontSize, el.Bold || bold, el.Italic || italic, false); err != nil {
+			return 0
+		}
+		return c.measure(s)
+	})
+}
+
+// drawRichTextBlock 含行內標記（[b][i][c=#..]）的文字元素：逐段設定字型與顏色繪製。
+// 行高、baseline、對齊幾何與 drawTextBlock 一致；無標記的元素不會走到這裡。
+func (c *drawCtx) drawRichTextBlock(el *Element, y float64) error {
+	c.drawTextBox(el, y)
+	lines := c.wrapRichSpans(el, c.richSpans(el))
+	pad := el.Padding
+	innerX, innerW := el.X+pad, el.Width-2*pad
+	baseline := y + pad + BaselineRatio*el.FontSize
+	for _, line := range lines {
+		total := 0.0
+		for _, run := range line {
+			total += run.Width
+		}
+		lx := innerX
+		switch el.Align {
+		case "center":
+			lx = innerX + (innerW-total)/2
+		case "right":
+			lx = innerX + innerW - total
+		}
+		for _, run := range line {
+			if run.Text == "" {
+				continue
+			}
+			if err := c.setFont(el.FontFamily, el.FontSize, el.Bold || run.Bold, el.Italic || run.Italic, el.Underline); err != nil {
+				return err
+			}
+			color := run.Color
+			if color == "" {
+				color = el.Color
+			}
+			r, g, b := parseColor(color)
+			c.pdf.SetTextColor(r, g, b)
+			c.pdf.SetXY(lx, baseline)
+			if err := c.pdf.Text(run.Text); err != nil {
+				return err
+			}
+			lx += run.Width
 		}
 		baseline += el.LineHeight * el.FontSize
 	}
@@ -1421,7 +1525,7 @@ func (c *drawCtx) drawWatermark(wm *Watermark, pageW, pageH float64) error {
 	if color == "" {
 		color = "#e5e7eb"
 	}
-	if err := c.setFont("sans", size, true, false); err != nil {
+	if err := c.setFont("sans", size, true, false, false); err != nil {
 		return err
 	}
 	r, g, b := parseColor(color)
@@ -1491,6 +1595,82 @@ func (c *drawCtx) drawWatermark(wm *Watermark, pageW, pageH float64) error {
 
 // drawTableCells 逐格繪製（支援 colSpan/rowSpan 與逐格字級/顏色）。
 // rowSpan 以本分片為限（跨頁分片時夾住，不畫出分片外）。
+// cellSpanMeasure 儲存格的 span 量測（儲存格粗體與 [b] 疊加；斜體與正體同寬仍帶入）。
+func (c *drawCtx) cellSpanMeasure(family string, fs float64, cellBold, cellItalic bool) SpanMeasure {
+	return func(s string, bold, italic bool) float64 {
+		if err := c.setFont(family, fs, cellBold || bold, cellItalic || italic, false); err != nil {
+			return 0
+		}
+		return c.measure(s)
+	}
+}
+
+// drawRichCell 含行內樣式標記的 text 儲存格：span-aware 斷行/截斷後逐段設字型與顏色繪製。
+// 幾何與 drawTableCells 的純文字路徑一致（單行置中的 baseline 與 block 公式等價）。
+func (c *drawCtx) drawRichCell(t *Element, cell *TableCell, spans []Span, x0, y0, w, h float64) error {
+	fs := t.FontSize
+	if cell.FontSize > 0 {
+		fs = cell.FontSize
+	}
+	meas := c.cellSpanMeasure(t.FontFamily, fs, cell.Bold, cell.Italic)
+	innerW := w - 2*t.CellPadding
+	lineH := cellLineHeight * fs
+	var lines [][]StyledRun
+	if cell.Wrap {
+		lines = WrapSpans(spans, innerW, meas)
+	} else {
+		lines = [][]StyledRun{TruncateRuns(RunsFromSpans(spans, meas), innerW, meas)}
+	}
+	blockH := float64(len(lines)) * lineH
+	var blockTop float64
+	switch cell.VAlign {
+	case "top":
+		blockTop = y0 + t.CellPadding
+	case "bottom":
+		blockTop = y0 + h - t.CellPadding - blockH
+	default:
+		blockTop = y0 + (h-blockH)/2
+	}
+	for i, line := range lines {
+		total := 0.0
+		for _, run := range line {
+			total += run.Width
+		}
+		lx := x0 + t.CellPadding
+		switch cell.Align {
+		case "center":
+			lx = x0 + t.CellPadding + (innerW-total)/2
+		case "right":
+			lx = x0 + t.CellPadding + innerW - total
+		}
+		baseline := blockTop + (float64(i)+0.5)*lineH + CellBaselineRatio*fs
+		for _, run := range line {
+			if run.Text == "" {
+				continue
+			}
+			if err := c.setFont(t.FontFamily, fs, cell.Bold || run.Bold, cell.Italic || run.Italic, false); err != nil {
+				return err
+			}
+			color := run.Color
+			if color == "" {
+				color = cell.Color
+			}
+			if color != "" {
+				cr, cg, cb := parseColor(color)
+				c.pdf.SetTextColor(cr, cg, cb)
+			} else {
+				c.pdf.SetTextColor(0, 0, 0)
+			}
+			c.pdf.SetXY(lx, baseline)
+			if err := c.pdf.Text(run.Text); err != nil {
+				return err
+			}
+			lx += run.Width
+		}
+	}
+	return nil
+}
+
 func (c *drawCtx) drawTableCells(t *Element, y float64, rows []ExpandedRow) error {
 	type rc struct{ r, c int }
 	cols := len(t.ColumnWidths)
@@ -1620,12 +1800,18 @@ func (c *drawCtx) drawTableCells(t *Element, y float64, rows []ExpandedRow) erro
 				}
 				continue
 			}
+			if cell != nil && row.Rich != nil && ci < len(row.Rich) && row.Rich[ci] != nil {
+				if err := c.drawRichCell(t, cell, row.Rich[ci], x0, y0, w, h); err != nil {
+					return err
+				}
+				continue
+			}
 			if cell != nil && text != "" {
 				fs := t.FontSize
 				if cell.FontSize > 0 {
 					fs = cell.FontSize
 				}
-				if err := c.setFont(t.FontFamily, fs, cell.Bold, false); err != nil {
+				if err := c.setFont(t.FontFamily, fs, cell.Bold, cell.Italic, false); err != nil {
 					return err
 				}
 				if cell.Color != "" {
@@ -1740,7 +1926,7 @@ func (c *drawCtx) drawBarcodeRect(symbology, val string, wantText bool, x, y, w,
 		c.pdf.SetStrokeColor(220, 38, 38)
 		c.pdf.SetLineWidth(1)
 		c.pdf.RectFromUpperLeftWithStyle(x, y, w, h, "D")
-		_ = c.setFont("sans", 8, false, false)
+		_ = c.setFont("sans", 8, false, false, false)
 		c.pdf.SetTextColor(220, 38, 38)
 		c.pdf.SetXY(x+3, y+12)
 		return c.pdf.Text("條碼編碼失敗: " + err.Error())
@@ -1768,7 +1954,7 @@ func (c *drawCtx) drawBarcodeRect(symbology, val string, wantText bool, x, y, w,
 		return err
 	}
 	if showText {
-		if err := c.setFont("mono", 9, false, false); err != nil {
+		if err := c.setFont("mono", 9, false, false, false); err != nil {
 			return err
 		}
 		c.pdf.SetTextColor(0, 0, 0)
@@ -1779,9 +1965,12 @@ func (c *drawCtx) drawBarcodeRect(symbology, val string, wantText bool, x, y, w,
 	return nil
 }
 
-// tableHasSpansOrCellStyle 是否需要逐格繪製（合併儲存格或逐格樣式）。
+// tableHasSpansOrCellStyle 是否需要逐格繪製（合併儲存格、逐格樣式或行內樣式標記）。
 func tableHasSpansOrCellStyle(rows []ExpandedRow) bool {
 	for _, row := range rows {
+		if row.Rich != nil {
+			return true
+		}
 		for i := range row.Cells {
 			cell := &row.Cells[i]
 			if cell.ColSpan > 1 || cell.RowSpan > 1 || cell.FontSize > 0 || cell.Color != "" || cell.FillColor != "" || cell.Borders != nil || cell.Wrap || cell.VAlign != "" || cell.Kind == "image" || cell.Kind == "barcode" {
@@ -1842,7 +2031,7 @@ func (c *drawCtx) drawTableFragment(t *Element, y float64, rows []ExpandedRow) e
 				text = row.Texts[ci]
 			}
 			if cell != nil && text != "" {
-				if err := c.setFont(t.FontFamily, t.FontSize, cell.Bold, false); err != nil {
+				if err := c.setFont(t.FontFamily, t.FontSize, cell.Bold, cell.Italic, false); err != nil {
 					return err
 				}
 				c.pdf.SetTextColor(0, 0, 0)

@@ -35,6 +35,67 @@ describe('template.model', () => {
     expect(v.validation!.fields[1].source).toBe('manual');
   });
 
+  describe('資料欄位（placeholder）遷移成 text＋{{}}', () => {
+    it('placeholder 元素 → text，key＋格式進 content，樣式保留', () => {
+      const doc = normalizeTemplate({
+        name: 'm',
+        sections: [{ id: 's', name: '內頁', kind: 'flow', elements: [
+          { id: 'p1', type: 'placeholder', x: 1, y: 2, width: 100, height: 20,
+            key: 'customer.name', sample: '王小明', format: 'comma',
+            fontSize: 12, color: '#dc2626', align: 'right', lineHeight: 1.2, bold: true },
+        ] }],
+      } as any);
+      const el = doc.sections[0].elements[0] as TextElement;
+      expect(el.type).toBe('text');
+      expect(el.content).toBe('{{customer.name|comma}}');
+      expect(el.color).toBe('#dc2626');
+      expect(el.bold).toBeTrue();
+      expect((el as any).key).toBeUndefined();
+      expect((el as any).sample).toBeUndefined();
+    });
+
+    it('無格式 → {{key}}；空 key → 空內容；容器內也遷移', () => {
+      const doc = normalizeTemplate({
+        name: 'm',
+        sections: [{ id: 's', name: '內頁', kind: 'flow', elements: [
+          { id: 'c', type: 'container', x: 0, y: 0, width: 200, height: 100, children: [
+            { id: 'p2', type: 'placeholder', x: 0, y: 0, width: 80, height: 16,
+              key: 'qty', sample: '1', fontSize: 10, color: '#000000', align: 'left', lineHeight: 1.2, bold: false },
+            { id: 'p3', type: 'placeholder', x: 0, y: 20, width: 80, height: 16,
+              key: '', sample: '', fontSize: 10, color: '#000000', align: 'left', lineHeight: 1.2, bold: false },
+          ] },
+        ] }],
+      } as any);
+      const kids = (doc.sections[0].elements[0] as ContainerElement).children as TextElement[];
+      expect(kids[0].content).toBe('{{qty}}');
+      expect(kids[1].content).toBe('');
+    });
+
+    it('表格 placeholder 格 → text 格（value={{key|format}}，粗體等樣式保留）', () => {
+      const doc = normalizeTemplate({
+        name: 'm',
+        sections: [{ id: 's', name: '內頁', kind: 'flow', elements: [
+          { id: 't', type: 'table', x: 0, y: 0, width: 200, height: 40,
+            columnWidths: [100, 100], rowHeights: [20, 20],
+            borderColor: '#000', borderWidth: 1, fontSize: 10, cellPadding: 4,
+            cells: [
+              [{ kind: 'text', value: 'name', bold: true, align: 'center' }, { kind: 'text', value: 'amt', bold: true, align: 'center' }],
+              [{ kind: 'placeholder', key: 'name', sample: 'x', align: 'left', bold: false },
+               { kind: 'placeholder', key: 'amt', sample: '0', format: 'comma', align: 'right', bold: true }],
+            ] },
+        ] }],
+      } as any);
+      const t = doc.sections[0].elements[0] as TableElement;
+      expect(t.cells[1][0].kind).toBe('text');
+      expect(t.cells[1][0].value).toBe('{{name}}');
+      expect(t.cells[1][1].value).toBe('{{amt|comma}}');
+      expect(t.cells[1][1].bold).toBeTrue();
+      expect(t.cells[1][1].align).toBe('right');
+      // 非 placeholder 格原樣
+      expect(t.cells[0][0].value).toBe('name');
+    });
+  });
+
   it('fontCss 對未知/未設家族回黑體', () => {
     expect(fontCss(undefined)).toContain('Noto Sans TC');
     expect(fontCss('serif')).toContain('Noto Serif TC');

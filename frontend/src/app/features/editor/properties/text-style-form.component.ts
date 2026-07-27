@@ -38,6 +38,7 @@ import { SliderFieldComponent } from './slider-field.component';
         </label>
       </div>
       <label class="row"><input type="checkbox" [ngModel]="el.bold" (ngModelChange)="patch({ bold: $event })" /> 粗體</label>
+      <label class="row"><input type="checkbox" [ngModel]="!!el.italic" (ngModelChange)="patch({ italic: $event })" /> 斜體</label>
       <label class="row"><input type="checkbox" [ngModel]="el.underline ?? false" (ngModelChange)="patch({ underline: $event })" /> 底線</label>
       <label class="row"><input type="checkbox" [ngModel]="el.autoGrow ?? false" (ngModelChange)="patch({ autoGrow: $event })" /> 內容超出時自動增高（推擠下方元素）</label>
       <div class="sub">外框與底色</div>

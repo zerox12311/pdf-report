@@ -6,6 +6,7 @@ import { FontService } from '../../core/services/font.service';
 import { EmbedContextService } from '../../core/services/embed-context.service';
 import { EmbedTokenService } from '../../core/services/embed-token.service';
 import { HostBridgeService } from '../../core/services/host-bridge.service';
+import { stripRichMarkup } from '../../core/utils/rich-text';
 import { ModalService } from '../../core/services/modal.service';
 import { TemplateApiService } from '../../core/services/template-api.service';
 import { ContextMenuComponent } from './context-menu.component';
@@ -17,6 +18,7 @@ import { PaletteAction, canDropIntoCell, createElements } from './element-factor
 import { PreviewPanelComponent } from './preview-panel.component';
 import { ValidationPanelComponent } from './validation-panel.component';
 import { PropertiesPanelComponent } from './properties-panel.component';
+import { JsonEditorComponent } from '../../shared/json-editor.component';
 
 interface PaletteItem {
   icon: string;
@@ -27,7 +29,7 @@ interface PaletteItem {
 @Component({
   selector: 'app-editor-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, EditorCanvasComponent, PropertiesPanelComponent, PreviewPanelComponent, ValidationPanelComponent, IntegrationDialogComponent, DataPanelComponent, ContextMenuComponent],
+  imports: [FormsModule, RouterLink, EditorCanvasComponent, PropertiesPanelComponent, PreviewPanelComponent, ValidationPanelComponent, IntegrationDialogComponent, DataPanelComponent, ContextMenuComponent, JsonEditorComponent],
   providers: [EditorStateService],
   template: `
     <div class="editor">
@@ -48,7 +50,6 @@ interface PaletteItem {
             <button class="save" (click)="save()" [disabled]="saving()">
               {{ saving() ? '儲存中…' : state.dirty() ? '儲存 *' : '儲存' }}
             </button>
-            @if (savedAt()) { <span class="saved-tip" role="status">✓ 已儲存</span> }
           }
         </div>
       </header>
@@ -167,7 +168,16 @@ interface PaletteItem {
         <!-- 中間：分頁（設計 / JSON / 預覽） -->
         <main class="center">
           <div class="tabbar">
-            <button [class.on]="tab() === 'design'" (click)="switchTab('design')">設計</button>
+            <button [class.on]="tab() === 'design'" (click)="switchTab('design')">設計
+              @if (!state.restricted()) {
+                <!-- 即時渲染開關：開（藍）= 代入範例資料；關（灰）= 顯示變數原文，一眼看出哪裡是變數 -->
+                <span class="live-switch" role="switch" [class.off]="state.rawTokenView()"
+                  [attr.aria-checked]="!state.rawTokenView()"
+                  [title]="state.rawTokenView() ? '目前顯示變數原文——點擊改為代入範例資料' : '目前代入範例資料——點擊改為顯示變數原文'"
+                  (click)="$event.stopPropagation(); state.rawTokenView.set(!state.rawTokenView())"
+                  ><span class="knob"></span></span>
+              }
+            </button>
             @if (!embedded && !state.restricted()) {
               <button [class.on]="tab() === 'json'" (click)="switchTab('json')">樣板JSON</button>
             }
@@ -175,30 +185,56 @@ interface PaletteItem {
             <span class="spacer"></span>
             @if (tab() === 'design' && state.selectedIds().length > 1) {
               <div class="zoom align-group" title="對齊/分佈選取的元素">
-                <button class="zbtn" (click)="state.alignSelected('left')" title="左對齊">⇤</button>
-                <button class="zbtn" (click)="state.alignSelected('hcenter')" title="水平置中">⇔</button>
-                <button class="zbtn" (click)="state.alignSelected('right')" title="右對齊">⇥</button>
+                <button class="zbtn" (click)="state.alignSelected('left')" title="左對齊">
+                  <svg viewBox="0 0 14 14"><path d="M2.5 1.5v11"/><rect x="4.5" y="3.2" width="7" height="2.4" rx=".6"/><rect x="4.5" y="8.4" width="4.5" height="2.4" rx=".6"/></svg>
+                </button>
+                <button class="zbtn" (click)="state.alignSelected('hcenter')" title="水平置中">
+                  <svg viewBox="0 0 14 14"><path d="M7 1.5v11"/><rect x="3" y="3.2" width="8" height="2.4" rx=".6"/><rect x="4.7" y="8.4" width="4.6" height="2.4" rx=".6"/></svg>
+                </button>
+                <button class="zbtn" (click)="state.alignSelected('right')" title="右對齊">
+                  <svg viewBox="0 0 14 14"><path d="M11.5 1.5v11"/><rect x="2.5" y="3.2" width="7" height="2.4" rx=".6"/><rect x="5" y="8.4" width="4.5" height="2.4" rx=".6"/></svg>
+                </button>
                 <span class="sep"></span>
-                <button class="zbtn" (click)="state.alignSelected('top')" title="頂端對齊">⤒</button>
-                <button class="zbtn" (click)="state.alignSelected('vcenter')" title="垂直置中">⇕</button>
-                <button class="zbtn" (click)="state.alignSelected('bottom')" title="底端對齊">⤓</button>
+                <button class="zbtn" (click)="state.alignSelected('top')" title="頂端對齊">
+                  <svg viewBox="0 0 14 14"><path d="M1.5 2.5h11"/><rect x="3.2" y="4.5" width="2.4" height="7" rx=".6"/><rect x="8.4" y="4.5" width="2.4" height="4.5" rx=".6"/></svg>
+                </button>
+                <button class="zbtn" (click)="state.alignSelected('vcenter')" title="垂直置中">
+                  <svg viewBox="0 0 14 14"><path d="M1.5 7h11"/><rect x="3.2" y="3" width="2.4" height="8" rx=".6"/><rect x="8.4" y="4.7" width="2.4" height="4.6" rx=".6"/></svg>
+                </button>
+                <button class="zbtn" (click)="state.alignSelected('bottom')" title="底端對齊">
+                  <svg viewBox="0 0 14 14"><path d="M1.5 11.5h11"/><rect x="3.2" y="2.5" width="2.4" height="7" rx=".6"/><rect x="8.4" y="5" width="2.4" height="4.5" rx=".6"/></svg>
+                </button>
                 @if (state.selectedIds().length > 2) {
                   <span class="sep"></span>
-                  <button class="zbtn" (click)="state.distributeSelected('h')" title="水平等距分佈">↔</button>
-                  <button class="zbtn" (click)="state.distributeSelected('v')" title="垂直等距分佈">↕</button>
+                  <button class="zbtn" (click)="state.distributeSelected('h')" title="水平等距分佈">
+                    <svg viewBox="0 0 14 14"><path d="M2 2v10M12 2v10"/><rect x="5.8" y="4" width="2.4" height="6" rx=".6"/></svg>
+                  </button>
+                  <button class="zbtn" (click)="state.distributeSelected('v')" title="垂直等距分佈">
+                    <svg viewBox="0 0 14 14"><path d="M2 2h10M2 12h10"/><rect x="4" y="5.8" width="6" height="2.4" rx=".6"/></svg>
+                  </button>
                 }
               </div>
             }
             @if (tab() === 'design') {
               <div class="zoom undo-group">
-                <button class="zbtn" [disabled]="!state.undoCount()" (click)="state.undo()" title="上一步（Ctrl/⌘+Z）">↺</button>
-                <button class="zbtn" [disabled]="!state.redoCount()" (click)="state.redo()" title="重做（Ctrl/⌘+Shift+Z）">↻</button>
+                <button class="zbtn" [disabled]="!state.undoCount()" (click)="state.undo()" title="上一步（Ctrl/⌘+Z）">
+                  <svg viewBox="0 0 14 14"><path d="M2.5 5.5H9a3.25 3.25 0 1 1 0 6.5H5.5"/><path d="M5.5 2.5 2.5 5.5l3 3"/></svg>
+                </button>
+                <button class="zbtn" [disabled]="!state.redoCount()" (click)="state.redo()" title="重做（Ctrl/⌘+Shift+Z）">
+                  <svg viewBox="0 0 14 14"><path d="M11.5 5.5H5a3.25 3.25 0 1 0 0 6.5h3.5"/><path d="M8.5 2.5l3 3-3 3"/></svg>
+                </button>
               </div>
               <div class="zoom" title="觸控板捏合可縮放（30%–300%）；點百分比重設 120%">縮放
-                <button class="zbtn" (click)="zoomBy(-0.1)">−</button>
+                <button class="zbtn" (click)="zoomBy(-0.1)" title="縮小">
+                  <svg viewBox="0 0 14 14"><path d="M3 7h8"/></svg>
+                </button>
                 <span class="zval" (click)="state.zoom.set(1.2)">{{ zoomPct() }}%</span>
-                <button class="zbtn" (click)="zoomBy(0.1)">＋</button>
-                <button class="zbtn zfit" (click)="fitZoom()" title="符合寬度：整張紙剛好放進畫布">⇔</button>
+                <button class="zbtn" (click)="zoomBy(0.1)" title="放大">
+                  <svg viewBox="0 0 14 14"><path d="M7 3v8M3 7h8"/></svg>
+                </button>
+                <button class="zbtn zfit" (click)="fitZoom()" title="符合寬度：整張紙剛好放進畫布">
+                  <svg viewBox="0 0 14 14"><path d="M2 2.5v9M12 2.5v9"/><path d="M4.2 7h5.6M5.7 5.5 4.2 7l1.5 1.5M8.3 5.5 9.8 7 8.3 8.5"/></svg>
+                </button>
               </div>
             }
             @if (!embedded && !state.restricted()) {
@@ -210,7 +246,7 @@ interface PaletteItem {
             @case ('design') { <app-editor-canvas (elementPicked)="rightTab.set('props')" /> }
             @case ('json') {
               <div class="json-tab">
-                <textarea [ngModel]="jsonText()" (ngModelChange)="jsonText.set($event)" spellcheck="false"></textarea>
+                <app-json-editor [value]="jsonText()" (valueChange)="jsonText.set($event)" />
                 <div class="json-actions">
                   <button class="apply" (click)="applyJson()">套用 JSON</button>
                   @if (jsonError(); as err) { <span class="error">{{ err }}</span> }
@@ -251,10 +287,6 @@ interface PaletteItem {
       background: #0f172a; color: #fff; width: 220px; }
     .right { margin-left: auto; display: flex; gap: 8px; }
     .save { background: #22c55e; color: #fff; border: none; border-radius: 6px; padding: 6px 16px; cursor: pointer; }
-    .saved-tip { margin-left: 8px; color: #16a34a; font-size: 12px; font-weight: 600; white-space: nowrap;
-      animation: savedIn .15s ease-out; }
-    @keyframes savedIn { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
-    @media (prefers-reduced-motion: reduce) { .saved-tip { animation: none; } }
     .save:disabled { opacity: .6; }
     .link { background: #334155; color: #e2e8f0; border: 1px solid #475569; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
     .link:hover { background: #3e4f66; }
@@ -351,9 +383,27 @@ interface PaletteItem {
     .tabbar .tab-right { margin-left: 10px; border-left: 1px solid #cfd6df; }
     .tabbar .zoom { font-size: 12px; color: #475569; display: flex; align-items: center; gap: 4px; padding-right: 4px; }
     .tabbar select { padding: 3px; border-radius: 5px; }
-    .zbtn { border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 5px; width: 22px; height: 22px;
-      cursor: pointer; color: #475569; line-height: 1; padding: 0; }
-    .zbtn:hover:not(:disabled) { background: #eff6ff; color: #1d4ed8; }
+    /* 設計分頁內的即時渲染開關：開（藍）= 代入資料；關（灰）= 變數原文 */
+    .live-switch { display: inline-block; width: 26px; height: 14px; border-radius: 7px; margin-left: 6px;
+      background: #2563eb; vertical-align: -2px; cursor: pointer; position: relative;
+      transition: background .15s; }
+    .live-switch .knob { position: absolute; top: 2px; left: 14px; width: 10px; height: 10px;
+      border-radius: 50%; background: #fff; transition: left .15s; }
+    .live-switch.off { background: #cbd5e1; }
+    .live-switch.off .knob { left: 2px; }
+    /* .tabbar button 的分頁樣式（padding 8px 16px＋2px 底線）優先權較高會蓋掉 .zbtn，
+       這裡用 .tabbar .zoom .zbtn 拿回控制權並以 flex 置中字符 */
+    /* 工具列小按鈕：扁平、flex 置中；圖示一律用內嵌 SVG（Unicode 箭頭字符的墨水
+       在字身框內偏上 1–2.5px、修不完，SVG 幾何可控保證置中） */
+    .tabbar .zoom .zbtn, .zbtn { border: none; background: none; border-radius: 5px;
+      width: 22px; height: 22px; box-sizing: border-box; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      cursor: pointer; color: #475569; line-height: 1; }
+    .zbtn svg { display: block; width: 14px; height: 14px; overflow: visible; }
+    .zbtn svg path { fill: none; stroke: currentColor; stroke-width: 1.4;
+      stroke-linecap: round; stroke-linejoin: round; }
+    .zbtn svg rect { fill: currentColor; stroke: none; }
+    .tabbar .zoom .zbtn:hover:not(:disabled), .zbtn:hover:not(:disabled) { background: #d8dfe8; color: #1d4ed8; }
     .zbtn:disabled { opacity: .4; cursor: default; }
     .undo-group { margin-right: 8px; }
     .align-group { margin-right: 8px; }
@@ -362,6 +412,7 @@ interface PaletteItem {
     .zval:hover { color: #1d4ed8; }
 
     .json-tab { flex: 1; display: flex; flex-direction: column; padding: 10px; gap: 8px; min-height: 0; background: #eef1f5; }
+    .json-tab app-json-editor { flex: 1; min-height: 0; }
     .json-tab textarea { flex: 1; font-family: monospace; font-size: 12px; border: 1px solid #ccc;
       border-radius: 6px; padding: 10px; resize: none; }
     .json-actions { display: flex; align-items: center; gap: 10px; }
@@ -396,6 +447,24 @@ export class EditorPageComponent {
   private router = inject(Router);
   private modal = inject(ModalService);
 
+  /** 站內導航（返回鍵/上一頁/改網址）離開前的未儲存確認；路由 canDeactivate 呼叫。 */
+  async confirmLeave(): Promise<boolean> {
+    if (!this.state.dirty()) return true;
+    return this.modal.confirm({
+      title: '有未儲存的變更',
+      message: '離開後這些變更會遺失。要放棄變更離開，還是留下來儲存？',
+      confirmLabel: '放棄變更並離開',
+      cancelLabel: '留在編輯器',
+      danger: true,
+    });
+  }
+
+  /** 關閉/重新整理瀏覽器前的未儲存提醒（瀏覽器原生對話框，內容不可自訂）。 */
+  @HostListener('window:beforeunload', ['$event'])
+  onBeforeUnload(e: BeforeUnloadEvent) {
+    if (this.state.dirty()) e.preventDefault();
+  }
+
   /** 控制台在專案內新建時的目標專案（?project=）；首次 create 時帶入。 */
   newProjectId?: string;
 
@@ -414,16 +483,6 @@ export class EditorPageComponent {
   @ViewChild('imageInput') imageInput?: { nativeElement: HTMLInputElement };
 
   saving = signal(false);
-  /** 存檔成功後短暫顯示「✓ 已儲存」。按鈕上的 * 消失太隱晦——填寫模式的使用者
-   *  常常不確定到底存進去沒，財務單據不該讓人猜。 */
-  savedAt = signal(false);
-  private savedTimer: ReturnType<typeof setTimeout> | null = null;
-
-  private flashSaved() {
-    this.savedAt.set(true);
-    if (this.savedTimer) clearTimeout(this.savedTimer);
-    this.savedTimer = setTimeout(() => this.savedAt.set(false), 2500);
-  }
   showIntegration = signal(false);
   rightTab = signal<'props' | 'data'>('props');
   tab = signal<'design' | 'json' | 'preview' | 'validation'>('design');
@@ -478,8 +537,7 @@ export class EditorPageComponent {
     {
       name: '基本',
       items: [
-        { icon: 'T', label: '文字', action: 'text' },
-        { icon: '{}', label: '資料欄位', action: 'placeholder' },
+        { icon: 'T', label: '文字（變數）', action: 'text' },
         { icon: '🖼', label: '圖片', action: 'image' },
       ],
     },
@@ -595,7 +653,7 @@ export class EditorPageComponent {
     const [id, rc] = addr.split('#');
     const el = this.state.findElement(id);
     if (!el) return null;
-    if (!rc) return el.type === 'text' ? (el.content || '（空白欄位）').slice(0, 20) : this.labelOf(el);
+    if (!rc) return el.type === 'text' ? (stripRichMarkup(el.content) || '（空白欄位）').slice(0, 20) : this.labelOf(el);
     const [r, c] = rc.split(',').map(Number);
     const cell = el.type === 'table' ? el.cells[r]?.[c] : null;
     if (!cell) return null;
@@ -634,7 +692,7 @@ export class EditorPageComponent {
 
   private labelOf(el: TemplateElement): string {
     switch (el.type) {
-      case 'text': return el.content.split('\n')[0] || '文字';
+      case 'text': return stripRichMarkup(el.content).split('\n')[0] || '文字';
       case 'placeholder': return el.key ? `{{${el.key}}}` : '資料欄位';
       case 'table': {
         const rep = el.repeat?.enabled ? ` ↻${el.repeat.key}` : '';
@@ -968,7 +1026,6 @@ export class EditorPageComponent {
         // 不用 state.load()：那會清空 undo、取消選取、跳回第一節。
         // 送出的就是畫面上的值，DB 已與畫面一致，只要把「未存」標記清掉。
         this.state.dirty.set(false);
-        this.flashSaved();
         this.bridge.notify('template-saved', t.id);
         return;
       }
@@ -979,7 +1036,6 @@ export class EditorPageComponent {
       if (!t.id) {
         this.router.navigate(['/editor', saved.id], { replaceUrl: true });
       }
-      this.flashSaved();
       // 宿主系統由此事件取得樣板 id，之後其後端可 POST /api/templates/{id}/render 填資料出 PDF
       this.bridge.notify('template-saved', saved.id);
     } catch (e) {

@@ -49,9 +49,13 @@ export const routes: Routes = [
   },
 
   // 編輯器：非嵌入需 session；iframe 嵌入放行、改由 embed token 授權（見 editorGuard）。
+  // canDeactivate：有未儲存變更時離開前確認（返回鍵/上一頁/站內導航都會經過）。
   {
     path: 'editor/:id',
     canActivate: [editorGuard],
+    canDeactivate: [
+      (component: { confirmLeave: () => Promise<boolean> }) => component.confirmLeave(),
+    ],
     loadComponent: () =>
       import('./features/editor/editor-page.component').then(m => m.EditorPageComponent),
   },
