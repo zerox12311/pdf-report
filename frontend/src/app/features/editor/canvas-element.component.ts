@@ -444,7 +444,7 @@ export class CanvasElementComponent {
     return this.segsOf(text, k => this.effectiveCellKey(el, row, k));
   }
 
-  private static readonly INTERP_RE = /\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g;
+  private static readonly INTERP_RE = /\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}/g;
 
   private segsOf(content: string, mapKey: (key: string) => string): { text: string; tok: boolean }[] {
     if (!content.includes('{{')) return content ? [{ text: content, tok: false }] : [];

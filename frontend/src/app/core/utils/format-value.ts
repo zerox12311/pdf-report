@@ -3,14 +3,47 @@
 
 import { ValueFormat } from '../models/template.model';
 
-export function formatValue(s: string, format: ValueFormat | undefined): string {
-  switch (format) {
-    case 'comma': return commaFormat(s);
+/**
+ * 格式可帶參數：round(n) 四捨五入固定 n 位（round = 取整數）、comma(n) 四捨五入 n 位＋千分位。
+ * 未知格式/壞參數/非數字 → 原樣返回。
+ */
+export function formatValue(s: string, format: ValueFormat | string | undefined): string {
+  let name = format ?? '';
+  let arg = '';
+  const p = name.indexOf('(');
+  if (p >= 0 && name.endsWith(')')) {
+    arg = name.slice(p + 1, -1).trim();
+    name = name.slice(0, p);
+  }
+  switch (name) {
+    case 'comma': {
+      if (arg !== '') {
+        const r = roundFixed(s, arg);
+        return r === null ? s : commaFormat(r);
+      }
+      return commaFormat(s);
+    }
+    case 'round': {
+      const r = roundFixed(s, arg === '' ? '0' : arg);
+      return r === null ? s : r;
+    }
     case 'twUpper': return twUpperAmount(s);
     case 'rocDate': return rocDate(s, false);
     case 'rocDateLong': return rocDate(s, true);
     default: return s;
   }
+}
+
+/** 四捨五入（half away from zero；與 Go math.Round 一致）到 n 位並固定位數。參數/值不合法回 null。 */
+function roundFixed(s: string, nArg: string): string | null {
+  const n = Number.parseInt(nArg, 10);
+  if (!Number.isInteger(n) || String(n) !== nArg || n < 0 || n > 10) return null;
+  const v = Number.parseFloat(s.trim());
+  if (!Number.isFinite(v)) return null;
+  const p = Math.pow(10, n);
+  let r = (v < 0 ? -1 : 1) * Math.round(Math.abs(v) * p) / p;
+  if (r === 0) r = 0; // 消 -0
+  return r.toFixed(n);
 }
 
 function splitNumber(s: string): { neg: boolean; intPart: string; decPart: string } | null {

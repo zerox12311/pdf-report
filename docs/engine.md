@@ -20,7 +20,7 @@
 
 ### 行內插值（文字元素與表格儲存格共用）
 
-`{{key}}`、`{{key|format}}`——key 可為資料路徑（`customer.name`、`items[0].qty`）、引擎函式或（重複列內）相對 key。regex：`\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}`。
+`{{key}}`、`{{key|format}}`——key 可為資料路徑（`customer.name`、`items[0].qty`）、引擎函式或（重複列內）相對 key。regex：`\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}`（格式名可帶括號參數）。
 
 ### 引擎保留 key
 
@@ -34,7 +34,7 @@
 
 ### 值格式化（format.go；前端鏡像 format-value.ts）
 
-`comma` 千分位｜`twUpper` 金額國字大寫（壹拾…元整，銀行慣例）｜`rocDate` 民國年（114/07/20）｜`rocDateLong` 民國年長式（民國114年7月20日）。
+`comma` 千分位（小數原樣）｜`comma(n)` 四捨五入固定 n 位＋千分位｜`round(n)` 四捨五入固定 n 位（`round` = 取整數；half away from zero，前後端一致）｜`twUpper` 金額國字大寫（壹拾…元整，銀行慣例）｜`rocDate` 民國年（114/07/20）｜`rocDateLong` 民國年長式（民國114年7月20日）。未知格式/壞參數/非數字一律原樣。
 
 ### 行內樣式標記（richtext.go；前端鏡像 rich-text.ts）——text 元素與 text 儲存格
 
@@ -68,7 +68,7 @@
 
 - **矩形/線條**：線型（實線/虛線/點線）；矩形支援 shape=ellipse（橢圓/圓）與圓角——`cornerRadius`（四角相同）或 `cornerRadii{tl,tr,br,bl}`（四角獨立，優先於前者；半徑 0 的角為直角）。圓角/橢圓用多邊形近似繪製（可填色+描邊+虛線），無圓角的直角矩形走原快速路徑（golden 不變）。
 - **文字**：greedy 換行、對齊、行高、外框/底色/內距；autoGrow 內容超高時撐高並推移下方元素（band 內只長高自身）；行內樣式標記（見「資料語法」節）。placeholder 元素為舊格式（引擎保留渲染路徑，行為同 text＋單一 key；編輯器載入即遷移）。
-- **圖片**：三種來源，優先序 **key（動態綁定）> url（固定連結）> assetId（已上傳）**。key 綁定時渲染資料中的值 = 圖片 URL（fallback sample）；url 為靜態連結，兩者都由引擎渲染時抓取嵌入。防護：僅 http/https、逾時 5 秒、上限 10MB、內容嗅探必須 PNG/JPEG；同一次渲染同 URL 只抓一次（快取含失敗）。抓取失敗發警告不擋渲染（strict 模式回 422）。表格圖片儲存格同樣支援三種來源（重複列相對 key 在展開時解析，每列可不同圖）。注意：URL 由渲染資料指定，引擎會向其發出請求——部署時信任邊界在呼叫方（宿主後端）。
+- **圖片**：三種來源，優先序 **key（動態綁定）> url（固定連結）> assetId（已上傳）**。key 綁定時渲染資料中的值 = 圖片 URL（fallback sample）；url 為靜態連結，兩者都由引擎渲染時抓取嵌入。防護：僅 http/https、逾時 5 秒、上限 10MB、內容嗅探必須 PNG/JPEG/WebP（WebP 解碼轉 8-bit PNG 再進管線——gopdf 不吃 webp，但實務圖床常見）；同一次渲染同 URL 只抓一次（快取含失敗）。抓取失敗發警告不擋渲染（strict 模式回 422）。表格圖片儲存格同樣支援三種來源（重複列相對 key 在展開時解析，每列可不同圖）。注意：URL 由渲染資料指定，引擎會向其發出請求——部署時信任邊界在呼叫方（宿主後端）。
 - **條碼**：code128/code39/ean13/qr（boombuler/barcode）；key 綁定 fallback sample，或 content 靜態值；1D 可加人讀文字。
 - **容器**：子元素相對座標、跨頁 keep-together（整組移到下一頁）、內部 repeat/autoGrow 推移後容器自動撐高。
 - **重複區塊（list，`list.go`）**：綁 `key` 陣列，`children` 為「一筆」的自由版面（座標相對區塊左上角、`height` = 一筆高）。`ExpandList` 每筆蓋一次、攤平成一串「葉原子（listBlock）」，分頁以 block 為單位、只在 block 間斷（外層那筆**不**整塊 keep-together，子明細可跨頁接續）。子元素 key 相對「當筆元素」解析，`$parent.欄位` 取外層當筆（`drawCtx.root`/`parentData` + `resolveKey` 支援），全域彙總 `$sum` 對整份資料。巢狀上限兩層（list 內至多再一個 list，更深層警告忽略）。固定欄位 block 高 = `max(nested.Y, 固定欄位延伸)`（欄位放到子明細下方時不與明細重疊）。缺陣列 key → 警告＋以 `sampleCount` 畫範例筆；空陣列 → 不畫；單一原子比整頁高 → 警告（不靜默裁切）。沒有 list 元素時完全不進此路徑（golden byte 不變）。

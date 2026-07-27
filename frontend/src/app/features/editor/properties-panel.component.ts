@@ -73,7 +73,7 @@ import { ScrubDirective } from './scrub.directive';
             <label class="full">內容
               <textarea rows="3" [ngModel]="el.content" (ngModelChange)="patch(el, { content: $event })"></textarea>
             </label>
-            <div class="hint" ngNonBindable>可混排資料：<b>{{customer.name}}</b>、<b>{{total|comma}}</b>（格式：comma/twUpper/rocDate/rocDateLong）、<b>{{$page}}</b>/<b>{{$sum(items.amount)}}</b> 等引擎 key 皆可。</div>
+            <div class="hint" ngNonBindable>可混排資料：<b>{{customer.name}}</b>、<b>{{total|comma}}</b>（格式：comma/comma(2)/round(2)/twUpper/rocDate/rocDateLong）、<b>{{$page}}</b>/<b>{{$sum(items.amount)}}</b> 等引擎 key 皆可。</div>
             <!-- 這裡已在「非受限」分支內（見上方 @if (state.restricted())），不需再判斷一次 -->
             <label class="chk full">
               <input type="checkbox" [ngModel]="!!el.fillable" (ngModelChange)="patchAllSelected(el, { fillable: $event })" />

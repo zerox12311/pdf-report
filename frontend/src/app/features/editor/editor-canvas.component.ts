@@ -122,9 +122,9 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                   @if (el.title) { <div class="container-title">{{ el.title }}</div> }
                 </div>
               } @else {
-                <div class="list-box">
-                  <div class="list-tag" title="重複區塊：每筆資料蓋一次此版面（往下堆）">⧉ {{ el.key || '未綁定 key' }} · 每筆一列</div>
-                </div>
+                <div class="list-box"></div>
+                <div class="list-label" [class.show]="listActive(el)" [class.warn]="!el.key"
+                  title="重複區塊：每筆資料蓋一次此版面（往下堆）">⧉ {{ el.key || '未綁定 key' }} · 每筆一列</div>
               }
               @for (child of el.children ?? []; track child.id) {
                 <div class="el child"
@@ -143,9 +143,9 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                 >
                   @if (child.type === 'list') {
                     <!-- 巢狀明細（第二層）：子畫布內容自由擺放，孫元素相對此區塊 -->
-                    <div class="list-box nested">
-                      <div class="list-tag" title="巢狀明細：外層每筆底下，依此陣列每筆蓋一次">⧉ {{ child.key || '未綁定 key' }} · 子明細</div>
-                    </div>
+                    <div class="list-box nested"></div>
+                    <div class="list-label nested" [class.show]="listActive(child)" [class.warn]="!child.key"
+                      title="巢狀明細：外層每筆底下，依此陣列每筆蓋一次">⧉ {{ child.key || '未綁定 key' }} · 子明細</div>
                     @for (gc of child.children ?? []; track gc.id) {
                       <div class="el child"
                         [attr.data-el-id]="gc.id"
@@ -325,9 +325,17 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
     .list-tag { position: absolute; top: 0; left: 0; font-size: 10px; font-weight: 700;
       color: #4338ca; background: rgba(224, 231, 255, .95); padding: 1px 8px; border-radius: 0 0 6px 0;
       white-space: nowrap; pointer-events: none; }
+    /* key 標籤放框外上緣（Figma 式）：選取該區塊或其子元素、或 hover 時顯示，不與內容重疊。
+       未綁 key 紅字常駐（待辦狀態不藏）。 */
+    .list-label { position: absolute; top: -19px; left: -1px; font-size: 10px; font-weight: 700;
+      color: #4338ca; background: rgba(224, 231, 255, .95); padding: 1px 8px; border-radius: 4px 4px 0 0;
+      white-space: nowrap; pointer-events: none; z-index: 12; opacity: 0; transition: opacity .1s; }
+    .el:hover > .list-label, .list-label.show { opacity: 1; }
+    .list-label.warn { opacity: 1; color: #b91c1c; background: rgba(254, 226, 226, .95); }
     /* 巢狀明細（第二層）：換色以與外層區分 */
     .list-box.nested { border-color: #0d9488; background: rgba(13, 148, 136, .06); }
-    .list-box.nested .list-tag { color: #0f766e; background: rgba(204, 251, 241, .95); }
+    .list-label.nested { color: #0f766e; background: rgba(204, 251, 241, .95); }
+    .list-label.nested.warn { color: #b91c1c; background: rgba(254, 226, 226, .95); }
     /* 筆間距預覽的示意筆：半透明、不可互動 */
     .ghost-record { opacity: .38; pointer-events: none; z-index: 8; }
     .ghost-record .list-box { border-style: dashed; }
@@ -363,6 +371,15 @@ export class EditorCanvasComponent {
   elementPicked = output<void>();
 
   /** 目前節的有效頁面（節可覆寫紙張；single 節無 band） */
+  /** 重複區塊的框外 key 標籤是否常亮：選取該區塊本身或其任一子/孫元素時（hover 由 CSS 處理） */
+  listActive(el: TemplateElement): boolean {
+    const sel = this.state.selectedId();
+    if (!sel) return false;
+    if (el.id === sel) return true;
+    const kids = (el as { children?: TemplateElement[] }).children ?? [];
+    return kids.some(c => c.id === sel || ((c as { children?: TemplateElement[] }).children ?? []).some(g => g.id === sel));
+  }
+
   /** 筆間距預覽目標：gapPreview 指到的 list 元素（不存在或非 list 回 null） */
   gapPreviewEl = computed(() => {
     const id = this.state.gapPreview();

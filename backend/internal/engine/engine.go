@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/image/webp"
+
 	"github.com/boombuler/barcode"
 	"github.com/boombuler/barcode/code128"
 	"github.com/boombuler/barcode/code39"
@@ -991,8 +993,9 @@ func (c *drawCtx) resolveKey(key, sample string) string {
 	return sample
 }
 
-// interpolateRe 文字行內插值 token：{{key}} 或 {{key|格式}}（格式 = comma/twUpper/rocDate/rocDateLong）。
-var interpolateRe = regexp.MustCompile(`\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}`)
+// interpolateRe 文字行內插值 token：{{key}} 或 {{key|格式}}。
+// 格式 = comma/twUpper/rocDate/rocDateLong，或帶參數的 round(n)/comma(n)（見 format.go）。
+var interpolateRe = regexp.MustCompile(`\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}`)
 
 // interpolate 把文字中的 {{key|format}} 換成資料值：key 走 resolveKey（資料路徑或 $page/$sum 等引擎 key），
 // 缺 key 走警告機制並以空字串代入。無 token 時原樣回傳（零成本快速路徑）。
@@ -1416,8 +1419,26 @@ func (c *drawCtx) fetchImage(rawURL string) []byte {
 		warn("圖片 URL 下載失敗（讀取錯誤或超過 10MB）：" + rawURL)
 		return remember(nil)
 	}
-	if ct := http.DetectContentType(data); ct != "image/png" && ct != "image/jpeg" {
-		warn("圖片 URL 內容不是 PNG/JPEG：" + rawURL)
+	ct := http.DetectContentType(data)
+	if ct == "image/webp" {
+		// gopdf 只吃 PNG/JPEG：webp 解碼後轉成 PNG 再進渲染管線（實務圖床常見 webp）
+		img, err := webp.Decode(bytes.NewReader(data))
+		if err != nil {
+			warn("圖片 URL 的 WebP 解碼失敗：" + rawURL)
+			return remember(nil)
+		}
+		// 正規化成 8-bit RGBA 再編 PNG（gopdf 不吃 16-bit；與條碼影像同做法）
+		rgba := image.NewNRGBA(img.Bounds())
+		draw.Draw(rgba, img.Bounds(), img, img.Bounds().Min, draw.Src)
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, rgba); err != nil {
+			warn("圖片 URL 的 WebP 轉檔失敗：" + rawURL)
+			return remember(nil)
+		}
+		return remember(buf.Bytes())
+	}
+	if ct != "image/png" && ct != "image/jpeg" {
+		warn("圖片 URL 內容不是 PNG/JPEG/WebP：" + rawURL)
 		return remember(nil)
 	}
 	return remember(data)

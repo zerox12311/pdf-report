@@ -15,6 +15,11 @@ export interface TemplateDoc {
   /** 輸入資料驗證（選填）：enabled 時，正式渲染（renderByID）前先驗證宿主 POST 的 data */
   validation?: ValidationSpec;
 
+  /** 允許匿名渲染（選填，預設 false）：開啟後 render-by-id 可不帶憑證呼叫——
+   *  任何拿到樣板 id 的人都能渲染此樣板（含靜態內容與範例值），依樣板敏感度自行決定。
+   *  僅影響 render；樣板本體讀寫仍要憑證。後端 requireAnyOrAnonymousRender 讀此欄位。 */
+  allowAnonymousRender?: boolean;
+
   /**
    * 設計期的測試資料（「資料」分頁貼的 JSON 原文，跟著樣板存檔）。
    * 只服務設計與預覽——**引擎完全忽略**，正式渲染一律用宿主 POST 進來的 data。
@@ -490,6 +495,7 @@ export function normalizeTemplate(doc: TemplateInput | null | undefined): Templa
     validation: normalizeValidation(doc.validation),
     // 設計期測試資料：只有字串才收（別的型別視同沒有，不讓壞資料進畫面）
     sampleData: typeof doc.sampleData === 'string' ? doc.sampleData : undefined,
+    allowAnonymousRender: doc.allowAnonymousRender === true ? true : undefined,
   };
 }
 

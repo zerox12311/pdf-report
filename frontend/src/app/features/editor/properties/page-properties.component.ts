@@ -103,6 +103,20 @@ import { WatermarkFormComponent } from './watermark-form.component';
       拖曳/縮放時按住 <b>Ctrl/⌘ 或 Shift</b> 可暫停磁吸微調；容器內的元素拖出容器邊界放開即移出容器；大綱可拖曳調整階層（拖到容器上=移入、拖到區段標題=換區段）。<br /><br />
       點選畫布上的元素可編輯元素屬性。
     </div>
+
+    <!-- 危險區（GitHub Danger Zone 式）：影響安全邊界的設定集中在面板最底、紅框標示 -->
+    <div class="danger-zone">
+      <div class="dz-title">⚠ 危險區</div>
+      <label class="row">
+        <input type="checkbox" [ngModel]="state.template().allowAnonymousRender ?? false"
+          (ngModelChange)="state.setAllowAnonymousRender($event)" /> 允許匿名渲染
+      </label>
+      @if (state.template().allowAnonymousRender) {
+        <div class="dz-warn">已開放：任何拿到樣板 id 的人都可不帶憑證渲染此樣板——樣板上的靜態文字與範例值會出現在 PDF。請確認內容不含機敏資訊。</div>
+      } @else {
+        <div class="dz-hint">開啟後宿主前端可直接呼叫 render API（不帶 API key／token）。僅影響渲染；樣板的讀取與修改仍需憑證。</div>
+      }
+    </div>
   `,
   styles: `
     :host { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
@@ -116,6 +130,13 @@ import { WatermarkFormComponent } from './watermark-form.component';
     .full { width: 100%; }
     .sub { font-weight: 600; color: #555; margin-top: 4px; }
     .hint { color: #999; font-size: 12px; }
+    /* 危險區（GitHub Danger Zone 式）：紅框紅底、集中放安全邊界設定 */
+    .danger-zone { border: 1px solid #fca5a5; border-radius: 8px; background: #fef2f2;
+      padding: 10px 12px; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .dz-title { color: #b91c1c; font-weight: 700; font-size: 13px; }
+    .danger-zone label { color: #7f1d1d; font-weight: 600; }
+    .dz-warn { color: #b91c1c; font-size: 12px; line-height: 1.6; }
+    .dz-hint { color: #9f6b6b; font-size: 12px; line-height: 1.6; }
     .band-hint { color: #b45309; font-size: 12px; margin-top: 2px; }
     .doc-divider { margin: 14px 0 6px; padding-top: 10px; border-top: 2px solid #e2e6ee;
       font-size: 13px; font-weight: 700; color: #1f2937; }

@@ -22,6 +22,33 @@ func TestFormats(t *testing.T) {
 	}
 }
 
+// 帶參數格式：round(n) 四捨五入固定位數；comma(n) 四捨五入＋千分位。
+// 半數進位為「四捨五入」（half away from zero），壞參數/非數字原樣。
+func TestParamFormats(t *testing.T) {
+	cases := map[[2]string]string{
+		{"329.96999999999997", "round(2)"}: "329.97",
+		{"99.94999999999999", "round(2)"}:  "99.95",
+		{"7.5", "round"}:                   "8",
+		{"7.5", "round(0)"}:                "8",
+		{"-7.5", "round"}:                  "-8", // half away from zero
+		{"105.4", "round(2)"}:              "105.40",
+		{"1234567.891", "comma(2)"}:        "1,234,567.89",
+		{"1234567.895", "comma(2)"}:        "1,234,567.90",
+		{"13037.88", "comma(0)"}:           "13,038",
+		{"-0.004", "round(2)"}:             "0.00", // 消 -0
+		{"abc", "round(2)"}:                "abc",
+		{"5", "round(abc)"}:                "5",
+		{"5", "round(-1)"}:                 "5",
+		{"5", "round(99)"}:                 "5",
+		{"5", "nope(2)"}:                   "5",
+	}
+	for in, want := range cases {
+		if got := formatValue(in[0], in[1]); got != want {
+			t.Errorf("formatValue(%q,%q) = %q, want %q", in[0], in[1], got, want)
+		}
+	}
+}
+
 func TestRocDate(t *testing.T) {
 	cases := map[string]string{
 		"2025-07-20":          "114/07/20",

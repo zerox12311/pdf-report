@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -195,6 +196,32 @@ func requireAPIKey() gin.HandlerFunc {
 func requireAny() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if principalKind(c) == "" {
+			abortUnauthorized(c, "需要憑證")
+			return
+		}
+		c.Next()
+	}
+}
+
+// requireAnyOrAnonymousRender render-by-id 專用閘門：有憑證照常（後續仍走 authorizeTemplate）；
+// 匿名時讀樣板本體的 allowAnonymousRender 欄位——設計者逐樣板決定是否開放免憑證渲染
+// （例：宿主前端直接下載 PDF），預設不開。找不到樣板與未開放一律回 401，
+// 匿名者無從探測樣板存在與否。
+func requireAnyOrAnonymousRender(templates *store.TemplateStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if principalKind(c) != "" {
+			c.Next()
+			return
+		}
+		raw, err := templates.Get(tenantOf(c), c.Param("id"))
+		if err != nil {
+			abortUnauthorized(c, "需要憑證")
+			return
+		}
+		var flag struct {
+			Allow bool `json:"allowAnonymousRender"`
+		}
+		if json.Unmarshal(raw, &flag) != nil || !flag.Allow {
 			abortUnauthorized(c, "需要憑證")
 			return
 		}

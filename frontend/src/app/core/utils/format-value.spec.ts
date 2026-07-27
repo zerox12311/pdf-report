@@ -31,4 +31,20 @@ describe('formatValue（前端鏡像）', () => {
     expect(formatValue('x', undefined)).toBe('x');
     expect(formatValue('x', '')).toBe('x');
   });
+
+  it('帶參數格式（與 format_test.go 同組案例）', () => {
+    expect(formatValue('329.96999999999997', 'round(2)')).toBe('329.97');
+    expect(formatValue('99.94999999999999', 'round(2)')).toBe('99.95');
+    expect(formatValue('7.5', 'round')).toBe('8');
+    expect(formatValue('-7.5', 'round')).toBe('-8'); // half away from zero
+    expect(formatValue('105.4', 'round(2)')).toBe('105.40');
+    expect(formatValue('1234567.891', 'comma(2)')).toBe('1,234,567.89');
+    expect(formatValue('1234567.895', 'comma(2)')).toBe('1,234,567.90');
+    expect(formatValue('13037.88', 'comma(0)')).toBe('13,038');
+    expect(formatValue('-0.004', 'round(2)')).toBe('0.00'); // 消 -0
+    expect(formatValue('abc', 'round(2)')).toBe('abc');
+    expect(formatValue('5', 'round(abc)')).toBe('5');
+    expect(formatValue('5', 'round(-1)')).toBe('5');
+    expect(formatValue('5', 'nope(2)')).toBe('5');
+  });
 });

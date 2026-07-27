@@ -668,6 +668,13 @@ export class EditorStateService {
     this.dirty.set(true);
   }
 
+  /** 允許匿名渲染開關（文件層級；false 時不落欄位、樣板 JSON 保持乾淨） */
+  setAllowAnonymousRender(on: boolean) {
+    if (!this.record()) return;
+    this.template.update(t => ({ ...t, allowAnonymousRender: on ? true : undefined }));
+    this.dirty.set(true);
+  }
+
   /** 新增元素；目前選著容器（或其子元素）時，加入該容器（座標轉為容器相對） */
   addElement(el: NewTemplateElement) {
     if (!this.record()) return;
@@ -1294,7 +1301,7 @@ export class EditorStateService {
           if (c.type === 'placeholder' && c.key && !c.key.startsWith('$')) {
             setPath(data, `${base}.${c.key}`, coerce((c.sample || '範例') + (i + 1)));
           } else if (c.type === 'text' && c.content.includes('{{')) {
-            for (const m of c.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g)) {
+            for (const m of c.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}/g)) {
               if (m[1].startsWith('$')) continue;
               const fmt = m[2] ?? '';
               const s = fmt === 'comma' || fmt === 'twUpper' ? '12345' : fmt.startsWith('rocDate') ? '2026-07-20' : '範例';
@@ -1320,7 +1327,7 @@ export class EditorStateService {
       }
       // 文字元素的行內插值 token {{key|format}} 也要有範例資料
       if (el.type === 'text' && el.content.includes('{{')) {
-        for (const m of el.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g)) {
+        for (const m of el.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}/g)) {
           const key = m[1];
           if (key.startsWith('$')) continue;
           const fmt = m[2] ?? '';
@@ -1498,9 +1505,11 @@ export class EditorStateService {
       }
       out.push({ path: p, type });
     };
-    const typeForFormat = (fmt?: string): ValidationFieldType =>
-      fmt === 'comma' || fmt === 'twUpper' ? 'number'
-        : fmt?.startsWith('rocDate') ? 'string' : 'any';
+    const typeForFormat = (fmt?: string): ValidationFieldType => {
+      const name = fmt?.replace(/\(.*$/, ''); // 去掉參數：comma(2)/round(3) → comma/round
+      return name === 'comma' || name === 'twUpper' || name === 'round' ? 'number'
+        : name?.startsWith('rocDate') ? 'string' : 'any';
+    };
     // addKey：一般 key 直接 add；全域彙總 $sum/$avg/$count(路徑) → 導出被引用的陣列與欄位
     // （sum/avg 代表該欄位是數字，補上型別；只在彙總內出現、畫面沒直接顯示的 key 也能被偵測）
     const aggRe = /^\$(sum|avg|count)\((.+)\)$/;
@@ -1519,7 +1528,7 @@ export class EditorStateService {
     };
     const scanText = (s: string) => {
       if (!s || !s.includes('{{')) return;
-      for (const m of s.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g)) {
+      for (const m of s.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}/g)) {
         addKey(m[1], typeForFormat(m[2]));
       }
     };
@@ -1533,7 +1542,7 @@ export class EditorStateService {
         else if (c.type === 'barcode' && c.key && !c.key.startsWith('$')) add(`${base}[].${c.key}`, 'string');
         else if (c.type === 'image' && c.key && !c.key.startsWith('$')) add(`${base}[].${c.key}`, 'string');
         else if (c.type === 'text') {
-          for (const m of c.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+)\s*)?\}\}/g)) {
+          for (const m of c.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}/g)) {
             if (!m[1].startsWith('$')) add(`${base}[].${m[1]}`, typeForFormat(m[2]));
           }
         } else if (c.type === 'list') listFields(c, `${base}[].`);

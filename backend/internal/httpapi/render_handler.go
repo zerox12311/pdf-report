@@ -30,7 +30,8 @@ func (h *renderHandler) renderByID(c *gin.Context) {
 		templateGetError(c, err)
 		return
 	}
-	if !authorizeTemplate(c, h.projects, pid, id) {
+	// 匿名請求已由 requireAnyOrAnonymousRender 依樣板的 allowAnonymousRender 放行
+	if principalKind(c) != "" && !authorizeTemplate(c, h.projects, pid, id) {
 		return
 	}
 	raw, err := h.store.Get(tenantOf(c), c.Param("id"))

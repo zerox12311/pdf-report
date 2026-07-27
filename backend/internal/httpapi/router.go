@@ -88,7 +88,8 @@ func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.
 	r.GET("/api/embed/context", requireAny(), eh.context)
 
 	// Gin 允許靜態段與 :id 並存且靜態優先，/render 不會被當成樣板 id
-	r.POST("/api/templates/:id/render", requireAny(), rateLimit(renderLimit, keyByPrincipal), rh.renderByID)
+	// render-by-id：匿名可否取決於樣板本體的 allowAnonymousRender（逐樣板 opt-in，預設關）
+	r.POST("/api/templates/:id/render", requireAnyOrAnonymousRender(templates), rateLimit(renderLimit, keyByPrincipal), rh.renderByID)
 	r.POST("/api/templates/render", requireAny(), rateLimit(renderLimit, keyByPrincipal), rh.renderAdhoc)
 
 	r.POST("/api/assets", requireAny(), requireCapability(capUpload), rateLimit(uploadLimit, keyByPrincipal), ah.upload)

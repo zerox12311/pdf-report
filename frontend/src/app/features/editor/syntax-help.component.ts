@@ -30,7 +30,19 @@ const GROUPS: { name: string; entries: SyntaxEntry[] }[] = [
   {
     name: '格式',
     entries: [
-      { code: 'comma', title: '千分位', detail: '數值加上千分位逗號。', example: '12345 → 12,345' },
+      { code: 'comma', title: '千分位', detail: '數值加上千分位逗號（小數原樣保留）。', example: '12345 → 12,345' },
+      {
+        code: 'comma(2)',
+        title: '千分位＋固定小數位',
+        detail: '四捨五入到括號指定的小數位數（固定顯示）再加千分位。金額慣用 comma(2)。',
+        example: '329.96999 → 329.97',
+      },
+      {
+        code: 'round(2)',
+        title: '四捨五入',
+        detail: '四捨五入到括號指定的小數位數並固定顯示；round 不帶參數＝取整數。不加千分位。',
+        example: '99.94999 → 99.95；7.5 → 8',
+      },
       {
         code: 'twUpper',
         title: '國字大寫金額',

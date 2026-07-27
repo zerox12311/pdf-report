@@ -14,6 +14,8 @@ Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細�
 帶了 Authorization 但驗不過 → 401；匿名（都沒帶）→ 401。
 
 **所有資料端點需憑證（`requireAny`）**：樣板 CRUD、render-by-id、adhoc render、assets、fonts、validate。授權 chokepoint 依 principal：
+
+**唯一例外——匿名渲染 opt-in**：樣板本體帶 `allowAnonymousRender: true`（設計者在屬性面板最底部的「⚠ 危險區」勾選，預設關）時，`POST /api/templates/:id/render` 可**不帶憑證**呼叫（宿主前端直接渲染用）。範圍僅此端點：樣板讀寫、adhoc render 一律仍要憑證。匿名打「未開放」與「不存在」的樣板一律回 **401** 同語意（不可探測樣板存在與否）；匿名限流按 IP 計。
 - 碰某張樣板（get/put/delete/render-by-id）：user=admin或該專案成員／apikey=同專案／**embed=同一張 template**，否則 **403**
 - 建樣板：user／apikey 可（落各自專案），**embed 不可（403）**
 - 列樣板：user 依成員過濾、apikey 該專案、**embed 不可（403）**
@@ -115,7 +117,7 @@ body 上限 10MB；非 JSON 物件 → 400「樣板 JSON 解析失敗（body 需
 
 | Method | Path | 說明 |
 |---|---|---|
-| POST | `/api/templates/:id/render` | **正式渲染**（宿主整合契約）：body `{"data": {...}}`（可空 body = 無資料）→ `application/pdf` |
+| POST | `/api/templates/:id/render` | **正式渲染**（宿主整合契約）：body `{"data": {...}}`（可空 body = 無資料）→ `application/pdf`。樣板開啟 `allowAnonymousRender` 時可免憑證 |
 | POST | `/api/templates/render` | adhoc 渲染（編輯器預覽）：body `{"template": {...}, "data": {...}}` |
 
 - 數字以 `json.Number` 解析，保留原始字面（金額不失真）。

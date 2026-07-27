@@ -2,19 +2,43 @@ package engine
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
 
-// 欄位值格式化（placeholder / 表格儲存格的 format 屬性）：
-//   comma   → 千分位（12,345.67）
-//   twUpper → 新臺幣國字大寫（壹萬貳仟參佰肆拾伍元整）
-// 值無法解析為數字時原樣返回。
+// 欄位值格式化（插值 |格式 / 表格儲存格的 format 屬性）：
+//   comma      → 千分位（12,345.67，小數原樣）
+//   comma(n)   → 四捨五入固定 n 位小數＋千分位（金額慣用 comma(2)）
+//   round(n)   → 四捨五入固定 n 位小數；round 不帶參數 = 取整數
+//   twUpper    → 新臺幣國字大寫（壹萬貳仟參佰肆拾伍元整）
+// 值無法解析為數字、未知格式或壞參數 → 一律原樣返回（渲染不炸）。
+// 與前端 format-value.ts 為雙實作，改一邊必改另一邊＋兩邊測試。
 
 func formatValue(s, format string) string {
-	switch format {
+	name, arg := format, ""
+	if i := strings.IndexByte(format, '('); i >= 0 && strings.HasSuffix(format, ")") {
+		name, arg = format[:i], strings.TrimSpace(format[i+1:len(format)-1])
+	}
+	switch name {
 	case "comma":
+		if arg != "" {
+			r, ok := roundFixed(s, arg)
+			if !ok {
+				return s
+			}
+			return commaFormat(r)
+		}
 		return commaFormat(s)
+	case "round":
+		if arg == "" {
+			arg = "0"
+		}
+		if r, ok := roundFixed(s, arg); ok {
+			return r
+		}
+		return s
 	case "twUpper":
 		return twUpperAmount(s)
 	case "rocDate":
@@ -24,6 +48,25 @@ func formatValue(s, format string) string {
 	default:
 		return s
 	}
+}
+
+// roundFixed 四捨五入（half away from zero，即口語的「四捨五入」；與 JS 端 sign×round(abs) 一致）
+// 到 n 位小數並固定位數輸出。參數不合法（非 0–10 整數）或值非數字 → ok=false。
+func roundFixed(s, nArg string) (string, bool) {
+	n, err := strconv.Atoi(nArg)
+	if err != nil || n < 0 || n > 10 {
+		return "", false
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return "", false
+	}
+	p := math.Pow(10, float64(n))
+	r := math.Round(v*p) / p
+	if r == 0 {
+		r = 0 // 消 -0（兩端輸出一致）
+	}
+	return strconv.FormatFloat(r, 'f', n, 64), true
 }
 
 // parseDate 接受 YYYY-MM-DD / YYYY/MM/DD（可帶時間，忽略）。
