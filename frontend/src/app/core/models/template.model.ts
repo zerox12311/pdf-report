@@ -1,4 +1,6 @@
 // 樣板 JSON schema —— 與後端 Models/TemplateModels.cs 對應，兩邊需同步修改
+import { t } from '../i18n/i18n';
+
 export interface TemplateDoc {
   id: string;
   name: string;
@@ -177,9 +179,9 @@ export interface ElementBase {
 export type FontFamily = 'sans' | 'serif' | 'mono' | (string & {});
 
 export const FONT_FAMILIES: { value: FontFamily; label: string; css: string }[] = [
-  { value: 'sans', label: '黑體 Noto Sans TC', css: "'Noto Sans TC', sans-serif" },
-  { value: 'serif', label: '明體 Noto Serif TC', css: "'Noto Serif TC', serif" },
-  { value: 'mono', label: '等寬（英數）Mono', css: "'Noto Sans Mono', monospace" },
+  { value: 'sans', label: t('黑體 Noto Sans TC'), css: "'Noto Sans TC', sans-serif" },
+  { value: 'serif', label: t('明體 Noto Serif TC'), css: "'Noto Serif TC', serif" },
+  { value: 'mono', label: t('等寬（英數）Mono'), css: "'Noto Sans Mono', monospace" },
 ];
 
 export function fontCss(family: FontFamily | undefined): string {
@@ -218,11 +220,11 @@ export interface TextElement extends ElementBase, TextStyle {
 export type ValueFormat = '' | 'comma' | 'twUpper' | 'rocDate' | 'rocDateLong';
 
 export const VALUE_FORMATS: { value: ValueFormat; label: string }[] = [
-  { value: '', label: '原樣' },
-  { value: 'comma', label: '千分位（12,345）' },
-  { value: 'twUpper', label: '國字大寫（壹萬貳仟參佰肆拾伍元整）' },
-  { value: 'rocDate', label: '民國年（114/07/20）' },
-  { value: 'rocDateLong', label: '民國年長式（民國114年7月20日）' },
+  { value: '', label: t('原樣') },
+  { value: 'comma', label: t('千分位（12,345）') },
+  { value: 'twUpper', label: t('國字大寫（壹萬貳仟參佰肆拾伍元整）') },
+  { value: 'rocDate', label: t('民國年（114/07/20）') },
+  { value: 'rocDateLong', label: t('民國年長式（民國114年7月20日）') },
 ];
 
 export interface PlaceholderElement extends ElementBase, TextStyle {
@@ -453,15 +455,15 @@ export type ElementType = TemplateElement['type'];
 
 /** 元素型別中繼資料：新增型別時漏寫會編譯失敗（取代 as any 查表） */
 export const ELEMENT_META: Record<ElementType, { icon: string; label: string }> = {
-  text: { icon: 'T', label: '文字' },
-  placeholder: { icon: '{}', label: '資料欄位' },
-  image: { icon: '🖼', label: '圖片' },
-  rect: { icon: '▭', label: '矩形' },
-  line: { icon: '─', label: '線條' },
-  table: { icon: '▦', label: '表格' },
-  barcode: { icon: '𝄃𝄂', label: '條碼' },
-  container: { icon: '▣', label: '容器' },
-  list: { icon: '⧉', label: '重複區塊' },
+  text: { icon: 'T', label: t('文字') },
+  placeholder: { icon: '{}', label: t('資料欄位') },
+  image: { icon: '🖼', label: t('圖片') },
+  rect: { icon: '▭', label: t('矩形') },
+  line: { icon: '─', label: t('線條') },
+  table: { icon: '▦', label: t('表格') },
+  barcode: { icon: '𝄃𝄂', label: t('條碼') },
+  container: { icon: '▣', label: t('容器') },
+  list: { icon: '⧉', label: t('重複區塊') },
 };
 
 /**
@@ -615,7 +617,7 @@ function normalizeSections(doc: TemplateInput, page: PageSettings): DocSection[]
   if (Array.isArray(doc.sections) && doc.sections.length) {
     return doc.sections.map(s => ({
       id: s.id || newId(),
-      name: s.name || (s.kind === 'single' ? '獨立頁' : '內容節'),
+      name: s.name || (s.kind === 'single' ? t('獨立頁') : t('內容節')),
       kind: s.kind === 'single' ? 'single' : 'flow',
       page: s.page && typeof s.page === 'object' ? {
         size: s.page.size ?? page.size,
@@ -634,20 +636,20 @@ function normalizeSections(doc: TemplateInput, page: PageSettings): DocSection[]
   const out: DocSection[] = [];
   if (doc.cover?.enabled) {
     out.push({
-      id: newId(), name: '封面', kind: 'single', page: null,
+      id: newId(), name: t('封面'), kind: 'single', page: null,
       headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null,
       elements: ensureChildren(doc.cover.elements),
     });
   }
   out.push({
-    id: newId(), name: '內頁', kind: 'flow', page: null,
+    id: newId(), name: t('內頁'), kind: 'flow', page: null,
     headerHeight: page.headerHeight, footerHeight: page.footerHeight,
     watermarkMode: 'inherit', watermark: null,
     elements: ensureChildren(doc.elements),
   });
   if (doc.backPage?.enabled) {
     out.push({
-      id: newId(), name: '封底', kind: 'single', page: null,
+      id: newId(), name: t('封底'), kind: 'single', page: null,
       headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null,
       elements: ensureChildren(doc.backPage.elements),
     });
@@ -713,14 +715,14 @@ export const PAPER_PRESETS: { value: string; label: string; wMm: number; hMm: nu
   { value: 'B5', label: 'B5（176×250mm）', wMm: 176, hMm: 250 },
   { value: 'B4', label: 'B4（250×353mm）', wMm: 250, hMm: 353 },
   { value: 'Letter', label: 'Letter（215.9×279.4mm）', wMm: 215.9, hMm: 279.4 },
-  { value: 'zhong1dao', label: '中一刀 241×140mm（三聯單/連續報表紙）', wMm: 241, hMm: 140 },
-  { value: 'thermal80', label: '熱感 80mm（80×200mm）', wMm: 80, hMm: 200 },
+  { value: 'zhong1dao', label: t('中一刀 241×140mm（三聯單/連續報表紙）'), wMm: 241, hMm: 140 },
+  { value: 'thermal80', label: t('熱感 80mm（80×200mm）'), wMm: 80, hMm: 200 },
 ];
 
 export function emptyTemplate(): TemplateDoc {
   return {
     id: '',
-    name: '未命名樣板',
+    name: t('未命名樣板'),
     version: 1,
     page: {
       size: 'A4', orientation: 'portrait', ...A4, headerHeight: 0, footerHeight: 0,
@@ -728,7 +730,7 @@ export function emptyTemplate(): TemplateDoc {
       marginTop: 72, marginRight: 72, marginBottom: 72, marginLeft: 72,
     },
     sections: [{
-      id: newId(), name: '內頁', kind: 'flow', page: null,
+      id: newId(), name: t('內頁'), kind: 'flow', page: null,
       headerHeight: 0, footerHeight: 0, watermarkMode: 'inherit', watermark: null, elements: [],
     }],
     validation: { enabled: false, fields: [] },

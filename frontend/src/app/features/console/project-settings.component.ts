@@ -4,6 +4,7 @@ import { ActivatedRoute } from '@angular/router';
 import { MenuItem } from 'primeng/api';
 import { BreadcrumbModule } from 'primeng/breadcrumb';
 
+import { t } from '../../core/i18n/i18n';
 import { ModalService } from '../../core/services/modal.service';
 import { ApiKeySummary, TemplateApiService } from '../../core/services/template-api.service';
 
@@ -18,16 +19,16 @@ import { ApiKeySummary, TemplateApiService } from '../../core/services/template-
   imports: [DatePipe, BreadcrumbModule],
   template: `
     <p-breadcrumb [home]="home" [model]="crumbs()" />
-    <h1>專案設定</h1>
+    <h1>{{ t('專案設定') }}</h1>
     @if (error()) { <div class="err">{{ error() }}</div> }
 
     <section class="card">
       <div class="chead">
         <div>
-          <h2>專案名稱</h2>
-          <p class="khint">顯示在專案清單與麵包屑上。改名不影響已簽發的 API 金鑰與樣板。</p>
+          <h2>{{ t('專案名稱') }}</h2>
+          <p class="khint">{{ t('顯示在專案清單與麵包屑上。改名不影響已簽發的 API 金鑰與樣板。') }}</p>
         </div>
-        <button class="new" (click)="rename()">✎ 改名</button>
+        <button class="new" (click)="rename()">{{ t('✎ 改名') }}</button>
       </div>
       <div class="pname">{{ projectName() || '…' }}</div>
     </section>
@@ -35,20 +36,20 @@ import { ApiKeySummary, TemplateApiService } from '../../core/services/template-
     <section class="card">
       <div class="chead">
         <div>
-          <h2>API 金鑰（宿主整合）</h2>
-          <p class="khint">給宿主後端用的 server-to-server 金鑰，綁定此專案：可換取編輯器 embed token、正式渲染。明文只在建立當下顯示一次。</p>
+          <h2>{{ t('API 金鑰（宿主整合）') }}</h2>
+          <p class="khint">{{ t('給宿主後端用的 server-to-server 金鑰，綁定此專案：可換取編輯器 embed token、正式渲染。明文只在建立當下顯示一次。') }}</p>
         </div>
-        <button class="new" (click)="createKey()">＋ 建立金鑰</button>
+        <button class="new" (click)="createKey()">{{ t('＋ 建立金鑰') }}</button>
       </div>
       @if (keys().length === 0) {
-        <div class="empty">尚無金鑰。</div>
+        <div class="empty">{{ t('尚無金鑰。') }}</div>
       } @else {
         <ul class="klist">
           @for (k of keys(); track k.id) {
             <li>
               <span class="kname">{{ k.name }}</span>
               <span class="time">{{ k.createdAt | date: 'yyyy/MM/dd' }}</span>
-              <button class="del" (click)="revokeKey(k)">撤銷</button>
+              <button class="del" (click)="revokeKey(k)">{{ t('撤銷') }}</button>
             </li>
           }
         </ul>
@@ -80,6 +81,7 @@ import { ApiKeySummary, TemplateApiService } from '../../core/services/template-
   `,
 })
 export class ProjectSettingsComponent {
+  protected readonly t = t;
   private api = inject(TemplateApiService);
   private modal = inject(ModalService);
   private route = inject(ActivatedRoute);
@@ -92,7 +94,7 @@ export class ProjectSettingsComponent {
   readonly home: MenuItem = { icon: 'pi pi-home', routerLink: '/' };
   readonly crumbs = computed<MenuItem[]>(() => [
     { label: this.projectName() || '…', routerLink: ['/projects', this.projectId] },
-    { label: '設定' },
+    { label: t('設定') },
   ]);
 
   constructor() {
@@ -119,11 +121,11 @@ export class ProjectSettingsComponent {
 
   async rename() {
     const name = await this.modal.prompt({
-      title: '專案改名',
-      message: '輸入新的專案名稱',
-      placeholder: '專案名稱',
+      title: t('專案改名'),
+      message: t('輸入新的專案名稱'),
+      placeholder: t('專案名稱'),
       initial: this.projectName(),
-      confirmLabel: '儲存',
+      confirmLabel: t('儲存'),
     });
     if (name == null || !name.trim() || name.trim() === this.projectName()) return;
     this.error.set('');
@@ -137,21 +139,21 @@ export class ProjectSettingsComponent {
 
   async createKey() {
     const name = await this.modal.prompt({
-      title: '建立 API 金鑰',
-      message: '給這把金鑰一個名稱（例如：ERP 整合、官網嵌入）',
-      placeholder: '名稱',
-      confirmLabel: '建立',
+      title: t('建立 API 金鑰'),
+      message: t('給這把金鑰一個名稱（例如：ERP 整合、官網嵌入）'),
+      placeholder: t('名稱'),
+      confirmLabel: t('建立'),
     });
     if (name == null) return;
     this.error.set('');
     try {
-      const created = await this.api.createKey(this.projectId, name.trim() || 'API 金鑰');
+      const created = await this.api.createKey(this.projectId, name.trim() || t('API 金鑰'));
       // 先刷新清單再開明文對話框：放在後面的話，關掉對話框還要等一次網路往返，
       // 這段空窗期畫面仍寫「尚無金鑰」，看起來像建立失敗。
       await this.loadKeys();
       await this.modal.alert({
-        title: 'API 金鑰已建立',
-        message: '請立即複製並妥善保存——離開後將無法再看到這串明文：',
+        title: t('API 金鑰已建立'),
+        message: t('請立即複製並妥善保存——離開後將無法再看到這串明文：'),
         copy: created.key,
       });
     } catch (e) {
@@ -161,9 +163,9 @@ export class ProjectSettingsComponent {
 
   async revokeKey(k: ApiKeySummary) {
     const ok = await this.modal.confirm({
-      title: '撤銷 API 金鑰',
-      message: `撤銷「${k.name}」？使用這把金鑰的宿主整合會立即失效。`,
-      confirmLabel: '撤銷',
+      title: t('撤銷 API 金鑰'),
+      message: t('撤銷「{name}」？使用這把金鑰的宿主整合會立即失效。', { name: k.name }),
+      confirmLabel: t('撤銷'),
       danger: true,
     });
     if (!ok) return;

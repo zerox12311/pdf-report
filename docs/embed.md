@@ -92,6 +92,7 @@ Authorization: Bearer <embed token>
 - 為什麼用 **fragment（`#`）不用 query（`?`）**：fragment 不會送到後端（不進 access log）、也不進 `Referer` header，比 query 安全。
 - iframe 內編輯器會**隱藏會帶使用者離開/曝露整合細節的元素**（返回控制台、連接說明、樣板JSON、資料驗證），只留設計/預覽/資料綁定。
 - 使用者設計完成後按編輯器內的「**儲存**」；下載的 PDF ＝ 最後存檔的版本。
+- **介面語言**：預設繁體中文；URL 加 query 參數 **`?lang=en`** 可指定英文介面（放 `#token=` 之前：`.../editor/{templateId}?lang=en#token={token}`）。
 
 ### （選配）改用 postMessage 交付 token
 

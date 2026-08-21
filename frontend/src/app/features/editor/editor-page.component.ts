@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, ViewChild
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ELEMENT_META, TemplateElement, collectFillableValues, emptyTemplate, isChildHost } from '../../core/models/template.model';
+import { currentLang, setLang, t } from '../../core/i18n/i18n';
 import { FontService } from '../../core/services/font.service';
 import { EmbedContextService } from '../../core/services/embed-context.service';
 import { EmbedTokenService } from '../../core/services/embed-token.service';
@@ -35,20 +36,23 @@ interface PaletteItem {
     <div class="editor">
       <header>
         @if (!embedded && !state.restricted()) {
-          <a [routerLink]="backLink" class="back">← {{ (newProjectId ?? templateProjectId()) ? '專案' : '控制台' }}</a>
+          <a [routerLink]="backLink" class="back">← {{ (newProjectId ?? templateProjectId()) ? t('專案') : t('控制台') }}</a>
         }
         <!-- 受限模式唯讀：PATCH /values 不送 name，可改的話等於靜默丟失使用者的修改 -->
         <input class="name" [ngModel]="state.template().name" (ngModelChange)="state.setName($event)"
           [readOnly]="state.restricted()" />
         <div class="right">
+          <button class="link lang" (click)="toggleLang()" [title]="t('切換語言')">
+            {{ uiLang === 'en' ? '中文' : 'EN' }}
+          </button>
           @if (!embedded && !state.restricted()) {
-            <button class="link" (click)="showIntegration.set(true)" title="iframe 嵌入與渲染 API 說明">🔗 連接</button>
+            <button class="link" (click)="showIntegration.set(true)" [title]="t('iframe 嵌入與渲染 API 說明')">{{ t('🔗 連接') }}</button>
           }
           @if (state.viewMode()) {
-            <span class="viewonly" title="此連結為唯讀模式">👁 唯讀</span>
+            <span class="viewonly" [title]="t('此連結為唯讀模式')">{{ t('👁 唯讀') }}</span>
           } @else {
             <button class="save" (click)="save()" [disabled]="saving()">
-              {{ saving() ? '儲存中…' : state.dirty() ? '儲存 *' : '儲存' }}
+              {{ saving() ? t('儲存中…') : state.dirty() ? t('儲存 *') : t('儲存') }}
             </button>
           }
         </div>
@@ -63,7 +67,7 @@ interface PaletteItem {
         <aside class="left">
           <!-- 受限模式（嵌入 fill/view）：不能新增元件，元件盤整個不出現 -->
           @if (!state.restricted()) {
-          <div class="panel-title">元件</div>
+          <div class="panel-title">{{ t('元件') }}</div>
           <div class="palette">
             @for (group of paletteGroups; track group.name) {
               <div class="group-name">{{ group.name }}</div>
@@ -71,7 +75,7 @@ interface PaletteItem {
                 <button draggable="true"
                   (dragstart)="onPaletteDragStart($event, item.action)"
                   (click)="addByPalette(item.action)"
-                  [title]="item.label + '——點擊新增，或直接拖到畫布上要放的位置'">
+                  [title]="item.label + t('——點擊新增，或直接拖到畫布上要放的位置')">
                   <span class="icon">{{ item.icon }}</span>{{ item.label }}
                 </button>
               }
@@ -80,19 +84,19 @@ interface PaletteItem {
           </div>
           }
           @if (state.fillMode()) {
-            <div class="fill-tip">✏️ 填寫模式：只能修改<b>綠色虛線</b>標示的欄位，版面已鎖定。</div>
+            <div class="fill-tip">{{ t('✏️ 填寫模式：只能修改') }}<b>{{ t('綠色虛線') }}</b>{{ t('標示的欄位，版面已鎖定。') }}</div>
           }
-          <div class="panel-title">{{ state.fillMode() ? '待填欄位' : '大綱' }}</div>
+          <div class="panel-title">{{ state.fillMode() ? t('待填欄位') : t('大綱') }}</div>
           <div class="outline">
             @if (state.fillMode() && outlineGroups().length === 0) {
-              <div class="empty-band">此表單沒有開放填寫的欄位，請聯絡樣板設計者。</div>
+              <div class="empty-band">{{ t('此表單沒有開放填寫的欄位，請聯絡樣板設計者。') }}</div>
             }
             @for (group of outlineGroups(); track group.name; let gi = $index) {
               <div class="band-name" [class.drop-target]="dropBand() === gi"
                 (dragover)="onBandDragOver($event, gi)" (dragleave)="dropBand.set(null)"
                 (drop)="onBandDrop($event, gi)">{{ group.name }}</div>
               @if (group.items.length === 0) {
-                <div class="empty-band">（無元素）</div>
+                <div class="empty-band">{{ t('（無元素）') }}</div>
               }
               @for (item of group.items; track item.key) {
                 <div class="node" [class.active]="isOutlineActive(item)"
@@ -109,12 +113,12 @@ interface PaletteItem {
                   <span class="icon">{{ item.icon }}</span>
                   <span class="label">{{ item.label }}</span>
                   @if (!state.restricted()) {
-                    <button class="del icon-hide" [class.on]="item.el.hidden" [title]="item.el.hidden ? '顯示' : '隱藏'"
+                    <button class="del icon-hide" [class.on]="item.el.hidden" [title]="item.el.hidden ? t('顯示') : t('隱藏')"
                       (click)="toggleHidden($event, item.el.id)">{{ item.el.hidden ? '🚫' : '👁' }}</button>
-                    <button class="del icon-lock" [class.on]="item.el.locked" [title]="item.el.locked ? '解鎖' : '鎖定'"
+                    <button class="del icon-lock" [class.on]="item.el.locked" [title]="item.el.locked ? t('解鎖') : t('鎖定')"
                       (click)="toggleLocked($event, item.el.id)">🔒</button>
-                    <button class="del" title="複製" (click)="dupEl($event, item.el.id)">⧉</button>
-                    <button class="del" title="刪除" (click)="removeEl($event, item.el.id)">✕</button>
+                    <button class="del" [title]="t('複製')" (click)="dupEl($event, item.el.id)">⧉</button>
+                    <button class="del" [title]="t('刪除')" (click)="removeEl($event, item.el.id)">✕</button>
                   }
                 </div>
               }
@@ -124,16 +128,16 @@ interface PaletteItem {
 
         <!-- 頁面導覽（HackMD 式）：平常縮成細 bar；未釘選展開為浮層（點外面收回）、釘選則常駐佔版面 -->
         <div class="navwrap" [class.pinned]="navPinned()" [class.peek]="navOpen() && !navPinned()">
-          <button class="navstrip" (click)="navOpen.set(true)" title="頁面導覽（節／獨立頁）">
+          <button class="navstrip" (click)="navOpen.set(true)" [title]="t('頁面導覽（節／獨立頁）')">
             <span class="navstrip-glyph">▤</span>
             <span class="navstrip-count">{{ state.template().sections.length }}</span>
           </button>
           <div class="navpanel">
             <div class="navpanel-head">
-              <span class="navpanel-title">頁面</span>
+              <span class="navpanel-title">{{ t('頁面') }}</span>
               <button class="navbtn" [class.on]="navPinned()" (click)="toggleNavPin()"
-                [title]="navPinned() ? '取消釘選' : '釘選（常駐展開）'">📌</button>
-              <button class="navbtn" (click)="collapseNav()" title="收合">‹</button>
+                [title]="navPinned() ? t('取消釘選') : t('釘選（常駐展開）')">📌</button>
+              <button class="navbtn" (click)="collapseNav()" [title]="t('收合')">‹</button>
             </div>
             <div class="navlist">
               @for (s of state.template().sections; track s.id; let i = $index) {
@@ -146,20 +150,20 @@ interface PaletteItem {
                   (drop)="onSectionDrop($event, i)"
                   (dragend)="clearSectionDrag()"
                   (click)="switchSection(s.id)"
-                  [title]="s.kind === 'flow' ? '內容節（有頁首/頁尾、自動分頁）' : '獨立頁（單獨一頁）'">
+                  [title]="s.kind === 'flow' ? t('內容節（有頁首/頁尾、自動分頁）') : t('獨立頁（單獨一頁）')">
                   <span class="navnum">{{ i + 1 }}</span>
                   <span class="navkind">{{ s.kind === 'flow' ? '▤' : '◽' }}</span>
                   <span class="navname">{{ s.name }}</span>
                   @if (state.template().sections.length > 1 && !state.restricted()) {
-                    <button class="navdel" title="刪除此節" (click)="removeSectionFromNav($event, s.id, s.name)">✕</button>
+                    <button class="navdel" [title]="t('刪除此節')" (click)="removeSectionFromNav($event, s.id, s.name)">✕</button>
                   }
                 </div>
               }
             </div>
             @if (!state.restricted()) {
               <div class="navadd">
-                <button (click)="state.addSection('flow')" title="新增內容節（有頁首/頁尾 band、自動分頁）">＋節</button>
-                <button (click)="state.addSection('single')" title="新增獨立頁（如封面/封底）">＋獨立頁</button>
+                <button (click)="state.addSection('flow')" [title]="t('新增內容節（有頁首/頁尾 band、自動分頁）')">{{ t('＋節') }}</button>
+                <button (click)="state.addSection('single')" [title]="t('新增獨立頁（如封面/封底）')">{{ t('＋獨立頁') }}</button>
               </div>
             }
           </div>
@@ -168,48 +172,48 @@ interface PaletteItem {
         <!-- 中間：分頁（設計 / JSON / 預覽） -->
         <main class="center">
           <div class="tabbar">
-            <button [class.on]="tab() === 'design'" (click)="switchTab('design')">設計
+            <button [class.on]="tab() === 'design'" (click)="switchTab('design')">{{ t('設計') }}
               @if (!state.restricted()) {
                 <!-- 即時渲染開關：開（藍）= 代入範例資料；關（灰）= 顯示變數原文，一眼看出哪裡是變數 -->
                 <span class="live-switch" role="switch" [class.off]="state.rawTokenView()"
                   [attr.aria-checked]="!state.rawTokenView()"
-                  [title]="state.rawTokenView() ? '目前顯示變數原文——點擊改為代入範例資料' : '目前代入範例資料——點擊改為顯示變數原文'"
+                  [title]="state.rawTokenView() ? t('目前顯示變數原文——點擊改為代入範例資料') : t('目前代入範例資料——點擊改為顯示變數原文')"
                   (click)="$event.stopPropagation(); state.rawTokenView.set(!state.rawTokenView())"
                   ><span class="knob"></span></span>
               }
             </button>
             @if (!embedded && !state.restricted()) {
-              <button [class.on]="tab() === 'json'" (click)="switchTab('json')">樣板JSON</button>
+              <button [class.on]="tab() === 'json'" (click)="switchTab('json')">{{ t('樣板JSON') }}</button>
             }
-            <button [class.on]="tab() === 'preview'" (click)="switchTab('preview')">預覽</button>
+            <button [class.on]="tab() === 'preview'" (click)="switchTab('preview')">{{ t('預覽') }}</button>
             <span class="spacer"></span>
             @if (tab() === 'design' && state.selectedIds().length > 1) {
-              <div class="zoom align-group" title="對齊/分佈選取的元素">
-                <button class="zbtn" (click)="state.alignSelected('left')" title="左對齊">
+              <div class="zoom align-group" [title]="t('對齊/分佈選取的元素')">
+                <button class="zbtn" (click)="state.alignSelected('left')" [title]="t('左對齊')">
                   <svg viewBox="0 0 14 14"><path d="M2.5 1.5v11"/><rect x="4.5" y="3.2" width="7" height="2.4" rx=".6"/><rect x="4.5" y="8.4" width="4.5" height="2.4" rx=".6"/></svg>
                 </button>
-                <button class="zbtn" (click)="state.alignSelected('hcenter')" title="水平置中">
+                <button class="zbtn" (click)="state.alignSelected('hcenter')" [title]="t('水平置中')">
                   <svg viewBox="0 0 14 14"><path d="M7 1.5v11"/><rect x="3" y="3.2" width="8" height="2.4" rx=".6"/><rect x="4.7" y="8.4" width="4.6" height="2.4" rx=".6"/></svg>
                 </button>
-                <button class="zbtn" (click)="state.alignSelected('right')" title="右對齊">
+                <button class="zbtn" (click)="state.alignSelected('right')" [title]="t('右對齊')">
                   <svg viewBox="0 0 14 14"><path d="M11.5 1.5v11"/><rect x="2.5" y="3.2" width="7" height="2.4" rx=".6"/><rect x="5" y="8.4" width="4.5" height="2.4" rx=".6"/></svg>
                 </button>
                 <span class="sep"></span>
-                <button class="zbtn" (click)="state.alignSelected('top')" title="頂端對齊">
+                <button class="zbtn" (click)="state.alignSelected('top')" [title]="t('頂端對齊')">
                   <svg viewBox="0 0 14 14"><path d="M1.5 2.5h11"/><rect x="3.2" y="4.5" width="2.4" height="7" rx=".6"/><rect x="8.4" y="4.5" width="2.4" height="4.5" rx=".6"/></svg>
                 </button>
-                <button class="zbtn" (click)="state.alignSelected('vcenter')" title="垂直置中">
+                <button class="zbtn" (click)="state.alignSelected('vcenter')" [title]="t('垂直置中')">
                   <svg viewBox="0 0 14 14"><path d="M1.5 7h11"/><rect x="3.2" y="3" width="2.4" height="8" rx=".6"/><rect x="8.4" y="4.7" width="2.4" height="4.6" rx=".6"/></svg>
                 </button>
-                <button class="zbtn" (click)="state.alignSelected('bottom')" title="底端對齊">
+                <button class="zbtn" (click)="state.alignSelected('bottom')" [title]="t('底端對齊')">
                   <svg viewBox="0 0 14 14"><path d="M1.5 11.5h11"/><rect x="3.2" y="2.5" width="2.4" height="7" rx=".6"/><rect x="8.4" y="5" width="2.4" height="4.5" rx=".6"/></svg>
                 </button>
                 @if (state.selectedIds().length > 2) {
                   <span class="sep"></span>
-                  <button class="zbtn" (click)="state.distributeSelected('h')" title="水平等距分佈">
+                  <button class="zbtn" (click)="state.distributeSelected('h')" [title]="t('水平等距分佈')">
                     <svg viewBox="0 0 14 14"><path d="M2 2v10M12 2v10"/><rect x="5.8" y="4" width="2.4" height="6" rx=".6"/></svg>
                   </button>
-                  <button class="zbtn" (click)="state.distributeSelected('v')" title="垂直等距分佈">
+                  <button class="zbtn" (click)="state.distributeSelected('v')" [title]="t('垂直等距分佈')">
                     <svg viewBox="0 0 14 14"><path d="M2 2h10M2 12h10"/><rect x="4" y="5.8" width="6" height="2.4" rx=".6"/></svg>
                   </button>
                 }
@@ -217,29 +221,29 @@ interface PaletteItem {
             }
             @if (tab() === 'design') {
               <div class="zoom undo-group">
-                <button class="zbtn" [disabled]="!state.undoCount()" (click)="state.undo()" title="上一步（Ctrl/⌘+Z）">
+                <button class="zbtn" [disabled]="!state.undoCount()" (click)="state.undo()" [title]="t('上一步（Ctrl/⌘+Z）')">
                   <svg viewBox="0 0 14 14"><path d="M2.5 5.5H9a3.25 3.25 0 1 1 0 6.5H5.5"/><path d="M5.5 2.5 2.5 5.5l3 3"/></svg>
                 </button>
-                <button class="zbtn" [disabled]="!state.redoCount()" (click)="state.redo()" title="重做（Ctrl/⌘+Shift+Z）">
+                <button class="zbtn" [disabled]="!state.redoCount()" (click)="state.redo()" [title]="t('重做（Ctrl/⌘+Shift+Z）')">
                   <svg viewBox="0 0 14 14"><path d="M11.5 5.5H5a3.25 3.25 0 1 0 0 6.5h3.5"/><path d="M8.5 2.5l3 3-3 3"/></svg>
                 </button>
               </div>
-              <div class="zoom" title="觸控板捏合可縮放（30%–300%）；點百分比重設 120%">縮放
-                <button class="zbtn" (click)="zoomBy(-0.1)" title="縮小">
+              <div class="zoom" [title]="t('觸控板捏合可縮放（30%–300%）；點百分比重設 120%')">{{ t('縮放') }}
+                <button class="zbtn" (click)="zoomBy(-0.1)" [title]="t('縮小')">
                   <svg viewBox="0 0 14 14"><path d="M3 7h8"/></svg>
                 </button>
                 <span class="zval" (click)="state.zoom.set(1.2)">{{ zoomPct() }}%</span>
-                <button class="zbtn" (click)="zoomBy(0.1)" title="放大">
+                <button class="zbtn" (click)="zoomBy(0.1)" [title]="t('放大')">
                   <svg viewBox="0 0 14 14"><path d="M7 3v8M3 7h8"/></svg>
                 </button>
-                <button class="zbtn zfit" (click)="fitZoom()" title="符合寬度：整張紙剛好放進畫布">
+                <button class="zbtn zfit" (click)="fitZoom()" [title]="t('符合寬度：整張紙剛好放進畫布')">
                   <svg viewBox="0 0 14 14"><path d="M2 2.5v9M12 2.5v9"/><path d="M4.2 7h5.6M5.7 5.5 4.2 7l1.5 1.5M8.3 5.5 9.8 7 8.3 8.5"/></svg>
                 </button>
               </div>
             }
             @if (!embedded && !state.restricted()) {
               <button class="tab-right" [class.on]="tab() === 'validation'" (click)="switchTab('validation')"
-                title="輸入資料驗證（schema）">✓ 驗證</button>
+                [title]="t('輸入資料驗證（schema）')">{{ t('✓ 驗證') }}</button>
             }
           </div>
           @switch (tab()) {
@@ -248,7 +252,7 @@ interface PaletteItem {
               <div class="json-tab">
                 <app-json-editor [value]="jsonText()" (valueChange)="jsonText.set($event)" />
                 <div class="json-actions">
-                  <button class="apply" (click)="applyJson()">套用 JSON</button>
+                  <button class="apply" (click)="applyJson()">{{ t('套用 JSON') }}</button>
                   @if (jsonError(); as err) { <span class="error">{{ err }}</span> }
                 </div>
               </div>
@@ -265,8 +269,8 @@ interface PaletteItem {
                  而且它會把樣板所有資料綁定 key 攤給填單者看 -->
             @if (!state.restricted()) {
               <div class="rtabs">
-                <button [class.on]="rightTab() === 'props'" (click)="rightTab.set('props')">屬性</button>
-                <button [class.on]="rightTab() === 'data'" (click)="rightTab.set('data')">資料</button>
+                <button [class.on]="rightTab() === 'props'" (click)="rightTab.set('props')">{{ t('屬性') }}</button>
+                <button [class.on]="rightTab() === 'data'" (click)="rightTab.set('data')">{{ t('資料') }}</button>
               </div>
             }
             @if (rightTab() === 'props' || state.restricted()) { <app-properties-panel /> } @else { <app-data-panel /> }
@@ -440,6 +444,14 @@ interface PaletteItem {
   `,
 })
 export class EditorPageComponent {
+  protected readonly t = t;
+  protected readonly uiLang = currentLang();
+
+  // 切語言會 reload；有未存變更時先確認，避免默默丟失
+  toggleLang() {
+    if (this.state.dirty() && !confirm(t('切換語言會重新載入頁面，未儲存的變更將遺失。確定切換？'))) return;
+    setLang(this.uiLang === 'en' ? 'zh-TW' : 'en');
+  }
   state = inject(EditorStateService);
   private host = inject(ElementRef<HTMLElement>);
   private api = inject(TemplateApiService);
@@ -451,10 +463,10 @@ export class EditorPageComponent {
   async confirmLeave(): Promise<boolean> {
     if (!this.state.dirty()) return true;
     return this.modal.confirm({
-      title: '有未儲存的變更',
-      message: '離開後這些變更會遺失。要放棄變更離開，還是留下來儲存？',
-      confirmLabel: '放棄變更並離開',
-      cancelLabel: '留在編輯器',
+      title: t('有未儲存的變更'),
+      message: t('離開後這些變更會遺失。要放棄變更離開，還是留下來儲存？'),
+      confirmLabel: t('放棄變更並離開'),
+      cancelLabel: t('留在編輯器'),
       danger: true,
     });
   }
@@ -523,9 +535,9 @@ export class EditorPageComponent {
   async removeSectionFromNav(e: Event, id: string, name: string) {
     e.stopPropagation();
     const ok = await this.modal.confirm({
-      title: '刪除節',
-      message: `刪除節「${name}」？此節上的元素會一併刪除。`,
-      confirmLabel: '刪除',
+      title: t('刪除節'),
+      message: t('刪除節「{name}」？此節上的元素會一併刪除。', { name }),
+      confirmLabel: t('刪除'),
       danger: true,
     });
     if (ok) this.state.removeSection(id);
@@ -535,32 +547,32 @@ export class EditorPageComponent {
 
   paletteGroups: { name: string; items: PaletteItem[] }[] = [
     {
-      name: '基本',
+      name: t('基本'),
       items: [
-        { icon: 'T', label: '文字（變數）', action: 'text' },
-        { icon: '🖼', label: '圖片', action: 'image' },
+        { icon: 'T', label: t('文字（變數）'), action: 'text' },
+        { icon: '🖼', label: t('圖片'), action: 'image' },
       ],
     },
     {
-      name: '報表',
+      name: t('報表'),
       items: [
-        { icon: '▦', label: '表格', action: 'table' },
-        { icon: '▣', label: '容器', action: 'container' },
-        { icon: '⧉', label: '重複區塊', action: 'list' },
+        { icon: '▦', label: t('表格'), action: 'table' },
+        { icon: '▣', label: t('容器'), action: 'container' },
+        { icon: '⧉', label: t('重複區塊'), action: 'list' },
       ],
     },
     {
-      name: '圖形',
+      name: t('圖形'),
       items: [
-        { icon: '▭', label: '矩形', action: 'rect' },
-        { icon: '─', label: '線條', action: 'line' },
+        { icon: '▭', label: t('矩形'), action: 'rect' },
+        { icon: '─', label: t('線條'), action: 'line' },
       ],
     },
     {
-      name: '條碼',
+      name: t('條碼'),
       items: [
-        { icon: '𝄃𝄂', label: '條碼', action: 'barcode' },
-        { icon: '☰', label: '超商三段條碼', action: 'cvs3' },
+        { icon: '𝄃𝄂', label: t('條碼'), action: 'barcode' },
+        { icon: '☰', label: t('超商三段條碼'), action: 'cvs3' },
       ],
     },
   ];
@@ -573,11 +585,11 @@ export class EditorPageComponent {
     type Item = { key: string; el: TemplateElement; icon: string; label: string; depth: number; cell?: { row: number; col: number } };
     const groups = sec.kind === 'flow'
       ? [
-          { name: '頁首 Page Header', items: [] as Item[] },
-          { name: '內文 Detail', items: [] as Item[] },
-          { name: '頁尾 Page Footer', items: [] as Item[] },
+          { name: t('頁首 Page Header'), items: [] as Item[] },
+          { name: t('內文 Detail'), items: [] as Item[] },
+          { name: t('頁尾 Page Footer'), items: [] as Item[] },
         ]
-      : [{ name: `${sec.name}（獨立頁）`, items: [] as Item[] }];
+      : [{ name: t('{name}（獨立頁）', { name: sec.name }), items: [] as Item[] }];
     for (const el of this.state.visibleElements()) {
       const g = sec.kind !== 'flow' ? groups[0]
         : el.y < headerH ? groups[0] : el.y >= footerStart ? groups[2] : groups[1];
@@ -624,7 +636,7 @@ export class EditorPageComponent {
             key: `${el.id}#${r},${c}`,
             el,
             icon: '✎',
-            label: text || `（空白）第 ${r + 1} 列第 ${c + 1} 欄`,
+            label: text || t('（空白）第 {r} 列第 {c} 欄', { r: r + 1, c: c + 1 }),
             depth: item.depth,
             cell: { row: r, col: c },
           } as typeof item);
@@ -645,7 +657,7 @@ export class EditorPageComponent {
     const addr = msg.slice(0, sep);
     const reason = msg.slice(sep + 1);
     const label = this.labelForValueAddress(addr);
-    return label ? `「${label}」${reason}` : msg;
+    return label ? t('「{label}」{reason}', { label, reason }) : msg;
   }
 
   /** 由定址找出欄位在畫面上的名稱（找不到就回 null，讓呼叫端保留原訊息）。 */
@@ -653,12 +665,12 @@ export class EditorPageComponent {
     const [id, rc] = addr.split('#');
     const el = this.state.findElement(id);
     if (!el) return null;
-    if (!rc) return el.type === 'text' ? (stripRichMarkup(el.content) || '（空白欄位）').slice(0, 20) : this.labelOf(el);
+    if (!rc) return el.type === 'text' ? (stripRichMarkup(el.content) || t('（空白欄位）')).slice(0, 20) : this.labelOf(el);
     const [r, c] = rc.split(',').map(Number);
     const cell = el.type === 'table' ? el.cells[r]?.[c] : null;
     if (!cell) return null;
     const text = (cell.kind === 'text' ? cell.value : '') || '';
-    return text.trim() ? text.slice(0, 20) : `表格第 ${r + 1} 列第 ${c + 1} 欄`;
+    return text.trim() ? text.slice(0, 20) : t('表格第 {r} 列第 {c} 欄', { r: r + 1, c: c + 1 });
   }
 
   /** 大綱項目是否為目前選取（儲存格項目要連座標一起比） */
@@ -692,18 +704,18 @@ export class EditorPageComponent {
 
   private labelOf(el: TemplateElement): string {
     switch (el.type) {
-      case 'text': return stripRichMarkup(el.content).split('\n')[0] || '文字';
-      case 'placeholder': return el.key ? `{{${el.key}}}` : '資料欄位';
+      case 'text': return stripRichMarkup(el.content).split('\n')[0] || t('文字');
+      case 'placeholder': return el.key ? `{{${el.key}}}` : t('資料欄位');
       case 'table': {
         const rep = el.repeat?.enabled ? ` ↻${el.repeat.key}` : '';
-        return `表格 ${el.rowHeights.length}×${el.columnWidths.length}${rep}`;
+        return `${t('表格')} ${el.rowHeights.length}×${el.columnWidths.length}${rep}`;
       }
-      case 'image': return '圖片';
-      case 'rect': return '矩形';
-      case 'line': return '線條';
-      case 'barcode': return `條碼 ${el.symbology}${el.key ? ' {{' + el.key + '}}' : ''}`;
-      case 'container': return `容器 ${el.title || ''}（${el.children.length}）`;
-      case 'list': return `重複區塊 ↻${el.key || '?'}（${el.children.length}）`;
+      case 'image': return t('圖片');
+      case 'rect': return t('矩形');
+      case 'line': return t('線條');
+      case 'barcode': return `${t('條碼')} ${el.symbology}${el.key ? ' {{' + el.key + '}}' : ''}`;
+      case 'container': return `${t('容器')} ${el.title || ''}（${el.children.length}）`;
+      case 'list': return `${t('重複區塊')} ↻${el.key || '?'}（${el.children.length}）`;
     }
   }
 
@@ -822,7 +834,7 @@ export class EditorPageComponent {
       this.jsonError.set(null);
       this.tab.set('design');
     } catch (e) {
-      this.jsonError.set('JSON 格式錯誤：' + (e instanceof Error ? e.message : e));
+      this.jsonError.set(t('JSON 格式錯誤：') + (e instanceof Error ? e.message : e));
     }
   }
 
@@ -999,7 +1011,7 @@ export class EditorPageComponent {
       // 目標是圖片元素：設 assetId 並清掉動態/固定連結（三種來源擇一，上傳為明確意圖）
       this.state.patchElement(req.elementId, { assetId: id, key: undefined, url: undefined });
     } catch (e) {
-      void this.modal.alert({ title: '圖片上傳失敗', message: e instanceof Error ? e.message : String(e) });
+      void this.modal.alert({ title: t('圖片上傳失敗'), message: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -1007,17 +1019,17 @@ export class EditorPageComponent {
     if (this.state.viewMode()) return; // 唯讀模式沒有儲存
     this.saving.set(true);
     try {
-      const t = this.state.template();
+      const tpl = this.state.template();
       // 填寫模式：只送被標記可填的欄位值（走窄 API，後端只認這些）
-      if (this.state.fillMode() && t.id) {
-        const values = collectFillableValues(t);
+      if (this.state.fillMode() && tpl.id) {
+        const values = collectFillableValues(tpl);
         if (Object.keys(values).length === 0) {
           // 設計者沒開放任何欄位：講人話，不要把後端的「values 不可為空」丟給填單者
-          void this.modal.alert({ title: '沒有可填欄位', message: '這份表單目前沒有開放填寫的欄位，請聯絡樣板設計者。' });
+          void this.modal.alert({ title: t('沒有可填欄位'), message: t('這份表單目前沒有開放填寫的欄位，請聯絡樣板設計者。') });
           return;
         }
         try {
-          await this.api.patchValues(t.id, values);
+          await this.api.patchValues(tpl.id, values);
         } catch (e) {
           // 後端的訊息以「<欄位定址>：原因」開頭，定址是內部 id（例如 llhtl58w），
           // 填單者看不懂那是哪一欄。換成他在畫面上看得到的欄位標題。
@@ -1026,20 +1038,20 @@ export class EditorPageComponent {
         // 不用 state.load()：那會清空 undo、取消選取、跳回第一節。
         // 送出的就是畫面上的值，DB 已與畫面一致，只要把「未存」標記清掉。
         this.state.dirty.set(false);
-        this.bridge.notify('template-saved', t.id);
+        this.bridge.notify('template-saved', tpl.id);
         return;
       }
       const doc = this.state.docForSave();
-      const saved = t.id ? await this.api.update(doc) : await this.api.create(doc, this.newProjectId);
+      const saved = tpl.id ? await this.api.update(doc) : await this.api.create(doc, this.newProjectId);
       // 只同步 id/updatedAt，不重載整份文件——load() 會清空復原歷史（存完發現改錯就救不回來）
       this.state.markSaved(saved);
-      if (!t.id) {
+      if (!tpl.id) {
         this.router.navigate(['/editor', saved.id], { replaceUrl: true });
       }
       // 宿主系統由此事件取得樣板 id，之後其後端可 POST /api/templates/{id}/render 填資料出 PDF
       this.bridge.notify('template-saved', saved.id);
     } catch (e) {
-      void this.modal.alert({ title: '儲存失敗', message: e instanceof Error ? e.message : String(e) });
+      void this.modal.alert({ title: t('儲存失敗'), message: e instanceof Error ? e.message : String(e) });
     } finally {
       this.saving.set(false);
     }

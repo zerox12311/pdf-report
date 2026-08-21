@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { t } from '../../core/i18n/i18n';
 import { TemplateApiService } from '../../core/services/template-api.service';
 import { JsonEditorComponent } from '../../shared/json-editor.component';
 import { EditorStateService } from './editor-state.service';
@@ -14,25 +15,25 @@ import { EditorStateService } from './editor-state.service';
     <div class="layout">
       <div class="data-col">
         <div class="col-head">
-          <span>資料 JSON</span>
-          <button (click)="resetSampleData()">用範例值重建</button>
+          <span>{{ t('資料 JSON') }}</span>
+          <button (click)="resetSampleData()">{{ t('用範例值重建') }}</button>
         </div>
         <app-json-editor [value]="state.previewData()" (valueChange)="state.setPreviewData($event)" />
         <button class="primary" (click)="render()" [disabled]="loading()">
-          {{ loading() ? '產生中…' : '重新產生 PDF' }}
+          {{ loading() ? t('產生中…') : t('重新產生 PDF') }}
         </button>
         @if (error(); as err) { <div class="error">{{ err }}</div> }
         <!-- 渲染警告（資料缺 key、圖片抓不到…）：不擋出 PDF，但一定要讓設計者看見。
              以前只把 PDF 塞進 iframe，警告整個吞掉，key 打錯就是一張默默少東西的單據。 -->
         @if (warnings().length) {
           <div class="warns" role="status">
-            <b>⚠ {{ warnings().length }} 項渲染警告</b>（仍會出 PDF，但正式渲染帶 <code>?strict=1</code> 時會被擋下）
+            <b>{{ t('⚠ {n} 項渲染警告', { n: warnings().length }) }}</b>{{ t('（仍會出 PDF，但正式渲染帶') }} <code>?strict=1</code> {{ t('時會被擋下）') }}
             <ul>@for (w of warnings(); track $index) { <li>{{ w }}</li> }</ul>
           </div>
         }
       </div>
       <div class="pdf-col">
-        @if (pdfUrl(); as u) { <iframe [src]="u"></iframe> } @else { <div class="empty">尚未產生</div> }
+        @if (pdfUrl(); as u) { <iframe [src]="u"></iframe> } @else { <div class="empty">{{ t('尚未產生') }}</div> }
       </div>
     </div>
   `,
@@ -64,6 +65,7 @@ import { EditorStateService } from './editor-state.service';
   `,
 })
 export class PreviewPanelComponent implements OnInit {
+  protected readonly t = t;
   readonly state = inject(EditorStateService);
   private api = inject(TemplateApiService);
   private sanitizer = inject(DomSanitizer);

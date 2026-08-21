@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MenuItem } from 'primeng/api';
 import { BreadcrumbModule } from 'primeng/breadcrumb';
 
+import { t } from '../../core/i18n/i18n';
 import { TemplateSummary } from '../../core/models/template.model';
 import { AuthService } from '../../core/services/auth.service';
 import { ModalService } from '../../core/services/modal.service';
@@ -16,28 +17,28 @@ import { TemplateApiService } from '../../core/services/template-api.service';
   template: `
     <p-breadcrumb [home]="home" [model]="crumbs()" />
     <div class="head">
-      <h1>{{ projectName() || '專案樣板' }}</h1>
+      <h1>{{ projectName() || t('專案樣板') }}</h1>
       <div class="head-actions">
         @if (auth.isAdmin()) {
-          <a class="settings" [routerLink]="['/projects', projectId, 'settings']">⚙ 專案設定</a>
+          <a class="settings" [routerLink]="['/projects', projectId, 'settings']">{{ t('⚙ 專案設定') }}</a>
         }
-        <a class="new" routerLink="/editor/new" [queryParams]="{ project: projectId }">＋ 新增樣板</a>
+        <a class="new" routerLink="/editor/new" [queryParams]="{ project: projectId }">{{ t('＋ 新增樣板') }}</a>
       </div>
     </div>
     @if (error()) { <div class="err">{{ error() }}</div> }
     @if (loading()) {
-      <div class="hint">載入中…</div>
+      <div class="hint">{{ t('載入中…') }}</div>
     } @else if (templates().length === 0) {
-      <div class="hint">這個專案還沒有樣板，點右上角「新增樣板」開始。</div>
+      <div class="hint">{{ t('這個專案還沒有樣板，點右上角「新增樣板」開始。') }}</div>
     } @else {
       <ul>
-        @for (t of templates(); track t.id) {
+        @for (tpl of templates(); track tpl.id) {
           <li>
-            <a class="tpl" [routerLink]="['/editor', t.id]">
-              <span class="name">{{ t.name }}</span>
-              <span class="time">{{ t.updatedAt | date: 'yyyy/MM/dd HH:mm' }}</span>
+            <a class="tpl" [routerLink]="['/editor', tpl.id]">
+              <span class="name">{{ tpl.name }}</span>
+              <span class="time">{{ tpl.updatedAt | date: 'yyyy/MM/dd HH:mm' }}</span>
             </a>
-            <button class="del" (click)="remove(t)">刪除</button>
+            <button class="del" (click)="remove(tpl)">{{ t('刪除') }}</button>
           </li>
         }
       </ul>
@@ -70,6 +71,7 @@ import { TemplateApiService } from '../../core/services/template-api.service';
   `,
 })
 export class ProjectDetailComponent {
+  protected readonly t = t;
   private api = inject(TemplateApiService);
   private modal = inject(ModalService);
   private route = inject(ActivatedRoute);
@@ -109,18 +111,18 @@ export class ProjectDetailComponent {
     }
   }
 
-  async remove(t: TemplateSummary) {
+  async remove(tpl: TemplateSummary) {
     const ok = await this.modal.confirm({
-      title: '刪除樣板',
-      message: `確定刪除「${t.name}」？`,
-      confirmLabel: '刪除',
+      title: t('刪除樣板'),
+      message: t('確定刪除「{name}」？', { name: tpl.name }),
+      confirmLabel: t('刪除'),
       danger: true,
     });
     if (!ok) return;
     try {
-      await this.api.delete(t.id);
+      await this.api.delete(tpl.id);
     } catch (e) {
-      this.error.set('刪除失敗：' + (e instanceof Error ? e.message : e));
+      this.error.set(t('刪除失敗：') + (e instanceof Error ? e.message : e));
     }
     this.refresh();
   }

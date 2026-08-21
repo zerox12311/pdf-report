@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { t } from '../../core/i18n/i18n';
 import { JsonEditorComponent } from '../../shared/json-editor.component';
 import { EditorStateService } from './editor-state.service';
 import { DataKeyPayload } from './element-factory';
@@ -24,16 +25,16 @@ interface DataNode {
   imports: [FormsModule, SyntaxHelpComponent, JsonEditorComponent],
   template: `
     <div class="panel">
-      <h3>資料</h3>
-      <div class="hint">貼上後端預計 POST 過來的 <b>data</b> JSON（預覽分頁用同一份）。從下方清單把欄位<b>拖到畫布</b>生成元件；<b>拖到表格的儲存格上</b>則直接把該格變成資料欄位（拖進重複列會自動轉相對 key）。</div>
-      <button class="fill" (click)="fillSample()">用畫布現有欄位產生範例資料</button>
+      <h3>{{ t('資料') }}</h3>
+      <div class="hint">{{ t('貼上後端預計 POST 過來的') }} <b>data</b> {{ t('JSON（預覽分頁用同一份）。從下方清單把欄位') }}<b>{{ t('拖到畫布') }}</b>{{ t('生成元件；') }}<b>{{ t('拖到表格的儲存格上') }}</b>{{ t('則直接把該格變成資料欄位（拖進重複列會自動轉相對 key）。') }}</div>
+      <button class="fill" (click)="fillSample()">{{ t('用畫布現有欄位產生範例資料') }}</button>
       <app-json-editor [value]="state.previewData()" (valueChange)="state.setPreviewData($event)"
-        placeholderText='{"customer":{"name":"王小明"},"items":[{"name":"商品A","qty":1}]}' />
+        [placeholderText]="samplePlaceholder" />
       @if (parsed().error; as err) {
         <div class="error">{{ err }}</div>
       }
       @if (parsed().nodes.length) {
-        <div class="tree-title">欄位（拖到畫布）</div>
+        <div class="tree-title">{{ t('欄位（拖到畫布）') }}</div>
         <div class="tree">
           @for (n of parsed().nodes; track n.path) {
             <div class="dnode" [class.obj]="n.type === 'object'"
@@ -43,7 +44,7 @@ interface DataNode {
               @if (n.type !== 'object') { <span class="grip">⠿</span> }
               <span class="k">{{ n.label }}</span>
               @if (n.type === 'array') {
-                <span class="badge">陣列 → 拖出重複表格</span>
+                <span class="badge">{{ t('陣列 → 拖出重複表格') }}</span>
               } @else {
                 <span class="v">{{ n.preview }}</span>
               }
@@ -82,7 +83,11 @@ interface DataNode {
   `,
 })
 export class DataPanelComponent {
+  protected readonly t = t;
   state = inject(EditorStateService);
+
+  /** JSON 範例 placeholder（模板屬性內嵌雙引號不便，抽成屬性） */
+  readonly samplePlaceholder = t('{"customer":{"name":"王小明"},"items":[{"name":"商品A","qty":1}]}');
 
   readonly parsed = computed<{ nodes: DataNode[]; error: string | null }>(() => {
     const txt = this.state.previewData().trim();
@@ -90,7 +95,7 @@ export class DataPanelComponent {
     try {
       const data: unknown = JSON.parse(txt);
       if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-        return { nodes: [], error: 'data 必須是 JSON 物件' };
+        return { nodes: [], error: t('data 必須是 JSON 物件') };
       }
       const nodes: DataNode[] = [];
       const walk = (obj: Record<string, unknown>, prefix: string, depth: number) => {
@@ -121,7 +126,7 @@ export class DataPanelComponent {
       walk(data as Record<string, unknown>, '', 0);
       return { nodes, error: null };
     } catch (e) {
-      return { nodes: [], error: 'JSON 格式錯誤：' + (e instanceof Error ? e.message : e) };
+      return { nodes: [], error: t('JSON 格式錯誤：') + (e instanceof Error ? e.message : e) };
     }
   });
 

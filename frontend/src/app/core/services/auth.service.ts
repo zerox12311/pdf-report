@@ -2,6 +2,8 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 
+import { t } from '../i18n/i18n';
+
 /** 角色 */
 export type Role = 'admin' | 'user';
 
@@ -72,7 +74,7 @@ function errMessage(e: unknown): string {
   if (e instanceof HttpErrorResponse) {
     const msg = (e.error as { error?: string } | null)?.error;
     if (msg) return msg;
-    return e.status > 0 ? `伺服器回應 ${e.status}` : '無法連線到伺服器';
+    return e.status > 0 ? t('伺服器回應 {status}', { status: e.status }) : t('無法連線到伺服器');
   }
   return e instanceof Error ? e.message : String(e);
 }

@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
+import { t } from '../../core/i18n/i18n';
 import { CellBorders, FontFamily, RectElement, TableCell, TableElement, TemplateElement, cornerRadiiOf, coveredCells, fontCss } from '../../core/models/template.model';
 import { formatValue } from '../../core/utils/format-value';
 import { RichSpan, parseRichText, serializeRichText } from '../../core/utils/rich-text';
@@ -26,15 +27,15 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
           @if (selfEditing()) {
             <!-- Word 式就地編輯：選取後用工具列上粗體/斜體/顏色；存檔序列化成 [b][i][c=#..] 行內標記 -->
             <div class="rich-toolbar" (pointerdown)="$event.preventDefault(); $event.stopPropagation()">
-              <button type="button" title="粗體（⌘/Ctrl+B）" (click)="fmtCmd('bold')"><b>B</b></button>
-              <button type="button" title="斜體（⌘/Ctrl+I）" (click)="fmtCmd('italic')"><i>I</i></button>
+              <button type="button" [title]="t('粗體（⌘/Ctrl+B）')" (click)="fmtCmd('bold')"><b>B</b></button>
+              <button type="button" [title]="t('斜體（⌘/Ctrl+I）')" (click)="fmtCmd('italic')"><i>I</i></button>
               <span class="sep"></span>
               @for (c of RICH_COLORS; track c) {
-                <button type="button" class="swatch" [style.background]="c" [title]="'文字顏色 ' + c"
+                <button type="button" class="swatch" [style.background]="c" [title]="t('文字顏色 {c}', { c: c })"
                   (click)="fmtColor(c)"></button>
               }
               <span class="sep"></span>
-              <button type="button" title="清除選取範圍的樣式" (click)="fmtCmd('removeFormat')">⌫</button>
+              <button type="button" [title]="t('清除選取範圍的樣式')" (click)="fmtCmd('removeFormat')">⌫</button>
             </div>
             <div class="inline-edit rich-edit" contenteditable="true"
               [style.fontSize.px]="el.fontSize * z()" [style.lineHeight]="el.lineHeight"
@@ -67,7 +68,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
             <img class="img-box" [src]="src"
               [style.objectFit]="el.fit === 'stretch' ? 'fill' : 'contain'" draggable="false" />
           } @else {
-            <div class="img-empty">{{ el.key ? '🔗 ' + el.key : '🖼 圖片（屬性設定來源）' }}</div>
+            <div class="img-empty">{{ el.key ? '🔗 ' + el.key : t('🖼 圖片（屬性設定來源）') }}</div>
           }
         }
       }
@@ -91,7 +92,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
       @case ('barcode') {
         @if (barcodeEl(); as el) {
           <div class="barcode-box" [class.qr]="el.symbology === 'qr'"
-            [title]="el.key ? '雙擊編輯範例值' : '雙擊編輯條碼內容'" (dblclick)="startSelfEdit($event)">
+            [title]="el.key ? t('雙擊編輯範例值') : t('雙擊編輯條碼內容')" (dblclick)="startSelfEdit($event)">
             @if (el.symbology === 'qr') {
               <div class="qr-mark">▦</div>
             } @else {
@@ -99,12 +100,12 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
             }
             @if (selfEditing()) {
               <input class="inline-edit bc-edit" [value]="el.key ? el.sample : el.content"
-                [placeholder]="el.key ? '範例值' : '條碼內容'"
+                [placeholder]="el.key ? t('範例值') : t('條碼內容')"
                 (pointerdown)="$event.stopPropagation()" (dblclick)="$event.stopPropagation()"
                 (keydown)="onSelfEditKey($event, false)"
                 (blur)="commitSelfEdit($any($event.target).value)" />
             } @else {
-              <div class="bc-label">{{ el.symbology }}：{{ el.key ? phLabel(el.key) : el.content || '（空）' }}</div>
+              <div class="bc-label">{{ el.symbology }}：{{ el.key ? phLabel(el.key) : el.content || t('（空）') }}</div>
             }
           </div>
         }
@@ -167,7 +168,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                             [style.height.px]="cellInner(spanHeight(el, r, cell.rowSpan), el.cellPadding) * z()"
                             draggable="false" />
                         } @else {
-                          <span class="cell-img-empty">{{ cell.key ? '🔗 ' + cell.key : '（未選圖片）' }}</span>
+                          <span class="cell-img-empty">{{ cell.key ? '🔗 ' + cell.key : t('（未選圖片）') }}</span>
                         }
                       } @else if (editingCell()?.r === r && editingCell()?.c === c) {
                         @if (cell.kind === 'text' && !state.restricted()) {
@@ -191,7 +192,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                           } @else {
                             <span class="bars"></span>
                           }
-                          <span class="bc-label">{{ cell.key ? phLabel(cell.key) : cell.value || '（空）' }}</span>
+                          <span class="bc-label">{{ cell.key ? phLabel(cell.key) : cell.value || t('（空）') }}</span>
                         </span>
                       } @else if (cell.wrap) {
                         <!-- 換行示意：absolute 貼齊內距，不撐開畫布列高（實際列高由引擎算） -->
@@ -215,15 +216,15 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
                   [style.left.px]="cellLeft(el, ec.c) * z()"
                   [style.top.px]="cellTop(el, ec.r) * z() - 34"
                   (pointerdown)="$event.preventDefault(); $event.stopPropagation()">
-                  <button type="button" title="粗體（⌘/Ctrl+B）" (click)="fmtCmd('bold')"><b>B</b></button>
-                  <button type="button" title="斜體（⌘/Ctrl+I）" (click)="fmtCmd('italic')"><i>I</i></button>
+                  <button type="button" [title]="t('粗體（⌘/Ctrl+B）')" (click)="fmtCmd('bold')"><b>B</b></button>
+                  <button type="button" [title]="t('斜體（⌘/Ctrl+I）')" (click)="fmtCmd('italic')"><i>I</i></button>
                   <span class="sep"></span>
                   @for (cc of RICH_COLORS; track cc) {
-                    <button type="button" class="swatch" [style.background]="cc" [title]="'文字顏色 ' + cc"
+                    <button type="button" class="swatch" [style.background]="cc" [title]="t('文字顏色 {c}', { c: cc })"
                       (click)="fmtColor(cc)"></button>
                   }
                   <span class="sep"></span>
-                  <button type="button" title="清除選取範圍的樣式" (click)="fmtCmd('removeFormat')">⌫</button>
+                  <button type="button" [title]="t('清除選取範圍的樣式')" (click)="fmtCmd('removeFormat')">⌫</button>
                 </div>
               }
             }
@@ -309,6 +310,7 @@ import { DataKeyPayload, paletteToCellPatch } from './element-factory';
   `,
 })
 export class CanvasElementComponent {
+  protected readonly t = t;
   state = inject(EditorStateService);
   private modal = inject(ModalService);
   z = this.state.zoom;
@@ -482,9 +484,9 @@ export class CanvasElementComponent {
   rowTitle(el: TableElement, r: number): string {
     const rep = el.repeat;
     if (!rep?.enabled) return '';
-    if (r === rep.rowIndex) return '重複列：' + rep.key + '[]';
-    if (rep.groupBy && r === rep.groupHeaderRowIndex) return '群組首列（每組開始）';
-    if (rep.groupBy && r === rep.groupFooterRowIndex) return '群組尾列（每組小計）';
+    if (r === rep.rowIndex) return t('重複列：') + rep.key + '[]';
+    if (rep.groupBy && r === rep.groupHeaderRowIndex) return t('群組首列（每組開始）');
+    if (rep.groupBy && r === rep.groupFooterRowIndex) return t('群組尾列（每組小計）');
     return '';
   }
 
@@ -934,36 +936,36 @@ export class CanvasElementComponent {
     const rep = el.repeat;
     const merged = (cell.colSpan ?? 1) > 1 || (cell.rowSpan ?? 1) > 1;
     const items: ContextMenuItem[] = [
-      { label: '上方插入列', run: () => this.state.insertTableRow(el.id, r) },
-      { label: '下方插入列', run: () => this.state.insertTableRow(el.id, r + (cell.rowSpan ?? 1)) },
-      { label: '左方插入欄', run: () => this.state.insertTableCol(el.id, c) },
-      { label: '右方插入欄', run: () => this.state.insertTableCol(el.id, c + (cell.colSpan ?? 1)) },
+      { label: t('上方插入列'), run: () => this.state.insertTableRow(el.id, r) },
+      { label: t('下方插入列'), run: () => this.state.insertTableRow(el.id, r + (cell.rowSpan ?? 1)) },
+      { label: t('左方插入欄'), run: () => this.state.insertTableCol(el.id, c) },
+      { label: t('右方插入欄'), run: () => this.state.insertTableCol(el.id, c + (cell.colSpan ?? 1)) },
       { kind: 'sep' },
-      { label: '刪除此列', disabled: rows <= 1, danger: true, run: () => this.state.removeTableRow(el.id, r) },
-      { label: '刪除此欄', disabled: cols <= 1, danger: true, run: () => this.state.removeTableCol(el.id, c) },
+      { label: t('刪除此列'), disabled: rows <= 1, danger: true, run: () => this.state.removeTableRow(el.id, r) },
+      { label: t('刪除此欄'), disabled: cols <= 1, danger: true, run: () => this.state.removeTableCol(el.id, c) },
       { kind: 'sep' },
       {
-        label: '合併儲存格',
+        label: t('合併儲存格'),
         disabled: !inRange,
         run: () => {
           const err = this.state.mergeSelectedCells(el.id);
-          if (err) void this.modal.alert({ title: '無法合併儲存格', message: err });
+          if (err) void this.modal.alert({ title: t('無法合併儲存格'), message: err });
         },
       },
-      ...(merged ? [{ label: '取消合併', run: () => this.state.unmergeCell(el.id, r, c) }] : []),
+      ...(merged ? [{ label: t('取消合併'), run: () => this.state.unmergeCell(el.id, r, c) }] : []),
       { kind: 'sep' },
       {
-        label: '設為重複列（資料列）',
+        label: t('設為重複列（資料列）'),
         checked: !!rep?.enabled && rep.rowIndex === r,
         run: () => this.state.toggleRepeatRow(el.id, r),
       },
       {
         // 依右鍵格的目前狀態切換，套用到整個選取範圍（同屬性面板的批次樣式）
-        label: '自動換行（列高自動延伸）',
+        label: t('自動換行（列高自動延伸）'),
         checked: !!cell.wrap,
         run: () => this.state.patchSelectedCells(el.id, { wrap: cell.wrap ? undefined : true }),
       },
-      { label: '清除儲存格內容', run: () => this.state.clearCell(el.id, r, c) },
+      { label: t('清除儲存格內容'), run: () => this.state.clearCell(el.id, r, c) },
     ];
     this.state.openContextMenu(e.clientX, e.clientY, items);
   }

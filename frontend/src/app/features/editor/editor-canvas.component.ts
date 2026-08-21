@@ -1,5 +1,6 @@
 import { DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, output, signal } from '@angular/core';
+import { t } from '../../core/i18n/i18n';
 import { ChildHostElement, CornerRadii, TemplateElement, cornerRadiiOf, isChildHost } from '../../core/models/template.model';
 import { STRIP, modelToVisualY, visualToModelY } from './band-geometry';
 import { CanvasElementComponent } from './canvas-element.component';
@@ -45,7 +46,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
         }
         <!-- 尺規（左上角切換 pt/mm/in，跟縮放連動） -->
         <button class="ruler-corner" (pointerdown)="$event.stopPropagation()" (click)="state.cycleRulerUnit()"
-          title="切換尺規單位（pt → mm → in）">{{ state.rulerUnit().toUpperCase() }}</button>
+          [title]="t('切換尺規單位（pt → mm → in）')">{{ state.rulerUnit().toUpperCase() }}</button>
         <div class="ruler ruler-h">
           @for (t of rulerH(); track $index) {
             <div class="tick" [class.major]="t.major" [style.left.px]="t.px">
@@ -68,10 +69,10 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
           @if (m.top > 0) { <div class="mguide mg-h" [style.top.px]="modelToVisualY(m.top)"></div> }
           @if (m.bottom > 0) { <div class="mguide mg-h" [style.top.px]="modelToVisualY(pageH() - m.bottom)"></div> }
           <!-- 尺規上的邊界標記（Word 式，可拖曳；一律顯示以利發現） -->
-          <div class="mmark mmark-h" [style.left.px]="m.left * z()" title="拖曳調整左邊界" (pointerdown)="onMarginDown($event, 'left')"></div>
-          <div class="mmark mmark-h" [style.left.px]="(pageW() - m.right) * z()" title="拖曳調整右邊界" (pointerdown)="onMarginDown($event, 'right')"></div>
-          <div class="mmark mmark-v" [style.top.px]="modelToVisualY(m.top)" title="拖曳調整上邊界" (pointerdown)="onMarginDown($event, 'top')"></div>
-          <div class="mmark mmark-v" [style.top.px]="modelToVisualY(pageH() - m.bottom)" title="拖曳調整下邊界" (pointerdown)="onMarginDown($event, 'bottom')"></div>
+          <div class="mmark mmark-h" [style.left.px]="m.left * z()" [title]="t('拖曳調整左邊界')" (pointerdown)="onMarginDown($event, 'left')"></div>
+          <div class="mmark mmark-h" [style.left.px]="(pageW() - m.right) * z()" [title]="t('拖曳調整右邊界')" (pointerdown)="onMarginDown($event, 'right')"></div>
+          <div class="mmark mmark-v" [style.top.px]="modelToVisualY(m.top)" [title]="t('拖曳調整上邊界')" (pointerdown)="onMarginDown($event, 'top')"></div>
+          <div class="mmark mmark-v" [style.top.px]="modelToVisualY(pageH() - m.bottom)" [title]="t('拖曳調整下邊界')" (pointerdown)="onMarginDown($event, 'bottom')"></div>
         }
 
         <!-- 對齊輔助線 -->
@@ -82,16 +83,16 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
         @if (isMain()) {
           <div class="band-bg" [style.height.px]="headerH() * z()"></div>
           <div class="strip" (pointerdown)="onStripDown($event, 'header')">
-            <span>頁首 Page Header</span><span class="h">{{ headerH() }} pt ⇕</span>
+            <span>{{ t('頁首 Page Header') }}</span><span class="h">{{ headerH() }} pt ⇕</span>
           </div>
           <div class="band-bg" [style.height.px]="bodyH() * z()"></div>
           <div class="strip" (pointerdown)="onStripDown($event, 'body')">
-            <span>內文 Detail</span><span class="h">{{ bodyH() | number: '1.0-0' }} pt ⇕</span>
+            <span>{{ t('內文 Detail') }}</span><span class="h">{{ bodyH() | number: '1.0-0' }} pt ⇕</span>
           </div>
           <div class="band-bg" [style.height.px]="footerH() * z()"></div>
-          <div class="strip last"><span>頁尾 Page Footer</span><span class="h">{{ footerH() }} pt</span></div>
+          <div class="strip last"><span>{{ t('頁尾 Page Footer') }}</span><span class="h">{{ footerH() }} pt</span></div>
         } @else {
-          <div class="surface-tag">{{ state.activeSection().name }}（獨立頁，不套頁首/頁尾）</div>
+          <div class="surface-tag">{{ t('{name}（獨立頁，不套頁首/頁尾）', { name: state.activeSection().name }) }}</div>
         }
 
         <!-- 元素層 -->
@@ -124,7 +125,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
               } @else {
                 <div class="list-box"></div>
                 <div class="list-label" [class.show]="listActive(el)" [class.warn]="!el.key"
-                  title="重複區塊：每筆資料蓋一次此版面（往下堆）">⧉ {{ el.key || '未綁定 key' }} · 每筆一列</div>
+                  [title]="t('重複區塊：每筆資料蓋一次此版面（往下堆）')">⧉ {{ el.key || t('未綁定 key') }} · {{ t('每筆一列') }}</div>
               }
               @for (child of el.children ?? []; track child.id) {
                 <div class="el child"
@@ -145,7 +146,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                     <!-- 巢狀明細（第二層）：子畫布內容自由擺放，孫元素相對此區塊 -->
                     <div class="list-box nested"></div>
                     <div class="list-label nested" [class.show]="listActive(child)" [class.warn]="!child.key"
-                      title="巢狀明細：外層每筆底下，依此陣列每筆蓋一次">⧉ {{ child.key || '未綁定 key' }} · 子明細</div>
+                      [title]="t('巢狀明細：外層每筆底下，依此陣列每筆蓋一次')">⧉ {{ child.key || t('未綁定 key') }} · {{ t('子明細') }}</div>
                     @for (gc of child.children ?? []; track gc.id) {
                       <div class="el child"
                         [attr.data-el-id]="gc.id"
@@ -160,8 +161,8 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                         (contextmenu)="onElementMenu($event, gc, child)"
                       >
                         <app-canvas-element [el]="gc" />
-                        @if (gc.locked) { <div class="lock-badge" title="已鎖定">🔒</div> }
-                        @if (showsFillable(gc)) { <div class="fillable-mark" title="填寫模式可修改此欄位"></div> }
+                        @if (gc.locked) { <div class="lock-badge" [title]="t('已鎖定')">🔒</div> }
+                        @if (showsFillable(gc)) { <div class="fillable-mark" [title]="t('填寫模式可修改此欄位')"></div> }
                         @if (gc.id === state.selectedId() && !state.restricted()) {
                           <div class="resize-handle" (pointerdown)="onPointerDown($event, gc, 'resize', child, 'se')"></div>
                           <div class="resize-e" (pointerdown)="onPointerDown($event, gc, 'resize', child, 'e')"></div>
@@ -172,14 +173,14 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
                   } @else {
                     <app-canvas-element [el]="child" />
                   }
-                  @if (child.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
-                  @if (showsFillable(child)) { <div class="fillable-mark" title="填寫模式可修改此欄位"></div> }
+                  @if (child.locked) { <div class="lock-badge" [title]="t('已鎖定（從大綱或右鍵解鎖）')">🔒</div> }
+                  @if (showsFillable(child)) { <div class="fillable-mark" [title]="t('填寫模式可修改此欄位')"></div> }
                   @if (child.id === state.selectedId() && !state.restricted()) {
                     <div class="resize-handle" (pointerdown)="onPointerDown($event, child, 'resize', el, 'se')"></div>
                     <div class="resize-e" (pointerdown)="onPointerDown($event, child, 'resize', el, 'e')"></div>
                     <div class="resize-s" (pointerdown)="onPointerDown($event, child, 'resize', el, 's')"></div>
                     @if (child.type === 'table') {
-                      <div class="move-handle" title="拖曳移動表格"
+                      <div class="move-handle" [title]="t('拖曳移動表格')"
                         (pointerdown)="onPointerDown($event, child, 'move', el)">✥</div>
                     }
                   }
@@ -188,33 +189,33 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
             } @else {
               <app-canvas-element [el]="el" />
             }
-            @if (el.locked) { <div class="lock-badge" title="已鎖定（從大綱或右鍵解鎖）">🔒</div> }
+            @if (el.locked) { <div class="lock-badge" [title]="t('已鎖定（從大綱或右鍵解鎖）')">🔒</div> }
             <!-- 自動增高：畫布照設計高度畫（實際長多高由引擎算），標一下才不會以為間距就是這樣 -->
             @if (growsOnOverflow(el)) {
-              <div class="grow-badge" title="內容超出時自動增高，並把下方元素往下推——畫布顯示的是設計高度，實際高度看預覽分頁">↕</div>
+              <div class="grow-badge" [title]="t('內容超出時自動增高，並把下方元素往下推——畫布顯示的是設計高度，實際高度看預覽分頁')">↕</div>
             }
             <!-- 可填標示：設計者一眼看出哪些欄位開放給填寫模式；填寫模式下也用它標出可改處 -->
-            @if (showsFillable(el)) { <div class="fillable-mark" title="填寫模式可修改此欄位"></div> }
+            @if (showsFillable(el)) { <div class="fillable-mark" [title]="t('填寫模式可修改此欄位')"></div> }
             <!-- 圓角把手（Figma 式）：矩形選取時四角各一，拖曳調整（四角一起變） -->
             @if (el.type === 'rect' && (el.shape ?? 'rect') === 'rect' && el.id === state.selectedId()
                  && state.selectedIds().length <= 1 && !el.locked && !state.restricted()) {
               @for (corner of cornerHandles(el); track corner.key) {
                 <div class="radius-handle" [style.left.px]="corner.x" [style.top.px]="corner.y"
-                  [title]="'拖曳調整圓角（目前 ' + corner.r + ' pt）'"
+                  [title]="t('拖曳調整圓角（目前 {r} pt）', { r: corner.r })"
                   (pointerdown)="onRadiusDown($event, el, corner.key)"></div>
               }
             }
             @if (el.id === state.selectedId() && state.selectedIds().length <= 1 && !state.restricted()) {
               <!-- 旋轉感應區（Figma 式）：四角外側的透明區，hover 顯示旋轉游標、拖曳繞中心旋轉（Shift 吸附 15°）；不顯示常駐按鈕 -->
-              <div class="rot-zone rz-tl" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
-              <div class="rot-zone rz-tr" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
-              <div class="rot-zone rz-bl" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
-              <div class="rot-zone rz-br" title="拖曳旋轉（Shift 吸附 15°）" (pointerdown)="onRotateDown($event, el)"></div>
+              <div class="rot-zone rz-tl" [title]="t('拖曳旋轉（Shift 吸附 15°）')" (pointerdown)="onRotateDown($event, el)"></div>
+              <div class="rot-zone rz-tr" [title]="t('拖曳旋轉（Shift 吸附 15°）')" (pointerdown)="onRotateDown($event, el)"></div>
+              <div class="rot-zone rz-bl" [title]="t('拖曳旋轉（Shift 吸附 15°）')" (pointerdown)="onRotateDown($event, el)"></div>
+              <div class="rot-zone rz-br" [title]="t('拖曳旋轉（Shift 吸附 15°）')" (pointerdown)="onRotateDown($event, el)"></div>
               <div class="resize-handle" (pointerdown)="onPointerDown($event, el, 'resize', null, 'se')"></div>
               <div class="resize-e" (pointerdown)="onPointerDown($event, el, 'resize', null, 'e')"></div>
               <div class="resize-s" (pointerdown)="onPointerDown($event, el, 'resize', null, 's')"></div>
               @if (el.type === 'table') {
-                <div class="move-handle" title="拖曳移動表格"
+                <div class="move-handle" [title]="t('拖曳移動表格')"
                   (pointerdown)="onPointerDown($event, el, 'move')">✥</div>
               }
             }
@@ -228,7 +229,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
               [style.top.px]="modelToVisualY(gl.y + i * (gl.height + (gl.gap ?? 0)))"
               [style.width.px]="gl.width * z()"
               [style.height.px]="gl.height * z()">
-              <div class="list-box"><div class="list-tag">第 {{ i + 1 }} 筆</div></div>
+              <div class="list-box"><div class="list-tag">{{ t('第 {n} 筆', { n: i + 1 }) }}</div></div>
               @for (child of gl.children ?? []; track child.id) {
                 <div class="el child"
                   [style.left.px]="child.x * z()" [style.top.px]="child.y * z()"
@@ -364,6 +365,7 @@ import { alignTargets, containerTargets, sizeTargets, snapAxis } from './snappin
   `,
 })
 export class EditorCanvasComponent {
+  protected readonly t = t;
   state = inject(EditorStateService);
   z = this.state.zoom;
 
@@ -831,27 +833,27 @@ export class EditorCanvasComponent {
     const top = !pos || pos.index >= pos.count - 1;
     const bottom = !pos || pos.index <= 0;
     const items: ContextMenuItem[] = [
-      { label: '複製', shortcut: this.key('C'), run: () => this.state.copyElement(el.id) },
-      { label: '貼上', shortcut: this.key('V'), disabled: !this.state.hasClipboard(), run: () => this.state.paste() },
-      { label: '建立副本', shortcut: this.key('D'), run: () => this.state.duplicateElement(el.id) },
+      { label: t('複製'), shortcut: this.key('C'), run: () => this.state.copyElement(el.id) },
+      { label: t('貼上'), shortcut: this.key('V'), disabled: !this.state.hasClipboard(), run: () => this.state.paste() },
+      { label: t('建立副本'), shortcut: this.key('D'), run: () => this.state.duplicateElement(el.id) },
       { kind: 'sep' },
-      { label: '上移一層', disabled: top, run: () => this.state.moveLayer(el.id, 'up') },
-      { label: '下移一層', disabled: bottom, run: () => this.state.moveLayer(el.id, 'down') },
-      { label: '移到最上層', disabled: top, run: () => this.state.moveLayer(el.id, 'front') },
-      { label: '移到最下層', disabled: bottom, run: () => this.state.moveLayer(el.id, 'back') },
+      { label: t('上移一層'), disabled: top, run: () => this.state.moveLayer(el.id, 'up') },
+      { label: t('下移一層'), disabled: bottom, run: () => this.state.moveLayer(el.id, 'down') },
+      { label: t('移到最上層'), disabled: top, run: () => this.state.moveLayer(el.id, 'front') },
+      { label: t('移到最下層'), disabled: bottom, run: () => this.state.moveLayer(el.id, 'back') },
       { kind: 'sep' },
       // 容器子元素的浮水印階層跟隨容器（引擎規則），不提供獨立開關
       ...(parent ? [] : [{
-        label: '置於浮水印之上',
+        label: t('置於浮水印之上'),
         checked: !!el.aboveWatermark,
         run: () => this.state.patchElement(el.id, { aboveWatermark: !el.aboveWatermark }),
       } satisfies ContextMenuItem]),
-      ...(parent ? [{ label: '移出容器', run: () => this.state.moveOutOfContainer(el.id) } satisfies ContextMenuItem] : []),
+      ...(parent ? [{ label: t('移出容器'), run: () => this.state.moveOutOfContainer(el.id) } satisfies ContextMenuItem] : []),
       { kind: 'sep' },
-      { label: '鎖定（畫布不可選/拖）', checked: !!el.locked, run: () => this.state.toggleLocked(el.id) },
-      { label: '隱藏（設計＋渲染都不顯示）', checked: !!el.hidden, run: () => this.state.toggleHidden(el.id) },
+      { label: t('鎖定（畫布不可選/拖）'), checked: !!el.locked, run: () => this.state.toggleLocked(el.id) },
+      { label: t('隱藏（設計＋渲染都不顯示）'), checked: !!el.hidden, run: () => this.state.toggleHidden(el.id) },
       { kind: 'sep' },
-      { label: '刪除', shortcut: 'Del', danger: true, run: () => this.state.removeElement(el.id) },
+      { label: t('刪除'), shortcut: 'Del', danger: true, run: () => this.state.removeElement(el.id) },
     ];
     this.state.openContextMenu(e.clientX, e.clientY, items);
   }
@@ -942,7 +944,7 @@ export class EditorCanvasComponent {
     e.preventDefault();
     const pt = this.dropPoint(e);
     const items: ContextMenuItem[] = [{
-      label: '貼上',
+      label: t('貼上'),
       shortcut: this.key('V'),
       disabled: !this.state.hasClipboard() || !pt,
       run: () => { if (pt) this.state.pasteAt(pt.x, pt.y); },

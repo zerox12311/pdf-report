@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
+import { t } from '../../core/i18n/i18n';
 import { AuthService } from '../../core/services/auth.service';
 import { ModalService } from '../../core/services/modal.service';
 import { ProjectSummary, TemplateApiService } from '../../core/services/template-api.service';
@@ -13,19 +14,19 @@ import { ProjectSummary, TemplateApiService } from '../../core/services/template
   imports: [RouterLink, DatePipe, FormsModule],
   template: `
     <div class="head">
-      <h1>專案</h1>
+      <h1>{{ t('專案') }}</h1>
       @if (auth.isAdmin()) {
         <form class="new" (ngSubmit)="add()">
-          <input name="name" [(ngModel)]="newName" placeholder="新專案名稱" />
-          <button type="submit" [disabled]="busy() || !newName.trim()">＋ 建立</button>
+          <input name="name" [(ngModel)]="newName" [placeholder]="t('新專案名稱')" />
+          <button type="submit" [disabled]="busy() || !newName.trim()">{{ t('＋ 建立') }}</button>
         </form>
       }
     </div>
     @if (error()) { <div class="err">{{ error() }}</div> }
     @if (loading()) {
-      <div class="hint">載入中…</div>
+      <div class="hint">{{ t('載入中…') }}</div>
     } @else if (projects().length === 0) {
-      <div class="hint">{{ auth.isAdmin() ? '還沒有專案，在上方建立一個開始。' : '你還沒有被指派任何專案，請聯絡管理員。' }}</div>
+      <div class="hint">{{ auth.isAdmin() ? t('還沒有專案，在上方建立一個開始。') : t('你還沒有被指派任何專案，請聯絡管理員。') }}</div>
     } @else {
       <ul>
         @for (p of projects(); track p.id) {
@@ -35,7 +36,7 @@ import { ProjectSummary, TemplateApiService } from '../../core/services/template
               <span class="time">{{ p.createdAt | date: 'yyyy/MM/dd' }}</span>
             </a>
             @if (auth.isAdmin() && p.id !== 'default') {
-              <button class="del" (click)="remove(p)">刪除</button>
+              <button class="del" (click)="remove(p)">{{ t('刪除') }}</button>
             }
           </li>
         }
@@ -67,6 +68,7 @@ import { ProjectSummary, TemplateApiService } from '../../core/services/template
   `,
 })
 export class ProjectsComponent {
+  protected readonly t = t;
   private api = inject(TemplateApiService);
   private modal = inject(ModalService);
   auth = inject(AuthService);
@@ -109,9 +111,9 @@ export class ProjectsComponent {
 
   async remove(p: ProjectSummary) {
     const ok = await this.modal.confirm({
-      title: '刪除專案',
-      message: `確定刪除專案「${p.name}」？\n（專案內若有樣板需先清空）`,
-      confirmLabel: '刪除',
+      title: t('刪除專案'),
+      message: t('確定刪除專案「{name}」？\n（專案內若有樣板需先清空）', { name: p.name }),
+      confirmLabel: t('刪除'),
       danger: true,
     });
     if (!ok) return;

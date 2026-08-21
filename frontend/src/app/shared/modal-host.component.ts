@@ -8,6 +8,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { t } from '../core/i18n/i18n';
 import { ModalButton, ModalService, ModalState } from '../core/services/modal.service';
 
 /**
@@ -28,7 +29,7 @@ import { ModalButton, ModalService, ModalState } from '../core/services/modal.se
             <div class="copybox">
               <code>{{ copy }}</code>
               <button class="copybtn" [class.done]="copied()" (click)="copyValue(copy)">
-                {{ copied() ? '已複製' : '複製' }}
+                {{ copied() ? t('已複製') : t('複製') }}
               </button>
             </div>
           }
@@ -83,6 +84,7 @@ import { ModalButton, ModalService, ModalState } from '../core/services/modal.se
 })
 export class ModalHostComponent {
   modal = inject(ModalService);
+  protected readonly t = t;
   /** 複製按鈕的「已複製」回饋狀態；每次 modal 切換時重置 */
   copied = signal(false);
 
@@ -138,7 +140,7 @@ export class ModalHostComponent {
     if (ke && (ke.isComposing || ke.keyCode === 229)) return;
     const inp = s.input!;
     if (inp.minLength && inp.value.length < inp.minLength) {
-      this.modal.state.set({ ...s, input: { ...inp, error: `至少 ${inp.minLength} 字元` } });
+      this.modal.state.set({ ...s, input: { ...inp, error: t('至少 {n} 字元', { n: inp.minLength }) } });
       return;
     }
     this.resolve(s, inp.value);

@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { t } from '../../../core/i18n/i18n';
 import { PAPER_PRESETS, TemplateDoc, Watermark, mmToPt, ptToMm } from '../../../core/models/template.model';
 import { ModalService } from '../../../core/services/modal.service';
 import { EditorStateService } from '../editor-state.service';
@@ -11,110 +12,110 @@ import { WatermarkFormComponent } from './watermark-form.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [FormsModule, WatermarkFormComponent],
   template: `
-    <h3>節設定<span class="sec-kind">{{ sec().kind === 'flow' ? '內容節' : '獨立頁' }}</span></h3>
-    <label class="full">節名稱
+    <h3>{{ t('節設定') }}<span class="sec-kind">{{ sec().kind === 'flow' ? t('內容節') : t('獨立頁') }}</span></h3>
+    <label class="full">{{ t('節名稱') }}
       <input [ngModel]="sec().name" (ngModelChange)="state.patchSection(sec().id, { name: $event })" />
     </label>
-    <label class="full">紙張大小
+    <label class="full">{{ t('紙張大小') }}
       <select [ngModel]="paperValue()" (ngModelChange)="setPaper($event)">
         @for (p of papers; track p.value) { <option [value]="p.value">{{ p.label }}</option> }
-        <option value="custom">自訂尺寸…</option>
+        <option value="custom">{{ t('自訂尺寸…') }}</option>
       </select>
     </label>
     @if (paperValue() === 'custom') {
       <div class="grid2">
-        <label>寬（mm）<input type="number" min="20" step="1" [ngModel]="mm(state.activePage().width)"
+        <label>{{ t('寬（mm）') }}<input type="number" min="20" step="1" [ngModel]="mm(state.activePage().width)"
           (ngModelChange)="setCustom('width', $event)" /></label>
-        <label>高（mm）<input type="number" min="20" step="1" [ngModel]="mm(state.activePage().height)"
+        <label>{{ t('高（mm）') }}<input type="number" min="20" step="1" [ngModel]="mm(state.activePage().height)"
           (ngModelChange)="setCustom('height', $event)" /></label>
       </div>
     }
-    <label class="full">方向
+    <label class="full">{{ t('方向') }}
       <select [ngModel]="state.activePage().orientation" (ngModelChange)="setOrientation($event)">
-        <option value="portrait">直向</option>
-        <option value="landscape">橫向</option>
+        <option value="portrait">{{ t('直向') }}</option>
+        <option value="landscape">{{ t('橫向') }}</option>
       </select>
     </label>
     @if (sec().kind === 'flow') {
       <div class="grid2">
-        <label>頁首高度（{{ state.rulerUnit() }}）
+        <label>{{ t('頁首高度（{u}）', { u: state.rulerUnit() }) }}
           <input type="number" min="0" [ngModel]="state.ptToDisp(sec().headerHeight)"
             (ngModelChange)="state.patchSection(sec().id, { headerHeight: ptMin($event, 0) })" />
         </label>
-        <label>頁尾高度（{{ state.rulerUnit() }}）
+        <label>{{ t('頁尾高度（{u}）', { u: state.rulerUnit() }) }}
           <input type="number" min="0" [ngModel]="state.ptToDisp(sec().footerHeight)"
             (ngModelChange)="state.patchSection(sec().id, { footerHeight: ptMin($event, 0) })" />
         </label>
       </div>
       @if (sec().headerHeight === 0 && sec().footerHeight === 0) {
-        <div class="band-hint">頁首/頁尾高度為 0，此節沒有可放頁碼/表頭的重複區——把高度調大才會出現 band 空間。</div>
+        <div class="band-hint">{{ t('頁首/頁尾高度為 0，此節沒有可放頁碼/表頭的重複區——把高度調大才會出現 band 空間。') }}</div>
       }
     }
-    <label class="full">此節的浮水印
+    <label class="full">{{ t('此節的浮水印') }}
       <select [ngModel]="sec().watermarkMode" (ngModelChange)="setSectionWmMode($event)">
-        <option value="inherit">跟隨文件浮水印</option>
-        <option value="none">此節不顯示</option>
-        <option value="custom">此節自訂</option>
+        <option value="inherit">{{ t('跟隨文件浮水印') }}</option>
+        <option value="none">{{ t('此節不顯示') }}</option>
+        <option value="custom">{{ t('此節自訂') }}</option>
       </select>
     </label>
     @if (sec().watermarkMode === 'custom' && sec().watermark) {
       <app-watermark-form [wm]="sec().watermark!" (patchWm)="patchSectionWatermark($event)" />
     }
     <div class="sec-actions">
-      <button (click)="state.moveSection(sec().id, -1)" title="此節往前移">←</button>
-      <button (click)="state.moveSection(sec().id, 1)" title="此節往後移">→</button>
+      <button (click)="state.moveSection(sec().id, -1)" [title]="t('此節往前移')">←</button>
+      <button (click)="state.moveSection(sec().id, 1)" [title]="t('此節往後移')">→</button>
       @if (state.template().sections.length > 1) {
-        <button class="danger" (click)="removeSection()">刪除此節</button>
+        <button class="danger" (click)="removeSection()">{{ t('刪除此節') }}</button>
       }
     </div>
-    <div class="hint">文件由多個「節」依序輸出：每節有自己的紙張與方向（可混 A4/B4、直式/橫式）；內容節有頁首/頁尾 band 並自動分頁，獨立頁固定單獨一頁。節之間必換頁；$page/$pages 全文件連續。用畫布上方的節列切換、＋新增。</div>
+    <div class="hint">{{ t('文件由多個「節」依序輸出：每節有自己的紙張與方向（可混 A4/B4、直式/橫式）；內容節有頁首/頁尾 band 並自動分頁，獨立頁固定單獨一頁。節之間必換頁；$page/$pages 全文件連續。用畫布上方的節列切換、＋新增。') }}</div>
 
-    <div class="doc-divider">📄 文件層級（套用到所有節）</div>
-    <div class="sub">頁面邊界（設計輔助線）</div>
-    <label class="full">預設（同 Word）
+    <div class="doc-divider">{{ t('📄 文件層級（套用到所有節）') }}</div>
+    <div class="sub">{{ t('頁面邊界（設計輔助線）') }}</div>
+    <label class="full">{{ t('預設（同 Word）') }}
       <select [ngModel]="currentMarginPreset()" (ngModelChange)="applyMarginPreset($event)">
         @for (p of marginPresets; track p.key) { <option [value]="p.key">{{ p.label }}{{ p.key === 'custom' ? '' : '（' + presetDesc(p) + '）' }}</option> }
       </select>
     </label>
     <div class="grid2">
-      <label>上（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginTop ?? 0)"
+      <label>{{ t('上（{u}）', { u: state.rulerUnit() }) }}<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginTop ?? 0)"
         (ngModelChange)="state.patchPage({ marginTop: ptMin($event, 0) })" /></label>
-      <label>下（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginBottom ?? 0)"
+      <label>{{ t('下（{u}）', { u: state.rulerUnit() }) }}<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginBottom ?? 0)"
         (ngModelChange)="state.patchPage({ marginBottom: ptMin($event, 0) })" /></label>
-      <label>左（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginLeft ?? 0)"
+      <label>{{ t('左（{u}）', { u: state.rulerUnit() }) }}<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginLeft ?? 0)"
         (ngModelChange)="state.patchPage({ marginLeft: ptMin($event, 0) })" /></label>
-      <label>右（{{ state.rulerUnit() }}）<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginRight ?? 0)"
+      <label>{{ t('右（{u}）', { u: state.rulerUnit() }) }}<input type="number" min="0" [ngModel]="state.ptToDisp(state.template().page.marginRight ?? 0)"
         (ngModelChange)="state.patchPage({ marginRight: ptMin($event, 0) })" /></label>
     </div>
-    <div class="hint">邊界以藍色虛線顯示在畫布上、可吸附對齊，也可**直接拖曳尺規上的藍色三角**調整；不影響輸出（元素仍可放在邊界外）。</div>
+    <div class="hint">{{ t('邊界以藍色虛線顯示在畫布上、可吸附對齊，也可**直接拖曳尺規上的藍色三角**調整；不影響輸出（元素仍可放在邊界外）。') }}</div>
 
-    <div class="sub">文件浮水印（各節預設）</div>
+    <div class="sub">{{ t('文件浮水印（各節預設）') }}</div>
     <label class="row">
       <input type="checkbox" [ngModel]="state.template().page.watermark?.enabled ?? false"
-        (ngModelChange)="toggleWatermark($event)" /> 啟用
+        (ngModelChange)="toggleWatermark($event)" /> {{ t('啟用') }}
     </label>
     @if (state.template().page.watermark?.enabled) {
       <app-watermark-form [wm]="state.template().page.watermark!" (patchWm)="patchWatermark($event)" />
     }
     <div class="hint">
-      頁首/頁尾區內的元素會在每一頁重複；中間內文超過頁面時自動換頁（重複列表格會跨頁並重畫表頭）。<br /><br />
-      頁碼：在頁尾放一個資料欄位，key 填 <b>$page</b>（目前頁碼）或 <b>$pages</b>（總頁數）。<br /><br />
-      快捷鍵：<b>Ctrl/⌘+C</b> 複製、<b>Ctrl/⌘+V</b> 貼上、<b>Ctrl/⌘+X</b> 剪下、<b>Ctrl/⌘+D</b> 原地複製、<b>Del</b> 刪除、方向鍵微調（Shift = 10pt）。<br /><br />
-      拖曳/縮放時按住 <b>Ctrl/⌘ 或 Shift</b> 可暫停磁吸微調；容器內的元素拖出容器邊界放開即移出容器；大綱可拖曳調整階層（拖到容器上=移入、拖到區段標題=換區段）。<br /><br />
-      點選畫布上的元素可編輯元素屬性。
+      {{ t('頁首/頁尾區內的元素會在每一頁重複；中間內文超過頁面時自動換頁（重複列表格會跨頁並重畫表頭）。') }}<br /><br />
+      {{ t('頁碼：在頁尾放一個資料欄位，key 填') }} <b>$page</b>{{ t('（目前頁碼）或') }} <b>$pages</b>{{ t('（總頁數）。') }}<br /><br />
+      {{ t('快捷鍵：') }}<b>Ctrl/⌘+C</b> {{ t('複製、') }}<b>Ctrl/⌘+V</b> {{ t('貼上、') }}<b>Ctrl/⌘+X</b> {{ t('剪下、') }}<b>Ctrl/⌘+D</b> {{ t('原地複製、') }}<b>Del</b> {{ t('刪除、方向鍵微調（Shift = 10pt）。') }}<br /><br />
+      {{ t('拖曳/縮放時按住') }} <b>{{ t('Ctrl/⌘ 或 Shift') }}</b> {{ t('可暫停磁吸微調；容器內的元素拖出容器邊界放開即移出容器；大綱可拖曳調整階層（拖到容器上=移入、拖到區段標題=換區段）。') }}<br /><br />
+      {{ t('點選畫布上的元素可編輯元素屬性。') }}
     </div>
 
     <!-- 危險區（GitHub Danger Zone 式）：影響安全邊界的設定集中在面板最底、紅框標示 -->
     <div class="danger-zone">
-      <div class="dz-title">⚠ 危險區</div>
+      <div class="dz-title">{{ t('⚠ 危險區') }}</div>
       <label class="row">
         <input type="checkbox" [ngModel]="state.template().allowAnonymousRender ?? false"
-          (ngModelChange)="state.setAllowAnonymousRender($event)" /> 允許匿名渲染
+          (ngModelChange)="state.setAllowAnonymousRender($event)" /> {{ t('允許匿名渲染') }}
       </label>
       @if (state.template().allowAnonymousRender) {
-        <div class="dz-warn">已開放：任何拿到樣板 id 的人都可不帶憑證渲染此樣板——樣板上的靜態文字與範例值會出現在 PDF。請確認內容不含機敏資訊。</div>
+        <div class="dz-warn">{{ t('已開放：任何拿到樣板 id 的人都可不帶憑證渲染此樣板——樣板上的靜態文字與範例值會出現在 PDF。請確認內容不含機敏資訊。') }}</div>
       } @else {
-        <div class="dz-hint">開啟後宿主前端可直接呼叫 render API（不帶 API key／token）。僅影響渲染；樣板的讀取與修改仍需憑證。</div>
+        <div class="dz-hint">{{ t('開啟後宿主前端可直接呼叫 render API（不帶 API key／token）。僅影響渲染；樣板的讀取與修改仍需憑證。') }}</div>
       }
     </div>
   `,
@@ -152,15 +153,16 @@ export class PagePropertiesComponent {
   state = inject(EditorStateService);
   private modal = inject(ModalService);
   papers = PAPER_PRESETS;
+  protected readonly t = t;
 
   /** Word 式邊界預設（pt）；custom 代表目前值不符任何預設 */
   marginPresets = [
-    { key: 'normal', label: '標準', top: 72, bottom: 72, left: 72, right: 72 },
-    { key: 'narrow', label: '窄', top: 36, bottom: 36, left: 36, right: 36 },
-    { key: 'moderate', label: '中等', top: 72, bottom: 72, left: 54, right: 54 },
-    { key: 'wide', label: '寬', top: 72, bottom: 72, left: 144, right: 144 },
-    { key: 'none', label: '無邊界', top: 0, bottom: 0, left: 0, right: 0 },
-    { key: 'custom', label: '自訂', top: -1, bottom: -1, left: -1, right: -1 },
+    { key: 'normal', label: t('標準'), top: 72, bottom: 72, left: 72, right: 72 },
+    { key: 'narrow', label: t('窄'), top: 36, bottom: 36, left: 36, right: 36 },
+    { key: 'moderate', label: t('中等'), top: 72, bottom: 72, left: 54, right: 54 },
+    { key: 'wide', label: t('寬'), top: 72, bottom: 72, left: 144, right: 144 },
+    { key: 'none', label: t('無邊界'), top: 0, bottom: 0, left: 0, right: 0 },
+    { key: 'custom', label: t('自訂'), top: -1, bottom: -1, left: -1, right: -1 },
   ];
 
   /** 預設在下拉顯示的尺寸描述（依目前尺規單位） */
@@ -204,9 +206,9 @@ export class PagePropertiesComponent {
 
   async removeSection() {
     const ok = await this.modal.confirm({
-      title: '刪除節',
-      message: `刪除節「${this.sec().name}」？此節上的元素會一併刪除。`,
-      confirmLabel: '刪除',
+      title: t('刪除節'),
+      message: t('刪除節「{name}」？此節上的元素會一併刪除。', { name: this.sec().name }),
+      confirmLabel: t('刪除'),
       danger: true,
     });
     if (ok) this.state.removeSection(this.sec().id);

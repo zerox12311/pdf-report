@@ -4,6 +4,7 @@ import { MenuItem } from 'primeng/api';
 import { BreadcrumbModule } from 'primeng/breadcrumb';
 import { MultiSelect } from 'primeng/multiselect';
 
+import { t } from '../../core/i18n/i18n';
 import { AuthService } from '../../core/services/auth.service';
 import { ModalService } from '../../core/services/modal.service';
 import {
@@ -18,24 +19,24 @@ import {
   imports: [FormsModule, MultiSelect, BreadcrumbModule],
   template: `
     <p-breadcrumb [home]="home" [model]="crumbs" />
-    <h1>使用者管理</h1>
+    <h1>{{ t('使用者管理') }}</h1>
     @if (error()) { <div class="err">{{ error() }}</div> }
 
     <!-- 建立 -->
     <form class="card create" (ngSubmit)="create()">
-      <h2>建立使用者</h2>
+      <h2>{{ t('建立使用者') }}</h2>
       <div class="row">
-        <input name="u" [(ngModel)]="newUsername" placeholder="帳號" autocomplete="off" />
-        <input name="p" type="password" [(ngModel)]="newPassword" placeholder="密碼" autocomplete="new-password" />
+        <input name="u" [(ngModel)]="newUsername" [placeholder]="t('帳號')" autocomplete="off" />
+        <input name="p" type="password" [(ngModel)]="newPassword" [placeholder]="t('密碼')" autocomplete="new-password" />
         <select name="r" [(ngModel)]="newRole">
-          <option value="user">使用者</option>
-          <option value="admin">管理員</option>
+          <option value="user">{{ t('使用者') }}</option>
+          <option value="admin">{{ t('管理員') }}</option>
         </select>
-        <button type="submit" [disabled]="busy() || !newUsername.trim() || !newPassword">建立</button>
+        <button type="submit" [disabled]="busy() || !newUsername.trim() || !newPassword">{{ t('建立') }}</button>
       </div>
       @if (newRole === 'user') {
         <div class="proj-pick">
-          <span class="lbl">可存取專案：</span>
+          <span class="lbl">{{ t('可存取專案：') }}</span>
           <p-multiselect
             name="np"
             [options]="projects()"
@@ -46,8 +47,8 @@ import {
             display="chip"
             [showToggleAll]="true"
             [showClear]="true"
-            placeholder="選擇專案（可搜尋）"
-            emptyMessage="尚無專案"
+            [placeholder]="t('選擇專案（可搜尋）')"
+            [emptyMessage]="t('尚無專案')"
             [style]="{ minWidth: '260px', maxWidth: '520px' }"
             appendTo="body" />
         </div>
@@ -56,7 +57,7 @@ import {
 
     <!-- 清單 -->
     @if (loading()) {
-      <div class="hint">載入中…</div>
+      <div class="hint">{{ t('載入中…') }}</div>
     } @else {
       <ul>
         @for (u of users(); track u.id) {
@@ -64,15 +65,15 @@ import {
             <div class="row head">
               <span class="uname">{{ u.username }}</span>
               <select [ngModel]="u.role" (ngModelChange)="changeRole(u, $event)" [disabled]="u.id === selfId()">
-                <option value="user">使用者</option>
-                <option value="admin">管理員</option>
+                <option value="user">{{ t('使用者') }}</option>
+                <option value="admin">{{ t('管理員') }}</option>
               </select>
-              <button class="pw" (click)="resetPassword(u)">重設密碼</button>
-              <button class="del" (click)="remove(u)" [disabled]="u.id === selfId()">刪除</button>
+              <button class="pw" (click)="resetPassword(u)">{{ t('重設密碼') }}</button>
+              <button class="del" (click)="remove(u)" [disabled]="u.id === selfId()">{{ t('刪除') }}</button>
             </div>
             @if (u.role === 'user') {
               <div class="proj-pick">
-                <span class="lbl">可存取專案：</span>
+                <span class="lbl">{{ t('可存取專案：') }}</span>
                 <p-multiselect
                   [options]="projects()"
                   optionLabel="name"
@@ -84,13 +85,13 @@ import {
                   display="chip"
                   [showToggleAll]="true"
                   [showClear]="true"
-                  placeholder="選擇專案（可搜尋）"
-                  emptyMessage="尚無專案"
+                  [placeholder]="t('選擇專案（可搜尋）')"
+                  [emptyMessage]="t('尚無專案')"
                   [style]="{ minWidth: '260px', maxWidth: '520px' }"
                   appendTo="body" />
               </div>
             } @else {
-              <div class="proj-pick muted">管理員可存取所有專案</div>
+              <div class="proj-pick muted">{{ t('管理員可存取所有專案') }}</div>
             }
           </li>
         }
@@ -123,12 +124,13 @@ import {
   `,
 })
 export class UsersComponent {
+  protected readonly t = t;
   private api = inject(TemplateApiService);
   private auth = inject(AuthService);
   private modal = inject(ModalService);
 
   readonly home: MenuItem = { icon: 'pi pi-home', routerLink: '/' };
-  readonly crumbs: MenuItem[] = [{ label: '使用者管理' }];
+  readonly crumbs: MenuItem[] = [{ label: t('使用者管理') }];
 
   users = signal<ConsoleUserView[]>([]);
   projects = signal<ProjectSummary[]>([]);
@@ -199,31 +201,31 @@ export class UsersComponent {
 
   async resetPassword(u: ConsoleUserView) {
     const pw = await this.modal.prompt({
-      title: `重設「${u.username}」的密碼`,
-      placeholder: '新密碼（至少 8 字元）',
+      title: t('重設「{name}」的密碼', { name: u.username }),
+      placeholder: t('新密碼（至少 8 字元）'),
       password: true,
       minLength: 4,
-      confirmLabel: '更新',
+      confirmLabel: t('更新'),
     });
     if (pw == null) return;
     this.error.set('');
     try {
       await this.api.updateUser(u.id, { password: pw });
       await this.load();
-      await this.modal.alert({ title: '密碼已重設', message: `已更新「${u.username}」的密碼。` });
+      await this.modal.alert({ title: t('密碼已重設'), message: t('已更新「{name}」的密碼。', { name: u.username }) });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.error.set(msg);
       await this.load();
-      await this.modal.alert({ title: '重設失敗', message: `無法更新「${u.username}」的密碼：${msg}` });
+      await this.modal.alert({ title: t('重設失敗'), message: t('無法更新「{name}」的密碼：{msg}', { name: u.username, msg }) });
     }
   }
 
   async remove(u: ConsoleUserView) {
     const ok = await this.modal.confirm({
-      title: '刪除使用者',
-      message: `確定刪除使用者「${u.username}」？`,
-      confirmLabel: '刪除',
+      title: t('刪除使用者'),
+      message: t('確定刪除使用者「{name}」？', { name: u.username }),
+      confirmLabel: t('刪除'),
       danger: true,
     });
     if (!ok) return;

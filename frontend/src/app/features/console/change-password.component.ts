@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { MenuItem } from 'primeng/api';
 import { BreadcrumbModule } from 'primeng/breadcrumb';
 
+import { t } from '../../core/i18n/i18n';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
@@ -12,19 +13,19 @@ import { AuthService } from '../../core/services/auth.service';
   template: `
     <p-breadcrumb [home]="home" [model]="crumbs" />
     <form class="card" (ngSubmit)="submit()">
-      <h1>修改密碼</h1>
-      <label>目前密碼
+      <h1>{{ t('修改密碼') }}</h1>
+      <label>{{ t('目前密碼') }}
         <input name="old" type="password" [(ngModel)]="oldPassword" autocomplete="current-password" />
       </label>
-      <label>新密碼（至少 8 字元）
+      <label>{{ t('新密碼（至少 8 字元）') }}
         <input name="new" type="password" [(ngModel)]="newPassword" autocomplete="new-password" />
       </label>
-      <label>確認新密碼
+      <label>{{ t('確認新密碼') }}
         <input name="confirm" type="password" [(ngModel)]="confirmPassword" autocomplete="new-password" />
       </label>
       @if (error()) { <div class="err">{{ error() }}</div> }
-      @if (done()) { <div class="ok">密碼已更新。</div> }
-      <button type="submit" [disabled]="busy()">{{ busy() ? '更新中…' : '更新密碼' }}</button>
+      @if (done()) { <div class="ok">{{ t('密碼已更新。') }}</div> }
+      <button type="submit" [disabled]="busy()">{{ busy() ? t('更新中…') : t('更新密碼') }}</button>
     </form>
   `,
   styles: `
@@ -44,10 +45,11 @@ import { AuthService } from '../../core/services/auth.service';
   `,
 })
 export class ChangePasswordComponent {
+  protected readonly t = t;
   private auth = inject(AuthService);
 
   readonly home: MenuItem = { icon: 'pi pi-home', routerLink: '/' };
-  readonly crumbs: MenuItem[] = [{ label: '修改密碼' }];
+  readonly crumbs: MenuItem[] = [{ label: t('修改密碼') }];
 
   oldPassword = '';
   newPassword = '';
@@ -61,11 +63,11 @@ export class ChangePasswordComponent {
     this.error.set('');
     this.done.set(false);
     if (this.newPassword.length < 8) {
-      this.error.set('新密碼至少 8 字元');
+      this.error.set(t('新密碼至少 8 字元'));
       return;
     }
     if (this.newPassword !== this.confirmPassword) {
-      this.error.set('兩次新密碼不一致');
+      this.error.set(t('兩次新密碼不一致'));
       return;
     }
     this.busy.set(true);

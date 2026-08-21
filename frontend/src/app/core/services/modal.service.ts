@@ -1,5 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 
+import { t } from '../i18n/i18n';
+
 /** modal 內的按鈕 */
 export interface ModalButton {
   label: string;
@@ -52,8 +54,8 @@ export class ModalService {
           title: opts.title,
           message: opts.message,
           buttons: [
-            { label: opts.cancelLabel ?? '取消', value: false, kind: 'default' },
-            { label: opts.confirmLabel ?? '確定', value: true, kind: opts.danger ? 'danger' : 'primary' },
+            { label: opts.cancelLabel ?? t('取消'), value: false, kind: 'default' },
+            { label: opts.confirmLabel ?? t('確定'), value: true, kind: opts.danger ? 'danger' : 'primary' },
           ],
           cancelValue: false,
         },
@@ -84,8 +86,8 @@ export class ModalService {
             minLength: opts.minLength,
           },
           buttons: [
-            { label: '取消', value: null, kind: 'default' },
-            { label: opts.confirmLabel ?? '確定', value: null, kind: 'primary', submit: true },
+            { label: t('取消'), value: null, kind: 'default' },
+            { label: opts.confirmLabel ?? t('確定'), value: null, kind: 'primary', submit: true },
           ],
           cancelValue: null,
         },
@@ -102,7 +104,7 @@ export class ModalService {
           title: opts.title,
           message: opts.message,
           copy: opts.copy,
-          buttons: [{ label: '確定', value: undefined, kind: 'primary' }],
+          buttons: [{ label: t('確定'), value: undefined, kind: 'primary' }],
           cancelValue: undefined,
         },
         () => resolve(),

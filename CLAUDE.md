@@ -53,6 +53,7 @@ docker compose up -d --build                                  # 完整 demo（�
 - **httpapi `New` 維持 100% 覆蓋**（`go tool cover -func`），新 endpoint 要補齊所有分支的測試。
 - **格式化雙實作**：`internal/engine/format.go`（權威）↔ `frontend/src/app/core/utils/format-value.ts`（畫布預覽鏡像），改一邊必改另一邊＋兩邊測試（format_test.go / format-value.spec.ts）。**行內樣式標記同理**：`internal/engine/richtext.go` ↔ `core/utils/rich-text.ts`（`[b][i][c=#rrggbb]`，richtext_test.go / rich-text.spec.ts）。
 - **EditorStateService 必須可 `new` 建構**（specs 直接 `new EditorStateService()`，內部不得用 `inject()`）。
+- **前端 UI 字串要走 i18n**：程式碼寫中文原文包 `t('...')`（`core/i18n/i18n.ts`，非 DI 模組函式），英譯補 `core/i18n/en.ts`（缺譯退回中文不會壞）。切語言走 reload，所以模組層常數也能用 t()。例外：`format-value.ts`／`rich-text.ts` 的領域字串（引擎鏡像）不翻。
 - **改過 Angular 樣板就要跑 `npx ng build --configuration production`**：`tsc --noEmit` **不檢查樣板**，karma 的 spec 也沒有實例化 editor-canvas／editor-page，所以「型別乾淨＋單元測試全過」可能還是**建置失敗**（實際踩過：`@if (el.autoGrow)` 對 `ImageElement` 不存在，tsc 與 82 個測試全過但 ng build 直接 ERROR）。樣板裡要用只存在於部分元素型別的欄位，走 component 方法收斂型別（例：`growsOnOverflow(el)`）。
 - 渲染錯誤不靜默：資料缺 key → 警告（`X-Render-Warnings` header）；`?strict=1` → 422。壞 JSON body → 400。這是財務單據產品的硬要求。
 - **對外的 API 說明只寫端點、請求、回應**：「🔗 連接」對話框（＝交付給客戶工程師的 API 文件）**不寫實作機制、設計理由、內部防護怎麼做的**。呼叫方要知道的是「打哪支、送什麼、回什麼、什麼錯誤碼」。被退過的實例：解釋速率限制的計數維度、解釋 X-Render-Warnings 為何重要、解釋 token 為何放 fragment、「不該做的事」安全告誡、「寫回的是樣板本體」的機制說明。程式碼註解不受此限——那裡要解釋「為什麼」。

@@ -6,6 +6,7 @@ import {
   emptyTemplate, isChildHost, newId, normalizeTemplate, sectionPage,
 } from '../../core/models/template.model';
 import { setPath } from '../../core/utils/set-path';
+import { t } from '../../core/i18n/i18n';
 
 /** 右鍵選單項目：sep = 分隔線 */
 export type ContextMenuItem =
@@ -296,7 +297,7 @@ export class EditorStateService {
     const base = this.template().page;
     const sec: DocSection = {
       id: newId(),
-      name: kind === 'single' ? '獨立頁' : '內容節',
+      name: kind === 'single' ? t('獨立頁') : t('內容節'),
       kind,
       page: { size: base.size, orientation: base.orientation, width: base.width, height: base.height },
       // flow 節預設給可用的頁首/頁尾 band 高度（否則 band 顯示卻無空間，是新手陷阱）；single 節無 band
@@ -607,18 +608,18 @@ export class EditorStateService {
   mergeSelectionError(tableId: string): string | null {
     const el = this.findElement(tableId);
     const range = this.selectedCellRange();
-    if (!el || el.type !== 'table' || !range) return '先框出範圍（點一格再 Shift+點另一格）';
+    if (!el || el.type !== 'table' || !range) return t('先框出範圍（點一格再 Shift+點另一格）');
     const r1 = Math.min(range.r1, range.r2);
     const r2 = Math.max(range.r1, range.r2);
     const c1 = Math.min(range.c1, range.c2);
     const c2 = Math.max(range.c1, range.c2);
-    if (r1 === r2 && c1 === c2) return '範圍只有一格，無可合併';
+    if (r1 === r2 && c1 === c2) return t('範圍只有一格，無可合併');
     const rep = el.repeat;
     if (rep?.enabled && r1 !== r2) {
       const special = [rep.rowIndex, rep.groupHeaderRowIndex, rep.groupFooterRowIndex]
         .filter((v): v is number => v != null);
       if (special.some(sr => sr >= r1 && sr <= r2)) {
-        return '不可跨重複列/群組列（重複列內只能左右合併）';
+        return t('不可跨重複列/群組列（重複列內只能左右合併）');
       }
     }
     return null;
@@ -1299,12 +1300,12 @@ export class EditorStateService {
         const base = `${prefix}${list.key}[${i}]`;
         for (const c of list.children ?? []) {
           if (c.type === 'placeholder' && c.key && !c.key.startsWith('$')) {
-            setPath(data, `${base}.${c.key}`, coerce((c.sample || '範例') + (i + 1)));
+            setPath(data, `${base}.${c.key}`, coerce((c.sample || t('範例')) + (i + 1)));
           } else if (c.type === 'text' && c.content.includes('{{')) {
             for (const m of c.content.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|\s*([A-Za-z]+(?:\([^()|}]*\))?)\s*)?\}\}/g)) {
               if (m[1].startsWith('$')) continue;
               const fmt = m[2] ?? '';
-              const s = fmt === 'comma' || fmt === 'twUpper' ? '12345' : fmt.startsWith('rocDate') ? '2026-07-20' : '範例';
+              const s = fmt === 'comma' || fmt === 'twUpper' ? '12345' : fmt.startsWith('rocDate') ? '2026-07-20' : t('範例');
               setPath(data, `${base}.${m[1]}`, coerce(s));
             }
           } else if (c.type === 'barcode' && c.key && !c.key.startsWith('$')) {
@@ -1323,7 +1324,7 @@ export class EditorStateService {
       if (el.type === 'list') { listSample(el, ''); continue; }
       // $ 開頭是引擎保留 key（$page/$pages），不放進範例資料
       if (el.type === 'placeholder' && el.key && !el.key.startsWith('$')) {
-        setPath(data, el.key, coerce(el.sample || '範例'));
+        setPath(data, el.key, coerce(el.sample || t('範例')));
       }
       // 文字元素的行內插值 token {{key|format}} 也要有範例資料
       if (el.type === 'text' && el.content.includes('{{')) {
@@ -1332,7 +1333,7 @@ export class EditorStateService {
           if (key.startsWith('$')) continue;
           const fmt = m[2] ?? '';
           const sample = fmt === 'comma' || fmt === 'twUpper' ? '12345'
-            : fmt.startsWith('rocDate') ? '2026-07-20' : '範例';
+            : fmt.startsWith('rocDate') ? '2026-07-20' : t('範例');
           setPath(data, key, coerce(sample));
         }
       }
@@ -1367,21 +1368,21 @@ export class EditorStateService {
             if (cell.kind !== 'placeholder' || !cell.key || cell.key.startsWith('$')) continue;
             if (isRepeatRow) {
               for (let i = 0; i < rowCount; i++) {
-                setPath(data, `${rep!.key}[${i}].${cell.key}`, coerce((cell.sample || '範例') + (i + 1)));
+                setPath(data, `${rep!.key}[${i}].${cell.key}`, coerce((cell.sample || t('範例')) + (i + 1)));
               }
             } else if (isGroupRow) {
               // 群組首/尾列的相對 key 也屬於陣列元素
               for (let i = 0; i < rowCount; i++) {
-                setPath(data, `${rep!.key}[${i}].${cell.key}`, coerce(cell.sample || '範例'));
+                setPath(data, `${rep!.key}[${i}].${cell.key}`, coerce(cell.sample || t('範例')));
               }
             } else {
-              setPath(data, cell.key, coerce(cell.sample || '範例'));
+              setPath(data, cell.key, coerce(cell.sample || t('範例')));
             }
           }
         }
         if (grouped) {
           for (let i = 0; i < rowCount; i++) {
-            setPath(data, `${rep!.key}[${i}].${rep!.groupBy}`, '分類' + (i < 2 ? 1 : 2));
+            setPath(data, `${rep!.key}[${i}].${rep!.groupBy}`, t('分類') + (i < 2 ? 1 : 2));
           }
         }
       }

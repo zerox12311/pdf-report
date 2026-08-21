@@ -1,6 +1,8 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+
+import { t } from '../i18n/i18n';
 import { TemplateDoc, TemplateSummary, ValidationSpec } from '../models/template.model';
 
 /** 解析 `X-Render-Warnings`（percent-encoded 的 JSON 字串陣列）；壞掉就當沒有警告，不能因此擋住預覽。 */
@@ -212,7 +214,7 @@ async function extractErrorMessage(e: unknown): Promise<string> {
     }
     const msg = (payload as { error?: string } | null)?.error;
     if (msg) return msg;
-    return e.status > 0 ? `伺服器回應 ${e.status}` : '無法連線到伺服器';
+    return e.status > 0 ? t('伺服器回應 {status}', { status: e.status }) : t('無法連線到伺服器');
   }
   return e instanceof Error ? e.message : String(e);
 }

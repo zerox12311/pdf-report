@@ -1,4 +1,5 @@
 import { BarcodeSymbology, NewTemplateElement, TableCell, TemplateElement, emptyCell, newId } from '../../core/models/template.model';
+import { t } from '../../core/i18n/i18n';
 
 /** 元件盤可新增的元素動作（資料綁定統一用文字的 {{key}} 插值，不再有獨立的資料欄位元件） */
 export type PaletteAction =
@@ -59,7 +60,7 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
     case 'text':
       return [{
         type: 'text', x: 40, y: baseY, width: 200, height: 24,
-        content: '文字內容', fontSize: 14, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
+        content: t('文字內容'), fontSize: 14, color: '#000000', align: 'left', lineHeight: 1.2, bold: false,
       }];
     case 'image':
       // 佔位圖片：來源（上傳檔案或綁定圖片 URL）之後在屬性面板設定
@@ -73,9 +74,9 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
         columnWidths: [90, 90, 90], rowHeights: [24, 24, 24],
         borderColor: '#000000', borderWidth: 1, fontSize: 10, cellPadding: 4,
         cells: [
-          [{ ...emptyCell(), value: '欄位1', bold: true, align: 'center' },
-           { ...emptyCell(), value: '欄位2', bold: true, align: 'center' },
-           { ...emptyCell(), value: '欄位3', bold: true, align: 'center' }],
+          [{ ...emptyCell(), value: t('欄位1'), bold: true, align: 'center' },
+           { ...emptyCell(), value: t('欄位2'), bold: true, align: 'center' },
+           { ...emptyCell(), value: t('欄位3'), bold: true, align: 'center' }],
           [emptyCell(), emptyCell(), emptyCell()],
           [emptyCell(), emptyCell(), emptyCell()],
         ],
@@ -108,7 +109,7 @@ export function createElements(action: PaletteAction, baseY: number): NewTemplat
     case 'container':
       return [{
         type: 'container', x: 40, y: baseY, width: 240, height: 130,
-        title: '區塊', borderWidth: 1, borderColor: '#94a3b8', fillColor: null, children: [],
+        title: t('區塊'), borderWidth: 1, borderColor: '#94a3b8', fillColor: null, children: [],
       }];
     case 'list':
       // 重複區塊：綁陣列 key，內含一筆的自由版面。預設放一個相對 key 的插值文字起手。

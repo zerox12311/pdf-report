@@ -1,4 +1,6 @@
 import { Injectable, signal } from '@angular/core';
+
+import { t } from '../i18n/i18n';
 import { FONT_FAMILIES, TemplateDoc, TemplateElement } from '../models/template.model';
 
 export interface UserFont {
@@ -30,7 +32,7 @@ export class FontService {
     fd.append('name', file.name.replace(/\.(ttf|otf)$/i, ''));
     const res = await fetch('/api/fonts', { method: 'POST', body: fd });
     if (!res.ok) {
-      let msg = '字型上傳失敗';
+      let msg = t('字型上傳失敗');
       try { msg = (await res.json()).error ?? msg; } catch { /* keep default */ }
       throw new Error(msg);
     }

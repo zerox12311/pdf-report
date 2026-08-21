@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
+import { currentLang, setLang, t } from '../../core/i18n/i18n';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
@@ -11,16 +12,17 @@ import { AuthService } from '../../core/services/auth.service';
   template: `
     <div class="wrap">
       <form class="card" (ngSubmit)="submit()">
-        <h1>PDF 樣板控制台</h1>
-        <p class="sub">請登入以管理專案與樣板</p>
-        <label>帳號
+        <h1>{{ t('PDF 樣板控制台') }}</h1>
+        <p class="sub">{{ t('請登入以管理專案與樣板') }}</p>
+        <label>{{ t('帳號') }}
           <input name="username" [(ngModel)]="username" autocomplete="username" autofocus />
         </label>
-        <label>密碼
+        <label>{{ t('密碼') }}
           <input name="password" type="password" [(ngModel)]="password" autocomplete="current-password" />
         </label>
         @if (error()) { <div class="err">{{ error() }}</div> }
-        <button type="submit" [disabled]="busy()">{{ busy() ? '登入中…' : '登入' }}</button>
+        <button type="submit" [disabled]="busy()">{{ busy() ? t('登入中…') : t('登入') }}</button>
+        <button type="button" class="lang" (click)="toggleLang()">{{ lang === 'en' ? '中文' : 'English' }}</button>
       </form>
     </div>
   `,
@@ -41,11 +43,19 @@ import { AuthService } from '../../core/services/auth.service';
       padding: 11px; font-size: 15px; cursor: pointer; }
     button:hover:not(:disabled) { background: #1d4ed8; }
     button:disabled { opacity: .6; cursor: default; }
+    button.lang { background: none; color: #94a3b8; font-size: 12.5px; padding: 2px; margin-top: 0; }
+    button.lang:hover:not(:disabled) { background: none; color: #475569; text-decoration: underline; }
   `,
 })
 export class LoginComponent {
+  protected readonly t = t;
+  protected readonly lang = currentLang();
   private auth = inject(AuthService);
   private router = inject(Router);
+
+  toggleLang() {
+    setLang(this.lang === 'en' ? 'zh-TW' : 'en');
+  }
 
   username = '';
   password = '';

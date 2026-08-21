@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { t } from '../../../core/i18n/i18n';
 import {
   ElementPatch, FONT_FAMILIES, PlaceholderElement, TextElement,
 } from '../../../core/models/template.model';
@@ -15,42 +16,42 @@ import { SliderFieldComponent } from './slider-field.component';
   imports: [FormsModule, SliderFieldComponent],
   template: `
     @if (el(); as el) {
-      <label class="full">字型
+      <label class="full">{{ t('字型') }}
         <div class="font-row">
           <select [ngModel]="el.fontFamily ?? 'sans'" (ngModelChange)="patch({ fontFamily: $event })">
             @for (f of fontFamilies; track f.value) { <option [value]="f.value">{{ f.label }}</option> }
-            @for (f of fontSvc.fonts(); track f.id) { <option [value]="f.id">{{ f.name }}（匯入）</option> }
+            @for (f of fontSvc.fonts(); track f.id) { <option [value]="f.id">{{ f.name }}{{ t('（匯入）') }}</option> }
           </select>
-          <button type="button" class="imp" (click)="fontInput.click()" title="匯入 TTF/OTF 字型">＋</button>
+          <button type="button" class="imp" (click)="fontInput.click()" [title]="t('匯入 TTF/OTF 字型')">＋</button>
           <input #fontInput type="file" accept=".ttf,.otf" hidden (change)="onFontPicked($event)" />
         </div>
       </label>
-      <app-slider-field label="字級（pt）" [min]="6" [max]="96"
+      <app-slider-field [label]="t('字級（pt）')" [min]="6" [max]="96"
         [value]="el.fontSize" (valueChange)="patch({ fontSize: $event })" />
-      <app-slider-field label="行高（倍）" [min]="0.8" [max]="3" [step]="0.1"
+      <app-slider-field [label]="t('行高（倍）')" [min]="0.8" [max]="3" [step]="0.1"
         [value]="el.lineHeight" (valueChange)="patch({ lineHeight: $event })" />
       <div class="grid2">
-        <label>顏色 <input type="color" [ngModel]="el.color" (ngModelChange)="patch({ color: $event })" /></label>
-        <label>對齊
+        <label>{{ t('顏色') }} <input type="color" [ngModel]="el.color" (ngModelChange)="patch({ color: $event })" /></label>
+        <label>{{ t('對齊') }}
           <select [ngModel]="el.align" (ngModelChange)="patch({ align: $event })">
-            <option value="left">左</option><option value="center">中</option><option value="right">右</option>
+            <option value="left">{{ t('左') }}</option><option value="center">{{ t('中') }}</option><option value="right">{{ t('右') }}</option>
           </select>
         </label>
       </div>
-      <label class="row"><input type="checkbox" [ngModel]="el.bold" (ngModelChange)="patch({ bold: $event })" /> 粗體</label>
-      <label class="row"><input type="checkbox" [ngModel]="!!el.italic" (ngModelChange)="patch({ italic: $event })" /> 斜體</label>
-      <label class="row"><input type="checkbox" [ngModel]="el.underline ?? false" (ngModelChange)="patch({ underline: $event })" /> 底線</label>
-      <label class="row"><input type="checkbox" [ngModel]="el.autoGrow ?? false" (ngModelChange)="patch({ autoGrow: $event })" /> 內容超出時自動增高（推擠下方元素）</label>
-      <div class="sub">外框與底色</div>
+      <label class="row"><input type="checkbox" [ngModel]="el.bold" (ngModelChange)="patch({ bold: $event })" /> {{ t('粗體') }}</label>
+      <label class="row"><input type="checkbox" [ngModel]="!!el.italic" (ngModelChange)="patch({ italic: $event })" /> {{ t('斜體') }}</label>
+      <label class="row"><input type="checkbox" [ngModel]="el.underline ?? false" (ngModelChange)="patch({ underline: $event })" /> {{ t('底線') }}</label>
+      <label class="row"><input type="checkbox" [ngModel]="el.autoGrow ?? false" (ngModelChange)="patch({ autoGrow: $event })" /> {{ t('內容超出時自動增高（推擠下方元素）') }}</label>
+      <div class="sub">{{ t('外框與底色') }}</div>
       <div class="grid2">
-        <label>邊框寬 <input type="number" step="0.5" min="0" [ngModel]="el.borderWidth ?? 0" (ngModelChange)="patch({ borderWidth: num($event) })" /></label>
-        <label>邊框色 <input type="color" [ngModel]="el.borderColor ?? '#000000'" (ngModelChange)="patch({ borderColor: $event })" /></label>
-        <label>內距 <input type="number" min="0" [ngModel]="el.padding ?? 0" (ngModelChange)="patch({ padding: num($event) })" /></label>
+        <label>{{ t('邊框寬') }} <input type="number" step="0.5" min="0" [ngModel]="el.borderWidth ?? 0" (ngModelChange)="patch({ borderWidth: num($event) })" /></label>
+        <label>{{ t('邊框色') }} <input type="color" [ngModel]="el.borderColor ?? '#000000'" (ngModelChange)="patch({ borderColor: $event })" /></label>
+        <label>{{ t('內距') }} <input type="number" min="0" [ngModel]="el.padding ?? 0" (ngModelChange)="patch({ padding: num($event) })" /></label>
         <label class="row"><input type="checkbox" [ngModel]="el.fillColor != null"
-          (ngModelChange)="patch({ fillColor: $event ? '#f8fafc' : null })" /> 底色</label>
+          (ngModelChange)="patch({ fillColor: $event ? '#f8fafc' : null })" /> {{ t('底色') }}</label>
       </div>
       @if (el.fillColor != null) {
-        <label>底色 <input type="color" [ngModel]="el.fillColor" (ngModelChange)="patch({ fillColor: $event })" /></label>
+        <label>{{ t('底色') }} <input type="color" [ngModel]="el.fillColor" (ngModelChange)="patch({ fillColor: $event })" /></label>
       }
     }
   `,
@@ -77,6 +78,7 @@ export class TextStyleFormComponent {
   private modal = inject(ModalService);
   el = input.required<TextElement | PlaceholderElement>();
   fontFamilies = FONT_FAMILIES;
+  protected readonly t = t;
 
   async onFontPicked(event: Event) {
     const input = event.target as HTMLInputElement;
@@ -87,7 +89,7 @@ export class TextStyleFormComponent {
       const info = await this.fontSvc.upload(file);
       this.patch({ fontFamily: info.id });
     } catch (e) {
-      void this.modal.alert({ title: '字型上傳失敗', message: e instanceof Error ? e.message : '字型上傳失敗' });
+      void this.modal.alert({ title: t('字型上傳失敗'), message: e instanceof Error ? e.message : t('字型上傳失敗') });
     }
   }
 

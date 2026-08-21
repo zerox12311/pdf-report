@@ -8,6 +8,7 @@ import { bracketMatching, defaultHighlightStyle, indentOnInput, syntaxHighlighti
 import { lintGutter, linter } from '@codemirror/lint';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from '@codemirror/view';
+import { t } from '../core/i18n/i18n';
 
 /**
  * JSON 程式碼編輯器（CodeMirror 6）：語法上色、行號、括號配對/自動閉合、
@@ -22,8 +23,8 @@ import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from '@
   template: `
     <div class="cm-host" #host></div>
     <button class="fmt" type="button" [class.bad]="fmtError()"
-      [title]="fmtError() ? 'JSON 有誤，先修正紅線處' : '自動排版（Shift+Alt+F）'"
-      (click)="format()">{{ fmtError() ? '格式錯誤' : '⌥ 排版' }}</button>
+      [title]="fmtError() ? t('JSON 有誤，先修正紅線處') : t('自動排版（Shift+Alt+F）')"
+      (click)="format()">{{ fmtError() ? t('格式錯誤') : t('⌥ 排版') }}</button>
   `,
   styles: `
     :host { display: block; position: relative; min-height: 0; }
@@ -37,6 +38,7 @@ import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from '@
   `,
 })
 export class JsonEditorComponent {
+  protected readonly t = t;
   value = input<string>('');
   placeholderText = input<string>('');
   valueChange = output<string>();

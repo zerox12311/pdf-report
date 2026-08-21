@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { t } from '../../core/i18n/i18n';
 import { ValidationFieldType } from '../../core/models/template.model';
 import { JsonEditorComponent } from '../../shared/json-editor.component';
 import { TemplateApiService, ValidationResult } from '../../core/services/template-api.service';
@@ -20,18 +21,17 @@ import { EditorStateService } from './editor-state.service';
         <!-- 總開關 -->
         <label class="toggle">
           <input type="checkbox" [checked]="spec().enabled" (change)="setEnabled($any($event.target).checked)" />
-          <span class="tg-title">啟用輸入驗證</span>
+          <span class="tg-title">{{ t('啟用輸入驗證') }}</span>
         </label>
         <div class="hint">
-          開啟後：宿主 POST 到 <code>/render</code> 的 <b>data</b> 會先過此驗證，
-          不過 → 回 <b>422</b>、不產生 PDF；關閉 → 完全跳過。
-          @if (!spec().enabled) { <span class="off-note">（目前關閉，下方規則不會生效，但仍可先設計、用測試區試跑）</span> }
+          {{ t('開啟後：宿主 POST 到') }} <code>/render</code> {{ t('的') }} <b>data</b> {{ t('會先過此驗證，不過 → 回') }} <b>422</b>{{ t('、不產生 PDF；關閉 → 完全跳過。') }}
+          @if (!spec().enabled) { <span class="off-note">{{ t('（目前關閉，下方規則不會生效，但仍可先設計、用測試區試跑）') }}</span> }
         </div>
 
         <!-- 工具列 -->
         <div class="toolbar">
-          <button class="secondary" (click)="detect()">🔍 從樣板偵測欄位</button>
-          <button class="secondary" (click)="addField()">＋ 手動新增欄位</button>
+          <button class="secondary" (click)="detect()">{{ t('🔍 從樣板偵測欄位') }}</button>
+          <button class="secondary" (click)="addField()">{{ t('＋ 手動新增欄位') }}</button>
           @if (detectMsg(); as m) { <span class="detect-msg">{{ m }}</span> }
         </div>
 
@@ -39,34 +39,34 @@ import { EditorStateService } from './editor-state.service';
         @if (spec().fields.length) {
           <div class="table">
             <div class="thead">
-              <span class="c-path">欄位路徑</span>
-              <span class="c-req">必填</span>
-              <span class="c-type">型別</span>
-              <span class="c-src">來源</span>
+              <span class="c-path">{{ t('欄位路徑') }}</span>
+              <span class="c-req">{{ t('必填') }}</span>
+              <span class="c-type">{{ t('型別') }}</span>
+              <span class="c-src">{{ t('來源') }}</span>
               <span class="c-del"></span>
             </div>
             @for (f of spec().fields; track $index) {
               <div class="trow">
                 <input class="c-path" [value]="f.path" (input)="setPath($index, $any($event.target).value)"
-                  placeholder="例：school.name 或 items[].amount" spellcheck="false" />
+                  [placeholder]="t('例：school.name 或 items[].amount')" spellcheck="false" />
                 <span class="c-req">
                   <input type="checkbox" [checked]="f.required" (change)="setRequired($index, $any($event.target).checked)" />
                 </span>
                 <select class="c-type" (change)="setType($index, $any($event.target).value)">
                   @for (t of types; track t) { <option [value]="t" [selected]="t === f.type">{{ typeLabel(t) }}</option> }
                 </select>
-                <span class="c-src" [class.manual]="f.source === 'manual'">{{ f.source === 'manual' ? '手動' : '偵測' }}</span>
-                <button class="c-del del" (click)="removeField($index)" title="刪除此欄位">✕</button>
+                <span class="c-src" [class.manual]="f.source === 'manual'">{{ f.source === 'manual' ? t('手動') : t('偵測') }}</span>
+                <button class="c-del del" (click)="removeField($index)" [title]="t('刪除此欄位')">✕</button>
               </div>
             }
           </div>
           <div class="syntax">
-            路徑語法：巢狀用 <code>.</code>（<code>school.name</code>）；陣列<b>逐元素</b>用 <code>[]</code>（<code>items[].amount</code>，對每筆檢查）；
-            只寫陣列名（<code>items</code>）則檢查陣列本身。
+            {{ t('路徑語法：巢狀用') }} <code>.</code>（<code>school.name</code>）；{{ t('陣列') }}<b>{{ t('逐元素') }}</b>{{ t('用') }} <code>[]</code>（<code>items[].amount</code>{{ t('，對每筆檢查）；') }}
+            {{ t('只寫陣列名（') }}<code>items</code>{{ t('）則檢查陣列本身。') }}
           </div>
         } @else {
           <div class="empty">
-            尚無欄位規則。按「<b>從樣板偵測欄位</b>」把樣板用到的資料欄位補進來，或「手動新增」。
+            {{ t('尚無欄位規則。按「') }}<b>{{ t('從樣板偵測欄位') }}</b>{{ t('」把樣板用到的資料欄位補進來，或「手動新增」。') }}
           </div>
         }
       </div>
@@ -74,22 +74,22 @@ import { EditorStateService } from './editor-state.service';
       <!-- 測試區 -->
       <div class="col test">
         <div class="col-head">
-          <span>測試這份 schema</span>
-          <button class="secondary" (click)="fillSample()" [title]="sampleSourceHint()">用範例資料填入</button>
+          <span>{{ t('測試這份 schema') }}</span>
+          <button class="secondary" (click)="fillSample()" [title]="sampleSourceHint()">{{ t('用範例資料填入') }}</button>
         </div>
-        <div class="hint">貼一段 <b>data</b> JSON，按驗證當場檢查（不渲染）。測試會忽略上方總開關，一律套用目前規則。</div>
+        <div class="hint">{{ t('貼一段') }} <b>data</b> {{ t('JSON，按驗證當場檢查（不渲染）。測試會忽略上方總開關，一律套用目前規則。') }}</div>
         <app-json-editor [value]="testData()" (valueChange)="testData.set($event)"
           placeholderText='{ "school": { "name": "…" }, "items": [ … ] }' />
-        <button class="primary" (click)="runTest()" [disabled]="testing()">{{ testing() ? '驗證中…' : '驗證' }}</button>
+        <button class="primary" (click)="runTest()" [disabled]="testing()">{{ testing() ? t('驗證中…') : t('驗證') }}</button>
         @if (testError(); as e) { <div class="err">{{ e }}</div> }
         @if (result(); as r) {
           @if (r.ok) {
-            <div class="pass">✅ 通過——這組資料符合所有規則。</div>
+            <div class="pass">{{ t('✅ 通過——這組資料符合所有規則。') }}</div>
           } @else {
-            <div class="fail-head">❌ {{ r.errors.length }} 筆不通過：</div>
+            <div class="fail-head">{{ t('❌ {n} 筆不通過：', { n: r.errors.length }) }}</div>
             <ul class="fail-list">
               @for (er of r.errors; track $index) {
-                <li><code>{{ er.path }}</code> — {{ er.rule === 'required' ? '必填' : '型別' }}：{{ er.message }}</li>
+                <li><code>{{ er.path }}</code> — {{ er.rule === 'required' ? t('必填') : t('型別') }}：{{ er.message }}</li>
               }
             </ul>
           }
@@ -151,6 +151,7 @@ import { EditorStateService } from './editor-state.service';
   `,
 })
 export class ValidationPanelComponent {
+  protected readonly t = t;
   private state = inject(EditorStateService);
   private api = inject(TemplateApiService);
 
@@ -163,14 +164,14 @@ export class ValidationPanelComponent {
   testError = signal<string | null>(null);
   testing = signal(false);
 
-  typeLabel(t: ValidationFieldType): string {
-    return { any: '任意', string: '字串', number: '數字', boolean: '布林', array: '陣列', object: '物件' }[t];
+  typeLabel(ty: ValidationFieldType): string {
+    return { any: t('任意'), string: t('字串'), number: t('數字'), boolean: t('布林'), array: t('陣列'), object: t('物件') }[ty];
   }
 
   setEnabled(v: boolean) { this.state.setValidationEnabled(v); }
   detect() {
     const n = this.state.detectValidationFields();
-    this.detectMsg.set(n > 0 ? `已補進 ${n} 個新欄位` : '沒有新欄位（都在了）');
+    this.detectMsg.set(n > 0 ? t('已補進 {n} 個新欄位', { n }) : t('沒有新欄位（都在了）'));
   }
   addField() { this.state.addValidationField(); this.detectMsg.set(''); }
   removeField(i: number) { this.state.removeValidationField(i); }
@@ -181,8 +182,8 @@ export class ValidationPanelComponent {
   /** 按鈕提示：講清楚這一按會帶入哪來的資料（state 是 private，不能直接在樣板裡讀） */
   sampleSourceHint(): string {
     return this.state.previewData().trim()
-      ? '帶入「資料」分頁貼的那份 JSON'
-      : '「資料」分頁沒有資料 → 由樣板欄位合成一份';
+      ? t('帶入「資料」分頁貼的那份 JSON')
+      : t('「資料」分頁沒有資料 → 由樣板欄位合成一份');
   }
 
   /**
