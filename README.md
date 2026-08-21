@@ -30,7 +30,7 @@ curl -X POST "http://localhost:8090/api/templates/<樣板id>/render" \
 
 編輯器右上角的「🔗 連接」按鈕會產生**帶著你實際樣板 id 的完整串接說明**（含 iframe 嵌入編輯器的作法），可直接複製給工程師。
 
-> ⚠️ 預設帳密與 `SESSION_SECRET` 僅供本機試用（定義在 `docker-compose.yml`），**對外部署前務必修改**。
+> ⚠️ 預設帳密與 `SESSION_SECRET` 僅供本機試用，**對外部署前務必修改**——見下方「環境變數設定」。
 
 ## 文件入口
 
@@ -38,11 +38,28 @@ curl -X POST "http://localhost:8090/api/templates/<樣板id>/render" \
 - **功能現況**在 [docs/](docs/README.md)：[編輯器](docs/editor.md)｜[渲染引擎](docs/engine.md)｜[HTTP API](docs/api.md)｜[宿主整合（iframe 嵌入）](docs/embed.md)。
 - 樣板 JSON schema 的權威是程式碼：`frontend/src/app/core/models/template.model.ts` ↔ `backend/internal/engine/models.go`（兩邊同步改）。
 
+## 環境變數設定
+
+把 [.env.example](.env.example) 複製成 `.env` 再修改，`docker compose` 會自動讀取（不建 `.env` 也能跑，全部有本機試用預設值）：
+
+```bash
+cp .env.example .env
+```
+
+| 變數 | 預設 | 說明 |
+|---|---|---|
+| `APP_PORT` | `8090` | 服務對外 port |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / `admin1234` | 控制台初始管理員（僅首次啟動、使用者表為空時建立；之後在控制台改密碼即可） |
+| `SESSION_SECRET` | `change-me-in-production` | 登入 session 與 embed token 的簽章金鑰。**對外部署必改**（`openssl rand -hex 32`） |
+| `POSTGRES_PASSWORD` | `pdftpl` | 資料庫密碼（app 連線字串自動帶入同值） |
+| `CORS_ORIGINS` | 空（僅同源） | 跨網域白名單，逗號分隔；`*` = 全開（僅建議 demo）。宿主前端要跨網域直呼 API 時填宿主網域 |
+
+不透過 Docker 部署時，後端另有 `PORT`、`DATABASE_URL`、`STORAGE_ROOT`、`FONTS_DIR`、`WEB_ROOT` 等變數，見 [CLAUDE.md](CLAUDE.md) 的架構說明。
+
 ## 部署細節
 
 - 單一 app 容器，前端與 `/api` 同源；`/healthz` 健康檢查。嵌入示範頁：瀏覽器直接開 [docs/embed-example.html](docs/embed-example.html)。
 - compose project `pdf-template-demo`（app + db 兩個服務）；Postgres :5442（`pg-data` volume）、圖片/字型二進位檔在 `pdf-storage` volume。
-- 跨網域呼叫 API 需設 `CORS_ORIGINS` 環境變數（預設僅同源）。
 - 本機開發（前端 :4300 proxy → 後端 :5043、測試、建置指令）見 [CLAUDE.md](CLAUDE.md) 的「常用指令」。
 
 ## 技術棧

@@ -15,3 +15,4 @@ backend/storage/
 *.log
 .env
 .env.*
+!.env.example

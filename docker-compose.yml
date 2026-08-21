@@ -4,13 +4,14 @@
 # 本機開發：docker compose up -d db 後，後端連 postgres://pdftpl:pdftpl@localhost:5442/pdftpl?sslmode=disable
 name: pdf-template-demo # compose project name，與其他專案隔離
 
+# 可用同目錄的 .env 覆寫設定（compose 自動讀取；範本見 .env.example），未設都有本機試用預設值
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: pdftpl
       POSTGRES_USER: pdftpl
-      POSTGRES_PASSWORD: pdftpl
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pdftpl}
     ports:
       - "5442:5432" # 本機開發/測試用（避開本機既有的 5432）
     volumes:
@@ -24,13 +25,14 @@ services:
   app:
     build: . # 根目錄 Dockerfile：前端＋後端合一
     ports:
-      - "8090:8080" # 單一入口（前端與 /api 同源）
+      - "${APP_PORT:-8090}:8080" # 單一入口（前端與 /api 同源）
     environment:
-      DATABASE_URL: postgres://pdftpl:pdftpl@db:5432/pdftpl?sslmode=disable
-      # 控制台初始管理員（僅首次、user 表為空時種）＋ session 簽章金鑰。正式部署請改掉。
-      ADMIN_USER: admin
-      ADMIN_PASSWORD: admin1234
-      SESSION_SECRET: change-me-in-production
+      DATABASE_URL: postgres://pdftpl:${POSTGRES_PASSWORD:-pdftpl}@db:5432/pdftpl?sslmode=disable
+      # 控制台初始管理員（僅首次、user 表為空時種）＋ session 簽章金鑰。正式部署請改掉（用 .env 覆寫）。
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin1234}
+      SESSION_SECRET: ${SESSION_SECRET:-change-me-in-production}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
     volumes:
       - pdf-storage:/app/storage # 上傳圖片/匯入字型的二進位檔持久化（結構化資料在 Postgres）
     depends_on:
