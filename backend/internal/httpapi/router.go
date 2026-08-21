@@ -20,10 +20,11 @@ const maxUpload = 10 << 20 // 10MB
 // New 組出完整的 HTTP handler（middleware + 路由總表）；main 與測試共用。
 // webRoot 非空時額外 serve 前端靜態檔（單容器部署）；空 = 純 API 模式。
 // sessionSecret 為登入 session 的簽章金鑰（空 → dev 預設，正式必設）。
-func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, users *store.UserStore, projects *store.ProjectStore, keys *store.APIKeyStore, eng *engine.Engine, sessionSecret, webRoot string) http.Handler {
+// corsOrigins 為跨來源白名單（空 = 僅同源；"*" = 全開；見 middleware.go cors）。
+func New(templates *store.TemplateStore, assets *store.AssetStore, fonts *store.FontStore, users *store.UserStore, projects *store.ProjectStore, keys *store.APIKeyStore, eng *engine.Engine, sessionSecret, webRoot string, corsOrigins []string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(slogLogger(), recoverJSON(), cors(), sessionMiddleware(sessionSecret), withAuth(users, keys, sessionSecret))
+	r.Use(slogLogger(), recoverJSON(), cors(corsOrigins), sessionMiddleware(sessionSecret), withAuth(users, keys, sessionSecret))
 
 	th := &templateHandler{store: templates, projects: projects}
 	rh := &renderHandler{store: templates, projects: projects, eng: eng}

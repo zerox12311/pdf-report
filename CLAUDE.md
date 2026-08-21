@@ -14,7 +14,7 @@
   - `features/editor/properties-panel.component.ts` — 屬性面板
   - **「新增一種元件」的檔案鏈**：template.model.ts → engine/models.go →（引擎 drawElement case）→ element-factory.ts → canvas-element.component.ts → properties-panel.component.ts，最後更新 docs/editor.md＋engine.md
 - `backend/` — Go（**Gin**）＋ gopdf ＋ boombuler/barcode ＋ **PostgreSQL/GORM**。
-  - `cmd/server/` 進入點（env：`PORT`、`STORAGE_ROOT`、`FONTS_DIR`、`DATABASE_URL`（必填，Postgres-only）、`WEB_ROOT`（前端靜態檔目錄，空 = 純 API 模式；Docker 單容器部署時設，見 `httpapi/spa.go`）、`ADMIN_USER`/`ADMIN_PASSWORD`（控制台初始管理員，僅 user 表空時種）、`SESSION_SECRET`（登入 session 簽章））
+  - `cmd/server/` 進入點（env：`PORT`、`STORAGE_ROOT`、`FONTS_DIR`、`DATABASE_URL`（必填，Postgres-only）、`WEB_ROOT`（前端靜態檔目錄，空 = 純 API 模式；Docker 單容器部署時設，見 `httpapi/spa.go`）、`ADMIN_USER`/`ADMIN_PASSWORD`（控制台初始管理員，僅 user 表空時種）、`SESSION_SECRET`（登入 session 簽章）、`CORS_ORIGINS`（跨域白名單，逗號分隔；空 = 僅同源、`*` = 全開））
   - `internal/db/` GORM models（多租戶：tenants/api_keys/templates JSONB/assets/fonts）＋ Open/migrate
   - `internal/store/` 資料存取：結構化資料走 DB、圖片/字型二進位留檔案系統；方法都帶 tenantID；ImportLegacy 一次性匯入舊檔案資料
   - `internal/engine/` 報表引擎（本專案核心）
@@ -83,7 +83,8 @@ docker compose up -d --build                                  # 完整 demo（�
   - **宿主整合（machine-to-machine）＝已完成（Stripe 式）**：**project 級 API key**（admin 在專案頁簽發、只存雜湊、明文回一次；`pdftpl_` 前綴）給宿主後端，可建 template／換 embed token／render-by-id。**embed token**（短效 JWT、綁單一 template）宿主後端用 key 換、postMessage 交給 iframe、`Authorization: Bearer`。`withAuth` 三來源 principal（session／apikey／embed）＋ `authorizeTemplate`/`authorizeCreateInProject`。詳見 docs/embed.md。
   - **嵌入權限模式＝已完成**：embed token 帶 `mode` claim（`design`｜`fill`｜`view`，宿主**後端**指定的政策），解析成 capability（`capEditLayout`/`capEditValues`/`capUpload`）後**逐端點掛 `requireCapability`**（不在 handler 內散落 mode 判斷）。填寫模式走**窄 API** `PATCH /api/templates/:id/values`：讀 DB 原件、只覆寫被設計者標記 `fillable` 的 text 元素 content／text 儲存格 value——**不做 diff**（避免在 Go 端重現 normalizeTemplate），沒標記的欄位結構上就改不到。`GET /api/embed/context` 讓前端與後端讀同一份能力解析。embed token 一律不可 DELETE 樣板。
   - **速率限制＋寫入並行控制＝已完成**：令牌桶（`httpapi/ratelimit.go`，桶隨 router 實例建立故測試天然隔離）掛在登入／渲染／填值／換 token／上傳，超限 429＋`Retry-After`；填值以**樣板**為維度（爭用的是列鎖，換 token 繞不過去）。寫入走交易＋`SELECT … FOR UPDATE`（`store.PatchDoc`／`Save`），等鎖逾時 → 409（`store.LockWaitTimeout`）。DB 連線池已設上限，一波併發不會吃光整台的 PG 連線。
-  - **尚待強化**：template 級 key、embed 範圍收斂、CORS origin 白名單、postMessage origin 驗證、fill 模式的 token TTL／續期、樣板變更稽核、限流的跨副本共用計數器（目前單實例記憶體版）。設計者 PUT 仍無樂觀鎖（會覆蓋期間的填寫內容，方向上如此設計）。
+  - **CORS 白名單＝已完成**：`CORS_ORIGINS` env（逗號分隔；空 = 僅同源、`*` = 明確全開），未命中不送 CORS header；不送 Allow-Credentials（跨域一律 Bearer）。實作 `middleware.go cors`＋`cors_test.go`。
+  - **尚待強化**：template 級 key、embed 範圍收斂、postMessage origin 驗證、fill 模式的 token TTL／續期、樣板變更稽核、限流的跨副本共用計數器（目前單實例記憶體版）。設計者 PUT 仍無樂觀鎖（會覆蓋期間的填寫內容，方向上如此設計）。對外版清單同步維護在 SECURITY.md「已知限制」。
 - ORM 選 GORM、多租戶模型已確認；HTTP 框架選 **Gin**（使用者為了學習指定，從 chi 換過來）。
 
 ## 產品方向備忘

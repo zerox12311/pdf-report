@@ -28,6 +28,12 @@ import (
 // newTestServer 建一組乾淨的儲存與引擎（獨立測試 DB + temp 目錄），回傳 handler 與 stores。
 func newTestServer(t *testing.T) (http.Handler, *store.TemplateStore, *store.AssetStore, *gorm.DB) {
 	t.Helper()
+	return newTestServerCORS(t, nil)
+}
+
+// newTestServerCORS：同 newTestServer 但可指定 CORS 白名單（cors_test.go 用）。
+func newTestServerCORS(t *testing.T, corsOrigins []string) (http.Handler, *store.TemplateStore, *store.AssetStore, *gorm.DB) {
+	t.Helper()
 	root := t.TempDir()
 	g := testdb.Open(t)
 	templates := store.NewTemplateStore(g)
@@ -44,7 +50,7 @@ func newTestServer(t *testing.T) (http.Handler, *store.TemplateStore, *store.Ass
 	keys := store.NewAPIKeyStore(g)
 	eng := engine.NewEngine("../../fonts", assets.EngineSource()) // 使用 repo 內的字型檔
 	eng.SetUserFontsDir(fonts.Dir())
-	return New(templates, assets, fonts, users, projects, keys, eng, "test-secret", ""), templates, assets, g
+	return New(templates, assets, fonts, users, projects, keys, eng, "test-secret", "", corsOrigins), templates, assets, g
 }
 
 func doJSON(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -415,8 +421,9 @@ func TestHealthzAndCORS(t *testing.T) {
 	if rec.Code != 200 || rec.Body.String() != "ok" {
 		t.Fatalf("healthz: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("missing CORS header")
+	// 預設（未設白名單）不送 CORS header——跨域細節見 cors_test.go
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("預設不應送 CORS header，got %q", got)
 	}
 
 	// OPTIONS preflight
@@ -611,7 +618,7 @@ func TestSPAStaticServing(t *testing.T) {
 	projects := store.NewProjectStore(g)
 	keys := store.NewAPIKeyStore(g)
 	eng := engine.NewEngine("../../fonts", assets.EngineSource())
-	srv := New(templates, assets, fonts, users, projects, keys, eng, "test-secret", web)
+	srv := New(templates, assets, fonts, users, projects, keys, eng, "test-secret", web, nil)
 
 	do := func(path string) (int, string) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

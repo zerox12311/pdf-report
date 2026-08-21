@@ -308,13 +308,35 @@ func recoverJSON() gin.HandlerFunc {
 	}
 }
 
-// cors 全開（demo 用；產品化時應改白名單 + 對渲染 API 加驗證）
-func cors() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+// cors 跨來源白名單。origins 空 = 不送任何 CORS header（僅同源，預設）；
+// 含 "*" = 全開（明確 opt-in，適合公開 demo）；其餘逐一比對 Origin，命中才回應該來源。
+// 不送 Allow-Credentials：跨域呼叫走 Bearer token（embed/API key），session cookie 僅同源使用。
+func cors(origins []string) gin.HandlerFunc {
+	allowAll := false
+	allowed := make(map[string]bool, len(origins))
+	for _, o := range origins {
+		o = strings.ToLower(strings.TrimRight(strings.TrimSpace(o), "/"))
+		if o == "*" {
+			allowAll = true
+		} else if o != "" {
+			allowed[o] = true
+		}
+	}
+	setCommon := func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		c.Header("Access-Control-Expose-Headers", "X-Project-Id, X-Render-Warnings, X-Render-Warnings-Count")
+	}
+	return func(c *gin.Context) {
+		if allowAll {
+			c.Header("Access-Control-Allow-Origin", "*")
+			setCommon(c)
+		} else if origin := c.GetHeader("Origin"); origin != "" && allowed[strings.ToLower(strings.TrimRight(origin, "/"))] {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+			setCommon(c)
+		}
+		// 未命中白名單：不送 CORS header（瀏覽器會擋跨域回應）；preflight 一律 204 結束
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return

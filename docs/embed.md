@@ -149,7 +149,7 @@ curl -X POST https://<樣板服務>/api/templates/{id}/render \
 - **API key 只放後端**、embed token 短效、明文金鑰只顯示一次。
 - **token 放 URL fragment（`#`）不放 query（`?`）**：fragment 不進後端 log、不進 Referer；且 token 短效＋只綁單一 template，外洩風險有限。不想進 URL 就用 postMessage（見 3. 選配）。
 - postMessage 交付時兩端都應驗 `e.origin` / 指定 `targetOrigin`（範例已標註）。
-- 目前 CORS 為 `*`＋允許 `Authorization`：bearer 流程可用；正式對外前建議**收斂成宿主 origin 白名單**，並視需要加 iframe `Content-Security-Policy: frame-ancestors` 限制誰能嵌入。
+- CORS 預設**僅同源**：宿主前端要跨網域直呼 API（例如匿名渲染）時，以 `CORS_ORIGINS` 環境變數明列宿主 origin（逗號分隔；`*` = 全開，僅建議 demo 用）。iframe 嵌入本身不受 CORS 影響（編輯器與 API 同源）。可視需要加 `Content-Security-Policy: frame-ancestors` 限制誰能嵌入。
 - **已知限制：樣板內容對持有 token 的人是可讀的**。`GET /api/templates/:id` 回完整樣板 JSON，含所有資料綁定 key（`customer.name` 這類）。fill/view 模式在 UI 上隱藏了「資料」分頁與綁定 key 的顯示，但那是**體驗層**——開 devtools 或直接打 API 仍讀得到。若樣板的 key 名稱本身屬機密，目前的模式機制擋不住，需要伺服器端的欄位遮蔽（尚未實作）。
 - **速率限制已就位**（登入／渲染／填值／換 token／上傳，見 [api.md](api.md#速率限制)）；資料庫連線池已設上限，一波併發不會耗盡整台的連線預算。
 - **尚未做**（記錄在案）：template 級 API key（目前只有 project 級）、填寫模式 token 的 TTL/refresh 策略、限流的跨副本共用計數器（目前單實例）。圖片 URL 抓取已擋私有/內網/metadata（SSRF 防護）。

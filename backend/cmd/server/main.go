@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -69,9 +70,16 @@ func main() {
 	eng := engine.NewEngine(fontsDir, assets.EngineSource())
 	eng.SetUserFontsDir(fonts.Dir())
 
+	// CORS_ORIGINS：逗號分隔的跨來源白名單（空 = 僅同源；"*" = 全開）。
+	// 宿主前端要跨網域直呼 API（例如 allowAnonymousRender 的 render-by-id）時設定。
+	var corsOrigins []string
+	if v := strings.TrimSpace(os.Getenv("CORS_ORIGINS")); v != "" {
+		corsOrigins = strings.Split(v, ",")
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.New(templates, assets, fonts, users, projects, keys, eng, sessionSecret, webRoot),
+		Handler:           httpapi.New(templates, assets, fonts, users, projects, keys, eng, sessionSecret, webRoot, corsOrigins),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second, // 大樣板渲染留餘裕

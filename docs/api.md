@@ -1,6 +1,6 @@
 # HTTP API 參考（backend/internal/httpapi）
 
-Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細節）。樣板 payload 為 **raw JSON passthrough**：後端不重排/不改寫樣板 JSON，未知欄位原樣保存（引擎只是忽略）。CORS 全開（iframe 嵌入需要跨域；認證上線後配 API key/token 收斂）；`/healthz` 回 `ok`。
+Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細節）。樣板 payload 為 **raw JSON passthrough**：後端不重排/不改寫樣板 JSON，未知欄位原樣保存（引擎只是忽略）。CORS 預設僅同源，跨網域呼叫需以 `CORS_ORIGINS` 環境變數列白名單（逗號分隔，`*` = 全開）；`/healthz` 回 `ok`。
 
 **多租戶**：schema 已就緒（tenants/api_keys），目前為單租戶部署、API 層固定 default 租戶；宿主整合的認證（API key＋短效嵌入 token）為下一階段。
 
