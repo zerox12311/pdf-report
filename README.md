@@ -2,23 +2,48 @@
 
 通用的 PDF 產生器與樣板編輯器：在瀏覽器裡設計樣板（文字、資料欄位、表格、條碼、圖片…），樣板存成 JSON，由 Go 報表引擎渲染成 PDF。可被其他系統以 **iframe 嵌入**編輯器，宿主後端拿樣板 id POST 資料產出正式 PDF。
 
+## Quick Start
+
+只需要 [Docker](https://www.docker.com/)：
+
+```bash
+git clone https://github.com/zerox12311/pdf-report.git
+cd pdf-report
+docker compose up -d --build
+```
+
+**1. 登入** — 打開 http://localhost:8090，預設管理員 **`admin` / `admin1234`**。
+
+**2. 設計樣板** — 建立專案 → 新增樣板，進入編輯器：從左側元件盤拖入文字、表格、條碼等元件；要放「渲染時才代入的資料」就用**資料欄位**元件，key 填 `customer.name` 這種路徑。
+
+**3. 預覽** — 編輯器上方切到「預覽」分頁，左側貼一份資料 JSON（或按「用範例值重建」自動生成），右側立即看到後端渲染的真實 PDF。
+
+**4. 從你的系統產出 PDF** — 在專案設定頁簽發 API key，然後 POST 資料到 render API：
+
+```bash
+curl -X POST "http://localhost:8090/api/templates/<樣板id>/render" \
+  -H "Authorization: Bearer pdftpl_你的金鑰" \
+  -H "Content-Type: application/json" \
+  -d '{"data": {"customer": {"name": "王小明"}}}' \
+  -o out.pdf
+```
+
+編輯器右上角的「🔗 連接」按鈕會產生**帶著你實際樣板 id 的完整串接說明**（含 iframe 嵌入編輯器的作法），可直接複製給工程師。
+
+> ⚠️ 預設帳密與 `SESSION_SECRET` 僅供本機試用（定義在 `docker-compose.yml`），**對外部署前務必修改**。
+
 ## 文件入口
 
 - **開發者（人或 AI agent）從 [CLAUDE.md](CLAUDE.md) 開始**：架構、開發指令、不可破壞的規範、開發陷阱。
 - **功能現況**在 [docs/](docs/README.md)：[編輯器](docs/editor.md)｜[渲染引擎](docs/engine.md)｜[HTTP API](docs/api.md)｜[宿主整合（iframe 嵌入）](docs/embed.md)。
 - 樣板 JSON schema 的權威是程式碼：`frontend/src/app/core/models/template.model.ts` ↔ `backend/internal/engine/models.go`（兩邊同步改）。
 
-## 快速開始
+## 部署細節
 
-```bash
-docker compose up -d --build
-```
-
-- 編輯器與 API：http://localhost:8090（單一 app 容器，前端與 `/api` 同源；`/healthz` 健康檢查）。預設管理員 **`admin` / `admin1234`**（`docker-compose.yml` 定義）——**對外部署前務必改掉 `ADMIN_PASSWORD` 與 `SESSION_SECRET`**。
-- 嵌入示範頁：瀏覽器直接開 [docs/embed-example.html](docs/embed-example.html)
+- 單一 app 容器，前端與 `/api` 同源；`/healthz` 健康檢查。嵌入示範頁：瀏覽器直接開 [docs/embed-example.html](docs/embed-example.html)。
 - compose project `pdf-template-demo`（app + db 兩個服務）；Postgres :5442（`pg-data` volume）、圖片/字型二進位檔在 `pdf-storage` volume。
-
-本機開發（前端 :4300 proxy → 後端 :5043、測試、建置指令）見 [CLAUDE.md](CLAUDE.md) 的「常用指令」。
+- 跨網域呼叫 API 需設 `CORS_ORIGINS` 環境變數（預設僅同源）。
+- 本機開發（前端 :4300 proxy → 後端 :5043、測試、建置指令）見 [CLAUDE.md](CLAUDE.md) 的「常用指令」。
 
 ## 技術棧
 
