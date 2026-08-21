@@ -9,7 +9,7 @@ PDF 樣板編輯器＋報表引擎的**功能現況**文件。給接手開發的
 | [editor.md](editor.md) | 前端編輯器：版面、元件、畫布操作、表格、右鍵選單、資料分頁、節管理 |
 | [engine.md](engine.md) | Go 渲染引擎：節/分頁、資料語法、表格重複列、儲存格能力、浮水印、字型 |
 | [api.md](api.md) | HTTP API 參考：endpoints、請求/回應契約、錯誤與警告格式 |
-| [console.md](console.md) | 設計者控制台：帳密登入、專案分組、修改密碼、與 iframe 嵌入並存的安全邊界 |
+| [console.md](console.md) | 設計者控制台：帳密登入、專案分組、設定（介面語言＋修改密碼）、與 iframe 嵌入並存的安全邊界 |
 | [embed.md](embed.md) | 宿主系統整合指南：iframe 嵌入編輯器、後端呼叫 render API（附 [embed-example.html](embed-example.html) 可跑範例） |
 
 ## 維護規則（重要）

@@ -26,7 +26,7 @@ Tenant（租戶／組織，目前單租戶 default）
 - 種帳號規則：**user 表為空時**用 env 種一個 admin；**已有使用者但無任何 admin**（例如升級前種的帳號 role 被 default 成 user）→ 自癒：優先把 `ADMIN_USER` 提升為 admin，否則提升最早建立者。**不覆寫既有密碼**（改完密碼重啟不會被打回）。
 - env 未設時初始帳密退回 `admin` / `admin`（log 警告請立即改密碼）。
 - **使用者管理**（admin，`/users`）：建立使用者（帳密／角色／指派專案）、改角色、重設密碼、勾選可存取專案（即時生效）、刪除。防呆：**不能刪除自己、不能降級／刪除最後一個 admin**。
-- 「修改密碼」畫面（`/account/password`）：所有登入者都可改自己的密碼。
+- 「設定」畫面（`/account/password`）：介面語言（中/英，切換後 reload）＋修改密碼，所有登入者可用。
 - session 走 **httpOnly cookie**（`gin-contrib/sessions` cookie store，`SESSION_SECRET` 簽章）；同源自動帶。前端只保存 username／role 供顯示與導向。
 
 ## 頁面流程（前端）
@@ -38,7 +38,7 @@ Tenant（租戶／組織，目前單租戶 default）
 | `/projects/:id` | 該專案的樣板清單（新增／開啟／刪除） | 需登入 |
 | `/projects/:id/settings` | 專案設定：**專案改名** ＋ API 金鑰簽發／撤銷（未來成員授權也在此） | **僅 admin** |
 | `/users` | 使用者管理 | **僅 admin** |
-| `/account/password` | 修改密碼 | 需登入 |
+| `/account/password` | 設定（介面語言＋修改密碼） | 需登入 |
 | `/editor/:id`、`/editor/new` | 既有編輯器 | `editorGuard`：直接開分頁需 session；iframe 嵌入或 URL 帶 `#token=` 放行（走 embed token） |
 
 - **版面**：內容置中 760px 欄；除首頁外每頁上方一列麵包屑（`p-breadcrumb`，高度與間距由 `styles.scss` 的 `--crumb-h`／`--crumb-gap`／`--crumb-row` 單一來源定義）。首頁是階層的根、不放麵包屑，改以 `--crumb-row` 預留等高空間，換頁時內容不會上下跳。修改密碼是窄卡片、水平置中，但麵包屑仍維持主欄寬度（各頁位置一致）。
@@ -77,13 +77,13 @@ Stripe 式兩段憑證（完整流程見 [embed.md](embed.md)）：
 
 - **assets／字型是租戶層**：任何 principal 都能憑 id 抓同租戶的圖/字型（id 隨機、字型全租戶共用）。這輪不綁 scope。
 - **圖片 URL 抓取有 SSRF 防護**：render 會抓樣板裡的圖片 URL，已擋 loopback/private/link-local/metadata IP（含 DNS rebinding）。
-- **尚待強化**：adhoc render 速率限制、`/api/embed-token {}` 便利捷徑節流、template 級 API key、CORS origin 白名單、postMessage origin 驗證。
+- **尚待強化**：template 級 API key、postMessage origin 驗證（對外版已知限制清單維護在 [SECURITY.md](../SECURITY.md)）。速率限制（登入/render/embed-token 等）與 CORS 白名單（`CORS_ORIGINS`）已完成，見 [api.md](api.md)。
 
 ## 部署安全須知
 
 - **`SESSION_SECRET` 未設一律拒啟動**（不分部署型態）：它同時簽 session cookie 與 embed token，退回原始碼裡的 dev 常數等於兩者都可被偽造（偽造的 embed token 可讀寫任意樣板）。開發用 `SESSION_SECRET=dev-secret` 即可。
 - session cookie 已 `HttpOnly`＋`SameSite=Lax`（Lax 讓跨站 POST/fetch 不帶 cookie → 一定程度 CSRF 防護）。正式部署走 https，cookie 的 `Secure` 旗標建議由反向代理設定。
-- **登入尚無速率限制**（bcrypt 本身拖慢暴力破解，但非完整防護）——建議後續補上 per-帳號/IP 節流。
+- 登入已有**按 IP 速率限制**（見 [api.md](api.md) 速率限制表），bcrypt 亦拖慢暴力破解。
 
 ## 後端落點
 

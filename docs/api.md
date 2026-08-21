@@ -2,7 +2,7 @@
 
 Gin。所有回應錯誤統一 `{"error": "訊息"}`（中文、不洩內部細節）。樣板 payload 為 **raw JSON passthrough**：後端不重排/不改寫樣板 JSON，未知欄位原樣保存（引擎只是忽略）。CORS 預設僅同源，跨網域呼叫需以 `CORS_ORIGINS` 環境變數列白名單（逗號分隔，`*` = 全開）；`/healthz` 回 `ok`。
 
-**多租戶**：schema 已就緒（tenants/api_keys），目前為單租戶部署、API 層固定 default 租戶；宿主整合的認證（API key＋短效嵌入 token）為下一階段。
+**多租戶**：schema 已就緒（tenants/api_keys），目前為單租戶部署、API 層固定 default 租戶。宿主整合認證（API key＋短效嵌入 token）見下方各節與 [embed.md](embed.md)。
 
 **控制台登入（session）＋角色**：設計者控制台走帳密登入 + httpOnly cookie session（見 [console.md](console.md)），有 **admin／user** 兩種角色。`withAuth` middleware：帶有效 session → 解析租戶＋使用者＋角色；沒帶則不設使用者。`requireAdmin` 守 admin 專屬端點（非 admin → 403）。
 

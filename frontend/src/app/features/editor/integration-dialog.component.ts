@@ -100,7 +100,7 @@ import { EditorStateService } from './editor-state.service';
                 <tr><td><code>data</code></td><td>對應樣板各欄位 key 的資料物件</td></tr>
                 <tr><td><code>?strict=1</code></td><td>資料不完整時回 422，不產生 PDF</td></tr>
               </table>
-              <p>樣板開啟「允許匿名渲染」（屬性面板底部的危險區）時，此端點可不帶 <code>Authorization</code> 直接呼叫；未開啟則需 API key 或 embed token。</p>
+              <p>樣板開啟「允許匿名渲染」（屬性面板底部的危險區）時，此端點可不帶 <code>Authorization</code> 直接呼叫；未開啟則需 API key 或 embed token。從瀏覽器跨網域呼叫時，需將呼叫端網域加入本服務的 <code>CORS_ORIGINS</code> 環境變數。</p>
             </section>
 
             <section>

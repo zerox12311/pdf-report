@@ -47,4 +47,4 @@ docker compose up -d --build
 
 ## 授權
 
-[MIT](LICENSE) — 可自由使用、修改、商用。
+[MIT](LICENSE) — 可自由使用、修改、商用。內建字型（Noto 系列修改版）依 [SIL OFL 1.1](backend/fonts/OFL.txt) 散布，詳見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
