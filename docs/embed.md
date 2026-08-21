@@ -135,7 +135,7 @@ Content-Type: application/json
 { "data": { "customer": { "name": "王小明" }, "items": [ { "name": "商品A", "qty": "2" } ], "total": "500" } }
 ```
 
-回應 `application/pdf`。`data` 結構由樣板各資料欄位 key 決定（支援 `a.b`、`items[0].c` 路徑）。`?strict=1` 時缺 key 直接 422（財務單據建議開）。
+回應 `application/pdf`。`data` 結構由樣板各資料欄位 key 決定（支援 `a.b`、`items[0].c` 路徑）。`?strict=1` 時缺 key 直接 422（正式文件建議開）。
 
 ```bash
 curl -X POST https://<樣板服務>/api/templates/{id}/render \

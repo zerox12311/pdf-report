@@ -7,7 +7,7 @@ export type PaletteAction =
 
 /** 元件盤「條碼」的預設值（新元素與拖進儲存格共用，避免兩處 drift） */
 const BARCODE_DEFAULTS = {
-  symbology: 'code39' as BarcodeSymbology, // 收款單導向：超商條碼慣用 Code 39
+  symbology: 'code39' as BarcodeSymbology, // 預設 Code 39：台灣超商繳費條碼慣用
   key: 'barcode1',
   sample: 'A123456789',
   showText: true,

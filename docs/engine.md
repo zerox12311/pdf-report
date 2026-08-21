@@ -78,7 +78,7 @@
 
 文字（或 key 綁定值）、字級、顏色、rotation、repeat 平鋪（gapX/gapY）、layer below/above。節可覆寫（inherit/none/custom）。layer=above 時 aboveWatermark 元素畫在浮水印之後（第三層）。
 
-**layer=above 一律以 35% 不透明度繪製**（`watermarkAboveAlpha`，固定常數以維持渲染決定性；前端畫布同值）。PDF 的文字沒有 alpha 就是**不透明**的，即使很淺的灰也會把下方內文塗掉——收款單的抬頭、金額國字大寫、繳費期限全都會讀不出來。實作上走 `CellWithOption` 而非 `Text`：gopdf 的 `Text()` 不會把 transparency 解析成 extGState，單純呼叫 `SetTransparency` 產出的 PDF 逐 byte 相同。layer=below 維持原本的 `Text()` 路徑（下方沒有內容可蓋，也讓既有 golden 的 byte 不變）。
+**layer=above 一律以 35% 不透明度繪製**（`watermarkAboveAlpha`，固定常數以維持渲染決定性；前端畫布同值）。PDF 的文字沒有 alpha 就是**不透明**的，即使很淺的灰也會把下方內文塗掉——文件的抬頭、金額、日期全都會讀不出來。實作上走 `CellWithOption` 而非 `Text`：gopdf 的 `Text()` 不會把 transparency 解析成 extGState，單純呼叫 `SetTransparency` 產出的 PDF 逐 byte 相同。layer=below 維持原本的 `Text()` 路徑（下方沒有內容可蓋，也讓既有 golden 的 byte 不變）。
 
 ## 字型
 

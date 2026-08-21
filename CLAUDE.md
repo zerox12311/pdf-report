@@ -1,6 +1,6 @@
 # PDF 樣板編輯器 + 報表引擎
 
-收款單（payment receipt）導向的 PDF 樣板產品：宿主系統用 **iframe 嵌入**前端編輯器設計樣板（postMessage 拿到樣板 id），宿主後端 **POST 資料到 render API** 產出正式 PDF。前端只做設計與預覽（預覽也走後端渲染），**渲染的唯一權威是 Go 引擎**。
+通用的 PDF 產生器與樣板編輯器（對外定位不綁特定用途；台灣單據能力為內建功能之一）：宿主系統用 **iframe 嵌入**前端編輯器設計樣板（postMessage 拿到樣板 id），宿主後端 **POST 資料到 render API** 產出正式 PDF。前端只做設計與預覽（預覽也走後端渲染），**渲染的唯一權威是 Go 引擎**。
 
 > **功能現況文件在 [docs/](docs/README.md)**（[editor.md](docs/editor.md)／[engine.md](docs/engine.md)／[api.md](docs/api.md)／[embed.md](docs/embed.md)）——開發新功能前先讀對應文件了解現有行為；**功能完成後必須主動更新它**（只記結果不記歷史，規則見 docs/README.md）。
 
@@ -55,7 +55,7 @@ docker compose up -d --build                                  # 完整 demo（�
 - **EditorStateService 必須可 `new` 建構**（specs 直接 `new EditorStateService()`，內部不得用 `inject()`）。
 - **前端 UI 字串要走 i18n**：程式碼寫中文原文包 `t('...')`（`core/i18n/i18n.ts`，非 DI 模組函式），英譯補 `core/i18n/en.ts`（缺譯退回中文不會壞）。切語言走 reload，所以模組層常數也能用 t()。例外：`format-value.ts`／`rich-text.ts` 的領域字串（引擎鏡像）不翻。
 - **改過 Angular 樣板就要跑 `npx ng build --configuration production`**：`tsc --noEmit` **不檢查樣板**，karma 的 spec 也沒有實例化 editor-canvas／editor-page，所以「型別乾淨＋單元測試全過」可能還是**建置失敗**（實際踩過：`@if (el.autoGrow)` 對 `ImageElement` 不存在，tsc 與 82 個測試全過但 ng build 直接 ERROR）。樣板裡要用只存在於部分元素型別的欄位，走 component 方法收斂型別（例：`growsOnOverflow(el)`）。
-- 渲染錯誤不靜默：資料缺 key → 警告（`X-Render-Warnings` header）；`?strict=1` → 422。壞 JSON body → 400。這是財務單據產品的硬要求。
+- 渲染錯誤不靜默：資料缺 key → 警告（`X-Render-Warnings` header）；`?strict=1` → 422。壞 JSON body → 400。這是正式文件產品的硬要求。
 - **對外的 API 說明只寫端點、請求、回應**：「🔗 連接」對話框（＝交付給客戶工程師的 API 文件）**不寫實作機制、設計理由、內部防護怎麼做的**。呼叫方要知道的是「打哪支、送什麼、回什麼、什麼錯誤碼」。被退過的實例：解釋速率限制的計數維度、解釋 X-Render-Warnings 為何重要、解釋 token 為何放 fragment、「不該做的事」安全告誡、「寫回的是樣板本體」的機制說明。程式碼註解不受此限——那裡要解釋「為什麼」。
 - **功能完成 = 文件已更新**：每個功能開發完成後**主動**更新 `docs/` 對應文件（editor/engine/api）。文件只描述目前狀態（結果），不記錄行為變更的歷史；改了行為就直接改寫描述。新功能沒進文件不算完成。
 
@@ -89,4 +89,4 @@ docker compose up -d --build                                  # 完整 demo（�
 
 ## 產品方向備忘
 
-使用者明確說過「先不用管文件，把功能跟畫面做好」。功能對標 JasperReports（節=Report Book、band、群組小計、浮水印），領域重點是台灣收款單：中一刀/熱感紙張、超商三段條碼（Code39）、金額國字大寫、民國年、作廢章（浮水印資料綁定）。
+使用者明確說過「先不用管文件，把功能跟畫面做好」。功能對標 JasperReports（節=Report Book、band、群組小計、浮水印）。**對外定位是通用 PDF 產生器/編輯器**（使用者決定，說明文字不得帶特定用途含義）；初始開發場景是台灣收款單，其在地能力保留為內建功能：中一刀/熱感紙張、超商三段條碼（Code39）、金額國字大寫、民國年、作廢章（浮水印資料綁定）。
