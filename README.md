@@ -6,6 +6,8 @@ A general-purpose PDF generator. You lay out the page in the browser (text, data
 
 The editor can be embedded in your own product via iframe, so your users design templates without ever leaving your app; producing the PDF is a single API call from your backend. The frontend only handles design and preview — every PDF is drawn by the Go engine on the backend, so what you see in the preview is exactly what the final output looks like.
 
+> This is a side project built for fun. It probably lacks plenty of features you'd expect — PRs and feature-request issues are very welcome.
+
 | Editor | Preview |
 |:---:|:---:|
 | ![Editor (English UI)](docs/images/editor-en.png) | ![Preview (English UI)](docs/images/preview-en.png) |

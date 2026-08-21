@@ -6,6 +6,8 @@
 
 編輯器可以用 iframe 嵌進你自己的系統，讓使用者在你的產品裡設計樣板；產 PDF 則是你的後端呼叫一支 API 的事。前端只負責設計和預覽，真正畫 PDF 的一律是後端的 Go 引擎，所以預覽看到什麼，正式輸出就是什麼。
 
+> 這是個娛樂性質的 side project，功能一定還缺很多，歡迎直接提 PR，或開 Feature issue 告訴我你想要什麼。
+
 | 編輯器 | 預覽 |
 |:---:|:---:|
 | ![編輯器（英文介面）](docs/images/editor-en.png) | ![預覽（英文介面）](docs/images/preview-en.png) |
