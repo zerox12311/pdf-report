@@ -84,7 +84,7 @@ docker compose up -d --build                                  # 完整 demo（�
   - **嵌入權限模式＝已完成**：embed token 帶 `mode` claim（`design`｜`fill`｜`view`，宿主**後端**指定的政策），解析成 capability（`capEditLayout`/`capEditValues`/`capUpload`）後**逐端點掛 `requireCapability`**（不在 handler 內散落 mode 判斷）。填寫模式走**窄 API** `PATCH /api/templates/:id/values`：讀 DB 原件、只覆寫被設計者標記 `fillable` 的 text 元素 content／text 儲存格 value——**不做 diff**（避免在 Go 端重現 normalizeTemplate），沒標記的欄位結構上就改不到。`GET /api/embed/context` 讓前端與後端讀同一份能力解析。embed token 一律不可 DELETE 樣板。
   - **速率限制＋寫入並行控制＝已完成**：令牌桶（`httpapi/ratelimit.go`，桶隨 router 實例建立故測試天然隔離）掛在登入／渲染／填值／換 token／上傳，超限 429＋`Retry-After`；填值以**樣板**為維度（爭用的是列鎖，換 token 繞不過去）。寫入走交易＋`SELECT … FOR UPDATE`（`store.PatchDoc`／`Save`），等鎖逾時 → 409（`store.LockWaitTimeout`）。DB 連線池已設上限，一波併發不會吃光整台的 PG 連線。
   - **CORS 白名單＝已完成**：`CORS_ORIGINS` env（逗號分隔；空 = 僅同源、`*` = 明確全開），未命中不送 CORS header；不送 Allow-Credentials（跨域一律 Bearer）。實作 `middleware.go cors`＋`cors_test.go`。
-  - **尚待強化**：template 級 key、embed 範圍收斂、postMessage origin 驗證、fill 模式的 token TTL／續期、樣板變更稽核、限流的跨副本共用計數器（目前單實例記憶體版）。設計者 PUT 仍無樂觀鎖（會覆蓋期間的填寫內容，方向上如此設計）。對外版清單同步維護在 SECURITY.md「已知限制」。
+  - **尚待強化**：template 級 key、embed 範圍收斂、postMessage origin 驗證、fill 模式的 token TTL／續期、樣板變更稽核、限流的跨副本共用計數器（目前單實例記憶體版）。設計者 PUT 仍無樂觀鎖（會覆蓋期間的填寫內容，方向上如此設計）。
 - ORM 選 GORM、多租戶模型已確認；HTTP 框架選 **Gin**（使用者為了學習指定，從 chi 換過來）。
 
 ## 產品方向備忘

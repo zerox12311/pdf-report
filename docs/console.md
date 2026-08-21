@@ -77,7 +77,7 @@ Stripe 式兩段憑證（完整流程見 [embed.md](embed.md)）：
 
 - **assets／字型是租戶層**：任何 principal 都能憑 id 抓同租戶的圖/字型（id 隨機、字型全租戶共用）。這輪不綁 scope。
 - **圖片 URL 抓取有 SSRF 防護**：render 會抓樣板裡的圖片 URL，已擋 loopback/private/link-local/metadata IP（含 DNS rebinding）。
-- **尚待強化**：template 級 API key、postMessage origin 驗證（對外版已知限制清單維護在 [SECURITY.md](../SECURITY.md)）。速率限制（登入/render/embed-token 等）與 CORS 白名單（`CORS_ORIGINS`）已完成，見 [api.md](api.md)。
+- **尚待強化**：template 級 API key、postMessage origin 驗證。速率限制（登入/render/embed-token 等）與 CORS 白名單（`CORS_ORIGINS`）已完成，見 [api.md](api.md)。
 
 ## 部署安全須知
 
