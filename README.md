@@ -14,7 +14,7 @@
 docker compose up -d --build
 ```
 
-- 編輯器與 API：http://localhost:8090（單一 app 容器，前端與 `/api` 同源；`/healthz` 健康檢查）
+- 編輯器與 API：http://localhost:8090（單一 app 容器，前端與 `/api` 同源；`/healthz` 健康檢查）。預設管理員 **`admin` / `admin1234`**（`docker-compose.yml` 定義）——**對外部署前務必改掉 `ADMIN_PASSWORD` 與 `SESSION_SECRET`**。
 - 嵌入示範頁：瀏覽器直接開 [docs/embed-example.html](docs/embed-example.html)
 - compose project `pdf-template-demo`（app + db 兩個服務）；Postgres :5442（`pg-data` volume）、圖片/字型二進位檔在 `pdf-storage` volume。
 
@@ -27,5 +27,5 @@ docker compose up -d --build
 
 ## 字型注意事項
 
-- Noto TC TTF 放兩處：`backend/fonts`（PDF 嵌入，gopdf 自動 subset）與 `frontend/public/fonts`（畫布顯示，讓所見接近輸出）。
+- Noto TC TTF 放兩處：`backend/fonts`（PDF 嵌入，gopdf 自動 subset）與 `frontend/public/fonts`（畫布顯示，讓所見接近輸出）。內建字型為 Noto 系列的修改版（子集化＋假斜體），依 **SIL OFL 1.1** 散布，見 [backend/fonts/OFL.txt](backend/fonts/OFL.txt) 與 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - 內建字型已離線裁剪為 **Big5 常用漢字區（約 5,400 字）+ ASCII + 全形標點**。極罕用字會缺字；要擴充覆蓋時用 fonttools 的 `pyftsubset` 重新裁剪並同步替換兩處。使用者也可自行匯入完整字型（`POST /api/fonts`）。

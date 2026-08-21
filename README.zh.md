@@ -31,7 +31,9 @@
 docker compose up -d --build
 ```
 
-然後打開 http://localhost:8090，用啟動時設定的管理員帳號登入，就能開始建立專案與設計樣板。
+然後打開 http://localhost:8090，用預設管理員帳號 **`admin` / `admin1234`** 登入（定義在 `docker-compose.yml`），就能開始建立專案與設計樣板。
+
+> ⚠️ 預設帳密與 `SESSION_SECRET` 僅供本機試用，**對外部署前務必修改**。
 
 ## 想串接到自己的系統？
 
