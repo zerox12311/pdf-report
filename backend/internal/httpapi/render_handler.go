@@ -85,9 +85,11 @@ func (h *renderHandler) renderAdhoc(c *gin.Context) {
 
 // renderPDF 渲染並回應。
 // 資料問題（找不到 key 等）以 X-Render-Warnings-Count / X-Render-Warnings（percent-encoded JSON）回報；
-// query 帶 strict=1 時，有任何 warning 直接回 422 JSON（財務單據建議串接時開啟）。
+// query 帶 strict=1 時，有任何 warning 直接回 422 JSON（正式文件建議串接時開啟）。
+// query 帶 placeholderImages=1 時，URL 圖片不下載、改畫佔位圖（版面快速預覽用）。
 func (h *renderHandler) renderPDF(c *gin.Context, doc *engine.TemplateDoc, data any) {
-	pdf, warnings, err := h.eng.Render(doc, data)
+	opts := engine.RenderOptions{PlaceholderImages: c.Query("placeholderImages") == "1"}
+	pdf, warnings, err := h.eng.RenderWithOptions(doc, data, opts)
 	if err != nil {
 		httpError(c, 500, fmt.Errorf("渲染失敗: %w", err))
 		return

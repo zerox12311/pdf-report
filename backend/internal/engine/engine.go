@@ -643,14 +643,14 @@ func (l *layout) paginate() {
 // draw 依 layout 結果逐頁繪製。
 // pageOffset/totalPages：多節渲染時的全文件頁碼基準，$page/$pages 連續。
 // base：文件開檔的頁面尺寸；本節尺寸不同時逐頁指定（混合紙張/方向）。
-func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, totalPages int, base gopdf.Rect, imgCache map[string][]byte, prefetched map[string]prefetchedImage) error {
+func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, totalPages int, base gopdf.Rect, imgCache map[string][]byte, prefetched map[string]prefetchedImage, opts RenderOptions) error {
 	for p := 0; p < l.pageCount; p++ {
 		if l.pageW == base.W && l.pageH == base.H {
 			pdf.AddPage()
 		} else {
 			pdf.AddPageWithOption(gopdf.PageOption{PageSize: &gopdf.Rect{W: l.pageW, H: l.pageH}})
 		}
-		ctx := &drawCtx{pdf: pdf, data: l.data, root: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache, prefetched: prefetched, allowPrivateHosts: e.allowPrivateImageHosts}
+		ctx := &drawCtx{pdf: pdf, data: l.data, root: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache, prefetched: prefetched, placeholderImages: opts.PlaceholderImages, allowPrivateHosts: e.allowPrivateImageHosts}
 		wm := l.doc.Page.Watermark
 		// 本頁內容（keep：依 AboveWatermark 過濾——上層浮水印時分兩批畫，
 		// 讓勾了「置於浮水印之上」的元素不被浮水印蓋住）
@@ -732,7 +732,18 @@ func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, to
 
 // Render 渲染流程骨架：拷貝輸入 → 版面計算 → 字型 → 撐高 → 分頁 → 繪製。
 // 回傳的 warnings 為渲染過程的資料問題（找不到 key 等），已去重；PDF 仍會產出。
+// RenderOptions 渲染選項。
+type RenderOptions struct {
+	// PlaceholderImages：URL 圖片（動態 key／固定連結）不下載，改畫確定性的佔位圖——
+	// 編輯版面時快速預覽用，不被圖片下載卡住。已上傳圖片（assetId，本機讀取）不受影響。
+	PlaceholderImages bool
+}
+
 func (e *Engine) Render(doc *TemplateDoc, data any) ([]byte, []string, error) {
+	return e.RenderWithOptions(doc, data, RenderOptions{})
+}
+
+func (e *Engine) RenderWithOptions(doc *TemplateDoc, data any, opts RenderOptions) ([]byte, []string, error) {
 	// 對拷貝操作，輸入 doc 保持不變（呼叫者可安全重用/快取）
 	cloned := *doc
 	cloned.Elements = cloneElements(doc.Elements)
@@ -855,9 +866,13 @@ func (e *Engine) Render(doc *TemplateDoc, data any) ([]byte, []string, error) {
 	imgCache := map[string][]byte{} // 動態圖片 URL 下載快取（跨節/跨頁共用）
 	// 先平行預抓所有會用到的圖片 URL（prefetch.go）：圖多時渲染時間從「Σ各圖延遲」
 	// 降為「最慢一張」。警告仍由 draw 時的 fetchImage 在原位置發出，輸出不變。
-	prefetched := prefetchImages(collectImageURLs(layouts), e.allowPrivateImageHosts)
+	// 佔位圖模式完全不抓（也不會有下載類警告）。
+	var prefetched map[string]prefetchedImage
+	if !opts.PlaceholderImages {
+		prefetched = prefetchImages(collectImageURLs(layouts), e.allowPrivateImageHosts)
+	}
 	for _, sl := range layouts {
-		if err := e.draw(pdf, sl, warn, offset, total, base, imgCache, prefetched); err != nil {
+		if err := e.draw(pdf, sl, warn, offset, total, base, imgCache, prefetched, opts); err != nil {
 			return nil, nil, err
 		}
 		offset += sl.pageCount
@@ -920,6 +935,7 @@ type drawCtx struct {
 	// 動態圖片 URL 下載快取（同一次渲染共用；nil 值 = 抓過但失敗，不重試）
 	imgCache          map[string][]byte
 	prefetched        map[string]prefetchedImage // 平行預抓結果（prefetch.go；nil = 未預抓）
+	placeholderImages bool                       // URL 圖片畫佔位圖、不下載（版面快速預覽）
 	allowPrivateHosts bool // 圖片 URL 是否放行私有目標（SSRF 防護；預設擋）
 
 	// 重複區塊（list）子元素的上下文：root = 整份資料（$sum 等全域彙總）；
@@ -1483,15 +1499,35 @@ func isBlockedImageIP(ip net.IP) bool {
 }
 
 // drawImageURLRect 抓取圖片 URL 並畫在指定矩形內；URL 空或抓取失敗時略過（警告已發）。
+// 佔位圖模式（placeholderImages）不下載，改畫確定性的佔位圖形。
 func (c *drawCtx) drawImageURLRect(rawURL string, rx, ry, rw, rh float64, fit string) error {
 	if rawURL == "" {
 		return nil
+	}
+	if c.placeholderImages {
+		return c.drawImagePlaceholder(rx, ry, rw, rh)
 	}
 	data := c.fetchImage(rawURL)
 	if data == nil {
 		return nil
 	}
 	return c.drawImageBytesRect(data, rx, ry, rw, rh, fit)
+}
+
+// drawImagePlaceholder 畫佔位圖：淺灰底＋灰框＋對角線（相簿佔位慣例），
+// 佔滿整個保留矩形——設計者一眼看出圖片會佔的版面空間。純向量、無網路、確定性。
+func (c *drawCtx) drawImagePlaceholder(rx, ry, rw, rh float64) error {
+	if rw <= 0 || rh <= 0 {
+		return nil
+	}
+	c.pdf.SetFillColor(0xf1, 0xf3, 0xf5)
+	c.pdf.RectFromUpperLeftWithStyle(rx, ry, rw, rh, "F")
+	c.pdf.SetStrokeColor(0xc0, 0xc6, 0xcc)
+	c.pdf.SetLineWidth(0.8)
+	c.pdf.RectFromUpperLeftWithStyle(rx, ry, rw, rh, "D")
+	c.pdf.Line(rx, ry, rx+rw, ry+rh)
+	c.pdf.Line(rx, ry+rh, rx+rw, ry)
+	return nil
 }
 
 // drawImageRect 畫已上傳圖片（assetID）；圖片不存在時略過，不讓整份報表失敗。

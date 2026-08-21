@@ -419,6 +419,8 @@ export const EN: Record<string, string> = {
   '（仍會出 PDF，但正式渲染帶': '(the PDF is still produced, but production rendering with ',
   '時會被擋下）': ' will be rejected)',
   '尚未產生': 'Not generated yet',
+  '圖片用佔位圖（加速版面預覽）': 'Placeholder images (faster layout preview)',
+  '不下載圖片、改畫佔位圖——調版面時不被圖片下載卡住': 'Skip image downloads and draw placeholders — tweak the layout without waiting on images',
   // ── data-panel ──
   '資料': 'Data',
   '貼上後端預計 POST 過來的': 'Paste the ',

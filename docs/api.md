@@ -124,6 +124,7 @@ body 上限 10MB；非 JSON 物件 → 400「樣板 JSON 解析失敗（body 需
 - `data` 必須是 JSON 物件或省略；其他型別 → 400。
 - **警告機制**：資料缺 key 等問題不擋渲染，回 header `X-Render-Warnings-Count` ＋ `X-Render-Warnings`（percent-encoded JSON 陣列，同訊息去重）。
 - **strict 模式**：`?strict=1` 時有任何警告 → 422 `{"error", "warnings"}`（正式文件建議串接時開啟）。
+- **佔位圖模式**：`?placeholderImages=1` 時 URL 圖片不下載、改畫確定性的佔位圖（灰底＋對角線；已上傳圖片 assetId 不受影響），也不會產生下載類警告——編輯器預覽的「圖片用佔位圖」勾選框走此參數；兩支 render 端點皆支援。
 - **輸入驗證守門**：樣板若開啟驗證（`validation.enabled`），正式渲染在渲染前先驗 `data`，不過 → 422 `{"error", "validationErrors":[{path, rule, message}]}`、**不產生 PDF**。`rule` 為 `required`｜`type`；陣列逐元素錯誤帶索引（`items[2].amount`）。關閉或無規則則跳過。adhoc 渲染不套此守門。
 - `Content-Disposition: inline; filename*=UTF-8''<樣板名>.pdf`。
 

@@ -114,9 +114,10 @@ export class TemplateApiService {
    * 預覽若只拿 PDF 就等於把警告吞掉——設計者看到 200 與一張少了東西的 PDF，
    * 完全不知道自己 key 打錯了。
    */
-  async renderAdhoc(template: TemplateDoc, data: unknown): Promise<{ blob: Blob; warnings: string[] }> {
+  async renderAdhoc(template: TemplateDoc, data: unknown, opts?: { placeholderImages?: boolean }): Promise<{ blob: Blob; warnings: string[] }> {
+    const url = '/api/templates/render' + (opts?.placeholderImages ? '?placeholderImages=1' : '');
     const res = await this.run(firstValueFrom(
-      this.http.post('/api/templates/render', { template, data },
+      this.http.post(url, { template, data },
         { responseType: 'blob', observe: 'response' }),
     ));
     return { blob: res.body ?? new Blob(), warnings: parseWarnings(res.headers.get('X-Render-Warnings')) };

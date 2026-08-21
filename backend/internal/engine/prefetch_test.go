@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -146,5 +147,40 @@ func TestCollectImageURLs(t *testing.T) {
 		if !gotSet[w] {
 			t.Errorf("缺 %s（got %v）", w, got)
 		}
+	}
+}
+
+// TestPlaceholderImages：佔位圖模式完全不發任何 HTTP 請求、無下載類警告、輸出確定。
+func TestPlaceholderImages(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	tpl, data := prefetchTestDoc(t, srv.URL, 3)
+	e := NewEngine("../../fonts", nil)
+	e.SetAllowPrivateImageHosts(true)
+	opts := RenderOptions{PlaceholderImages: true}
+	a, warns, err := e.RenderWithOptions(tpl, data, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a) == 0 {
+		t.Fatal("空 PDF")
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("佔位圖模式不應發出任何圖片請求，got %d", got)
+	}
+	if len(warns) != 0 {
+		t.Errorf("佔位圖模式不應有下載類警告：%v", warns)
+	}
+	b, _, err := e.RenderWithOptions(tpl, data, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Error("佔位圖模式兩次渲染 byte 不同")
 	}
 }
