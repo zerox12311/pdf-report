@@ -643,14 +643,14 @@ func (l *layout) paginate() {
 // draw 依 layout 結果逐頁繪製。
 // pageOffset/totalPages：多節渲染時的全文件頁碼基準，$page/$pages 連續。
 // base：文件開檔的頁面尺寸；本節尺寸不同時逐頁指定（混合紙張/方向）。
-func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, totalPages int, base gopdf.Rect, imgCache map[string][]byte) error {
+func (e *Engine) draw(pdf *gopdf.GoPdf, l *layout, warn WarnFunc, pageOffset, totalPages int, base gopdf.Rect, imgCache map[string][]byte, prefetched map[string]prefetchedImage) error {
 	for p := 0; p < l.pageCount; p++ {
 		if l.pageW == base.W && l.pageH == base.H {
 			pdf.AddPage()
 		} else {
 			pdf.AddPageWithOption(gopdf.PageOption{PageSize: &gopdf.Rect{W: l.pageW, H: l.pageH}})
 		}
-		ctx := &drawCtx{pdf: pdf, data: l.data, root: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache, allowPrivateHosts: e.allowPrivateImageHosts}
+		ctx := &drawCtx{pdf: pdf, data: l.data, root: l.data, pageNo: pageOffset + p + 1, pages: totalPages, assets: e.assets, warn: warn, imgCache: imgCache, prefetched: prefetched, allowPrivateHosts: e.allowPrivateImageHosts}
 		wm := l.doc.Page.Watermark
 		// 本頁內容（keep：依 AboveWatermark 過濾——上層浮水印時分兩批畫，
 		// 讓勾了「置於浮水印之上」的元素不被浮水印蓋住）
@@ -853,8 +853,11 @@ func (e *Engine) Render(doc *TemplateDoc, data any) ([]byte, []string, error) {
 	}
 	offset := 0
 	imgCache := map[string][]byte{} // 動態圖片 URL 下載快取（跨節/跨頁共用）
+	// 先平行預抓所有會用到的圖片 URL（prefetch.go）：圖多時渲染時間從「Σ各圖延遲」
+	// 降為「最慢一張」。警告仍由 draw 時的 fetchImage 在原位置發出，輸出不變。
+	prefetched := prefetchImages(collectImageURLs(layouts), e.allowPrivateImageHosts)
 	for _, sl := range layouts {
-		if err := e.draw(pdf, sl, warn, offset, total, base, imgCache); err != nil {
+		if err := e.draw(pdf, sl, warn, offset, total, base, imgCache, prefetched); err != nil {
 			return nil, nil, err
 		}
 		offset += sl.pageCount
@@ -916,6 +919,7 @@ type drawCtx struct {
 	warn   WarnFunc // 渲染警告回報；nil = 不收集
 	// 動態圖片 URL 下載快取（同一次渲染共用；nil 值 = 抓過但失敗，不重試）
 	imgCache          map[string][]byte
+	prefetched        map[string]prefetchedImage // 平行預抓結果（prefetch.go；nil = 未預抓）
 	allowPrivateHosts bool // 圖片 URL 是否放行私有目標（SSRF 防護；預設擋）
 
 	// 重複區塊（list）子元素的上下文：root = 整份資料（$sum 等全域彙總）；
@@ -1378,70 +1382,72 @@ func (c *drawCtx) drawImage(el *Element, y float64) error {
 	return c.drawImageRect(el.AssetID, el.X, y, el.Width, el.Height, el.Fit)
 }
 
-// fetchImage 下載圖片 URL（同一次渲染內以 imgCache 去重；nil = 抓過但失敗）。
-// 防護：僅 http/https、逾時 5 秒、上限 10MB、內容必須是 PNG/JPEG。
-// 失敗發警告（strict 模式會擋），不讓整份報表失敗。
+// fetchImage 取得圖片 URL 的內容（同一次渲染內以 imgCache 去重；nil = 抓過但失敗）。
+// 已預抓（prefetch.go 平行下載）就直接用結果，否則同步下載；
+// 失敗警告一律在**這裡**發（draw 的原位置、原順序）→ strict 模式與警告順序不受預抓影響。
 func (c *drawCtx) fetchImage(rawURL string) []byte {
 	if c.imgCache != nil {
 		if data, ok := c.imgCache[rawURL]; ok {
 			return data
 		}
 	}
-	warn := func(msg string) {
-		if c.warn != nil {
-			c.warn(msg)
-		}
+	var data []byte
+	var warnMsg string
+	if pf, ok := c.prefetched[rawURL]; ok {
+		data, warnMsg = pf.data, pf.warnMsg
+	} else {
+		data, warnMsg = downloadImage(rawURL, c.allowPrivateHosts)
 	}
-	remember := func(data []byte) []byte {
-		if c.imgCache != nil {
-			c.imgCache[rawURL] = data
-		}
-		return data
+	if warnMsg != "" && c.warn != nil {
+		c.warn(warnMsg)
 	}
+	if c.imgCache != nil {
+		c.imgCache[rawURL] = data
+	}
+	return data
+}
+
+// downloadImage 下載並驗證一張圖片 URL；失敗回 (nil, 警告訊息)。
+// 防護：僅 http/https、逾時 5 秒、上限 10MB、內容必須是 PNG/JPEG/WebP。
+// 純函式（不碰 drawCtx），供 draw 同步呼叫與 prefetch 平行呼叫共用。
+func downloadImage(rawURL string, allowPrivate bool) ([]byte, string) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		warn("圖片 URL 不合法（僅支援 http/https）：" + rawURL)
-		return remember(nil)
+		return nil, "圖片 URL 不合法（僅支援 http/https）：" + rawURL
 	}
-	resp, err := imageHTTPClient(c.allowPrivateHosts).Get(rawURL)
+	resp, err := imageHTTPClient(allowPrivate).Get(rawURL)
 	if err != nil {
-		warn("圖片 URL 下載失敗：" + rawURL)
-		return remember(nil)
+		return nil, "圖片 URL 下載失敗：" + rawURL
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		warn(fmt.Sprintf("圖片 URL 回應 %d：%s", resp.StatusCode, rawURL))
-		return remember(nil)
+		return nil, fmt.Sprintf("圖片 URL 回應 %d：%s", resp.StatusCode, rawURL)
 	}
 	const maxImg = 10 << 20
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImg+1))
 	if err != nil || len(data) > maxImg {
-		warn("圖片 URL 下載失敗（讀取錯誤或超過 10MB）：" + rawURL)
-		return remember(nil)
+		return nil, "圖片 URL 下載失敗（讀取錯誤或超過 10MB）：" + rawURL
 	}
 	ct := http.DetectContentType(data)
 	if ct == "image/webp" {
 		// gopdf 只吃 PNG/JPEG：webp 解碼後轉成 PNG 再進渲染管線（實務圖床常見 webp）
 		img, err := webp.Decode(bytes.NewReader(data))
 		if err != nil {
-			warn("圖片 URL 的 WebP 解碼失敗：" + rawURL)
-			return remember(nil)
+			return nil, "圖片 URL 的 WebP 解碼失敗：" + rawURL
 		}
 		// 正規化成 8-bit RGBA 再編 PNG（gopdf 不吃 16-bit；與條碼影像同做法）
 		rgba := image.NewNRGBA(img.Bounds())
 		draw.Draw(rgba, img.Bounds(), img, img.Bounds().Min, draw.Src)
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, rgba); err != nil {
-			warn("圖片 URL 的 WebP 轉檔失敗：" + rawURL)
-			return remember(nil)
+			return nil, "圖片 URL 的 WebP 轉檔失敗：" + rawURL
 		}
-		return remember(buf.Bytes())
+		return buf.Bytes(), ""
 	}
 	if ct != "image/png" && ct != "image/jpeg" {
-		warn("圖片 URL 內容不是 PNG/JPEG/WebP：" + rawURL)
-		return remember(nil)
+		return nil, "圖片 URL 內容不是 PNG/JPEG/WebP：" + rawURL
 	}
-	return remember(data)
+	return data, ""
 }
 
 var errBlockedImageHost = errors.New("blocked non-public host (SSRF guard)")
