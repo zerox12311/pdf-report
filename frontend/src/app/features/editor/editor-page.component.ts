@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, ViewChild
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ELEMENT_META, TemplateElement, collectFillableValues, emptyTemplate, isChildHost } from '../../core/models/template.model';
-import { currentLang, setLang, t } from '../../core/i18n/i18n';
+import { t } from '../../core/i18n/i18n';
 import { FontService } from '../../core/services/font.service';
 import { EmbedContextService } from '../../core/services/embed-context.service';
 import { EmbedTokenService } from '../../core/services/embed-token.service';
@@ -42,9 +42,6 @@ interface PaletteItem {
         <input class="name" [ngModel]="state.template().name" (ngModelChange)="state.setName($event)"
           [readOnly]="state.restricted()" />
         <div class="right">
-          <button class="link lang" (click)="toggleLang()" [title]="t('切換語言')">
-            {{ uiLang === 'en' ? '中文' : 'EN' }}
-          </button>
           @if (!embedded && !state.restricted()) {
             <button class="link" (click)="showIntegration.set(true)" [title]="t('iframe 嵌入與渲染 API 說明')">{{ t('🔗 連接') }}</button>
           }
@@ -445,13 +442,6 @@ interface PaletteItem {
 })
 export class EditorPageComponent {
   protected readonly t = t;
-  protected readonly uiLang = currentLang();
-
-  // 切語言會 reload；有未存變更時先確認，避免默默丟失
-  toggleLang() {
-    if (this.state.dirty() && !confirm(t('切換語言會重新載入頁面，未儲存的變更將遺失。確定切換？'))) return;
-    setLang(this.uiLang === 'en' ? 'zh-TW' : 'en');
-  }
   state = inject(EditorStateService);
   private host = inject(ElementRef<HTMLElement>);
   private api = inject(TemplateApiService);

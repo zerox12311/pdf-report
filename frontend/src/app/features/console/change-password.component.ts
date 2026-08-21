@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { MenuItem } from 'primeng/api';
 import { BreadcrumbModule } from 'primeng/breadcrumb';
 
-import { t } from '../../core/i18n/i18n';
+import { Lang, currentLang, setLang, t } from '../../core/i18n/i18n';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
@@ -12,6 +12,16 @@ import { AuthService } from '../../core/services/auth.service';
   imports: [FormsModule, BreadcrumbModule],
   template: `
     <p-breadcrumb [home]="home" [model]="crumbs" />
+    <div class="card lang-card">
+      <h1>{{ t('介面語言') }}</h1>
+      <label>{{ t('語言') }}
+        <select [ngModel]="lang" (ngModelChange)="changeLang($event)" name="lang">
+          <option value="zh-TW">繁體中文</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+      <p class="hint">{{ t('切換後頁面會重新載入。') }}</p>
+    </div>
     <form class="card" (ngSubmit)="submit()">
       <h1>{{ t('修改密碼') }}</h1>
       <label>{{ t('目前密碼') }}
@@ -33,6 +43,11 @@ import { AuthService } from '../../core/services/auth.service';
     :host { display: block; }
     .card { max-width: 420px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0;
       border-radius: 14px; padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+    .lang-card { margin-bottom: 20px; }
+    .hint { color: #94a3b8; font-size: 12.5px; margin: 0; }
+    select { padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;
+      background: #fff; }
+    select:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
     h1 { font-size: 19px; margin: 0 0 4px; text-align: center; }
     label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #475569; }
     input { padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
@@ -49,7 +64,12 @@ export class ChangePasswordComponent {
   private auth = inject(AuthService);
 
   readonly home: MenuItem = { icon: 'pi pi-home', routerLink: '/' };
-  readonly crumbs: MenuItem[] = [{ label: t('修改密碼') }];
+  readonly crumbs: MenuItem[] = [{ label: t('設定') }];
+  protected readonly lang = currentLang();
+
+  changeLang(lang: Lang) {
+    if (lang !== this.lang) setLang(lang); // setLang 會 reload
+  }
 
   oldPassword = '';
   newPassword = '';

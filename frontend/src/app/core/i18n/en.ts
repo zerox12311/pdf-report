@@ -224,7 +224,9 @@ export const EN: Record<string, string> = {
   '確定': 'OK',
   '伺服器回應 {status}': 'Server responded with {status}',
   '無法連線到伺服器': 'Could not reach the server',
-  '切換語言': 'Switch language',
+  '介面語言': 'Interface language',
+  '語言': 'Language',
+  '切換後頁面會重新載入。': 'The page reloads after switching.',
   // ── properties-panel ──
   '填寫欄位': 'Fillable fields',
   '儲存格': 'Cell',
@@ -602,5 +604,4 @@ export const EN: Record<string, string> = {
   '取消合併': 'Unmerge',
   '設為重複列（資料列）': 'Make repeat row (data row)',
   '清除儲存格內容': 'Clear cell content',
-  '切換語言會重新載入頁面，未儲存的變更將遺失。確定切換？': 'Switching language reloads the page; unsaved changes will be lost. Switch anyway?',
 };
